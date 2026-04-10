@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ari"
+version = "0.1.0"
+description = "ARI canonical implementation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.15.0",
+  "psycopg[binary]>=3.2.0",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.6.1",
+  "python-dotenv>=1.0.1",
+  "sqlalchemy>=2.0.36",
+  "typing-extensions>=4.12.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.13.0",
+  "pytest>=8.3.3",
+  "pytest-cov>=6.0.0",
+  "ruff>=0.7.2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+  "packages/ari-state/src",
+  "packages/ari-memory/src",
+  "packages/ari-events/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-cli/src",
+  "services/ari-core/src",
+  "services/ari-api/src",
+  "services/ari-hub/src",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = [
+  "packages/ari-state/src",
+  "packages/ari-memory/src",
+  "packages/ari-events/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-cli/src",
+  "services/ari-core/src",
+  "services/ari-api/src",
+  "services/ari-hub/src",
+]
+warn_unused_configs = true
+
+[tool.setuptools]
+py-modules = []
+
+[tool.setuptools.packages.find]
+where = [
+  "packages/ari-state/src",
+  "packages/ari-memory/src",
+  "packages/ari-events/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-cli/src",
+  "services/ari-core/src",
+  "services/ari-api/src",
+  "services/ari-hub/src",
+]
+include = ["ari_*"]

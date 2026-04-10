@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: ari-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ari}
+      POSTGRES_USER: ${POSTGRES_USER:-ari}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ari}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ari-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ari} -d ${POSTGRES_DB:-ari}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ari-postgres-data:
