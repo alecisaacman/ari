@@ -1,10 +1,9 @@
-from datetime import date, datetime, timezone
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from datetime import UTC, date, datetime
 
 from ari_memory import Base, WeeklyStateRepository
 from ari_state import WeeklyState
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 
 def test_weekly_state_repository_upserts_and_gets() -> None:
@@ -21,7 +20,7 @@ def test_weekly_state_repository_upserts_and_gets() -> None:
                 cannot_drift=["Daily check cadence"],
                 blockers=["Pending schema review"],
                 lesson="",
-                last_review_at=datetime(2026, 4, 6, 15, 0, tzinfo=timezone.utc),
+                last_review_at=datetime(2026, 4, 6, 15, 0, tzinfo=UTC),
             )
         )
         session.commit()
@@ -42,7 +41,7 @@ def test_weekly_state_repository_upserts_and_gets() -> None:
                 cannot_drift=["Explainable alerts"],
                 blockers=["None"],
                 lesson="Protect the shared model first.",
-                last_review_at=datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc),
+                last_review_at=datetime(2026, 4, 7, 9, 0, tzinfo=UTC),
             )
         )
 

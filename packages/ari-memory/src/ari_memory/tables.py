@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
 from uuid import UUID
 
+from sqlalchemy import JSON, Date, DateTime, String, Text
 from sqlalchemy import UUID as SQLUUID
-from sqlalchemy import Date, DateTime, JSON, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -19,10 +18,10 @@ class DailyStateRow(Base):
     date: Mapped[date] = mapped_column(Date, primary_key=True)
     priorities: Mapped[list[str]] = mapped_column(JSON, default=list)
     win_condition: Mapped[str] = mapped_column(Text, default="")
-    movement: Mapped[Optional[bool]] = mapped_column(nullable=True)
-    stress: Mapped[Optional[int]] = mapped_column(nullable=True)
+    movement: Mapped[bool | None] = mapped_column(nullable=True)
+    stress: Mapped[int | None] = mapped_column(nullable=True)
     next_action: Mapped[str] = mapped_column(Text, default="")
-    last_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class WeeklyStateRow(Base):
@@ -33,7 +32,7 @@ class WeeklyStateRow(Base):
     cannot_drift: Mapped[list[str]] = mapped_column(JSON, default=list)
     blockers: Mapped[list[str]] = mapped_column(JSON, default=list)
     lesson: Mapped[str] = mapped_column(Text, default="")
-    last_review_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OpenLoopRow(Base):
@@ -46,10 +45,10 @@ class OpenLoopRow(Base):
     priority: Mapped[str] = mapped_column(String(32), default="medium")
     source: Mapped[str] = mapped_column(String(64))
     notes: Mapped[str] = mapped_column(Text, default="")
-    project_id: Mapped[Optional[UUID]] = mapped_column(SQLUUID(as_uuid=True), nullable=True)
+    project_id: Mapped[UUID | None] = mapped_column(SQLUUID(as_uuid=True), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_touched_at: Mapped[Optional[datetime]] = mapped_column(
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_touched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

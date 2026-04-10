@@ -1,5 +1,6 @@
-from ari_events.types import NormalizedInput
 from ari_state import Event, EventCategory
+
+from ari_events.types import NormalizedInput
 
 
 class EventClassifier:

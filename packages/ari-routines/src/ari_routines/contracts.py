@@ -2,13 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Generic, Optional, TypeVar
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from ari_state import DailyState, Event, EventCategory, WeeklyState
-
-StateT = TypeVar("StateT", DailyState, WeeklyState)
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RoutineInput(BaseModel):
@@ -18,8 +14,8 @@ class RoutineInput(BaseModel):
 class DailyCheckInput(RoutineInput):
     priorities: list[str] = Field(default_factory=list, max_length=3)
     win_condition: str = ""
-    movement: Optional[bool] = None
-    stress: Optional[int] = Field(default=None, ge=1, le=10)
+    movement: bool | None = None
+    stress: int | None = Field(default=None, ge=1, le=10)
     next_action: str = ""
 
 
@@ -31,11 +27,11 @@ class WeeklyPlanningInput(RoutineInput):
 
 class WeeklyReflectionInput(RoutineInput):
     lesson: str = ""
-    blockers: Optional[list[str]] = None
+    blockers: list[str] | None = None
 
 
 @dataclass(frozen=True)
-class RoutineResult(Generic[StateT]):
+class RoutineResult[StateT: DailyState | WeeklyState]:
     state: StateT
     event: Event
 
@@ -71,7 +67,7 @@ def record_weekly_planning(
     week_start: date,
     planning: WeeklyPlanningInput,
     reviewed_at: datetime,
-    current_state: Optional[WeeklyState] = None,
+    current_state: WeeklyState | None = None,
     source: str = "ari.routine.weekly_planning",
 ) -> RoutineResult[WeeklyState]:
     state = WeeklyState(
@@ -97,15 +93,16 @@ def record_weekly_reflection(
     week_start: date,
     reflection: WeeklyReflectionInput,
     reviewed_at: datetime,
-    current_state: Optional[WeeklyState] = None,
+    current_state: WeeklyState | None = None,
     source: str = "ari.routine.weekly_reflection",
 ) -> RoutineResult[WeeklyState]:
     preserved_state = current_state or WeeklyState(week_start=week_start)
+    blockers = preserved_state.blockers if reflection.blockers is None else reflection.blockers
     state = WeeklyState(
         week_start=week_start,
         outcomes=list(preserved_state.outcomes),
         cannot_drift=list(preserved_state.cannot_drift),
-        blockers=list(preserved_state.blockers if reflection.blockers is None else reflection.blockers),
+        blockers=list(blockers),
         lesson=reflection.lesson,
         last_review_at=reviewed_at,
     )

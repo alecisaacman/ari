@@ -1,9 +1,7 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
-from pydantic import ValidationError
-
 from ari_state import (
     Alert,
     AlertChannel,
@@ -17,6 +15,7 @@ from ari_state import (
     SignalSeverity,
     WeeklyState,
 )
+from pydantic import ValidationError
 
 
 def test_daily_state_serializes_canonical_fields() -> None:
@@ -68,7 +67,7 @@ def test_open_loop_round_trips_uuid_and_enums() -> None:
         status=OpenLoopStatus.IN_PROGRESS,
         priority=OpenLoopPriority.HIGH,
         source="operator",
-        opened_at=datetime(2026, 4, 10, 8, 0, tzinfo=timezone.utc),
+        opened_at=datetime(2026, 4, 10, 8, 0, tzinfo=UTC),
     )
 
     payload = loop.model_dump(mode="json")
@@ -91,7 +90,7 @@ def test_signal_and_alert_preserve_explainability_contract() -> None:
                 entity_type="daily_state",
             )
         ],
-        detected_at=datetime(2026, 4, 10, 9, 0, tzinfo=timezone.utc),
+        detected_at=datetime(2026, 4, 10, 9, 0, tzinfo=UTC),
     )
 
     alert = Alert(
@@ -101,7 +100,7 @@ def test_signal_and_alert_preserve_explainability_contract() -> None:
         message="Top priority movement has stalled.",
         reason="Escalated because the drift signal persisted across checks.",
         source_signal_ids=[signal.id],
-        created_at=datetime(2026, 4, 10, 9, 5, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 10, 9, 5, tzinfo=UTC),
     )
 
     signal_payload = signal.model_dump(mode="json")

@@ -9,7 +9,16 @@ from ari_state.enums import (
     ProjectStatus,
     SignalSeverity,
 )
-from ari_state.models import Alert, DailyState, Event, EvidenceItem, OpenLoop, Project, Signal, WeeklyState
+from ari_state.models import (
+    Alert,
+    DailyState,
+    Event,
+    EvidenceItem,
+    OpenLoop,
+    Project,
+    Signal,
+    WeeklyState,
+)
 
 __all__ = [
     "Alert",

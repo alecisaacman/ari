@@ -1,42 +1,42 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class OpenLoopStatus(str, Enum):
+class OpenLoopStatus(StrEnum):
     OPEN = "open"
     IN_PROGRESS = "in_progress"
     BLOCKED = "blocked"
     CLOSED = "closed"
 
 
-class OpenLoopKind(str, Enum):
+class OpenLoopKind(StrEnum):
     TASK = "task"
     QUESTION = "question"
     COMMITMENT = "commitment"
     FOLLOW_UP = "follow_up"
 
 
-class OpenLoopPriority(str, Enum):
+class OpenLoopPriority(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
 
-class ProjectStatus(str, Enum):
+class ProjectStatus(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
     ARCHIVED = "archived"
 
 
-class SignalSeverity(str, Enum):
+class SignalSeverity(StrEnum):
     INFO = "info"
     NOTICE = "notice"
     WARNING = "warning"
     CRITICAL = "critical"
 
 
-class EventCategory(str, Enum):
+class EventCategory(StrEnum):
     DAILY_UPDATE = "daily_update"
     WEEKLY_PLANNING = "weekly_planning"
     WEEKLY_REFLECTION = "weekly_reflection"
@@ -50,21 +50,21 @@ class EventCategory(str, Enum):
     INTELLIGENCE_ITEM = "intelligence_item"
 
 
-class AlertStatus(str, Enum):
+class AlertStatus(StrEnum):
     PENDING = "pending"
     SENT = "sent"
     ACKNOWLEDGED = "acknowledged"
     DISMISSED = "dismissed"
 
 
-class AlertChannel(str, Enum):
+class AlertChannel(StrEnum):
     HUB = "hub"
     TERMINAL = "terminal"
     PHONE = "phone"
     NOTIFICATION = "notification"
 
 
-class AlertEscalationLevel(str, Enum):
+class AlertEscalationLevel(StrEnum):
     VISIBLE = "visible"
     ELEVATED = "elevated"
     INTERRUPTIVE = "interruptive"

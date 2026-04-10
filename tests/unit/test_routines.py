@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from ari_routines import (
     DailyCheckInput,
@@ -12,7 +12,7 @@ from ari_state import EventCategory, WeeklyState
 
 
 def test_daily_check_routine_maps_locked_structure() -> None:
-    checked_at = datetime(2026, 4, 10, 8, 30, tzinfo=timezone.utc)
+    checked_at = datetime(2026, 4, 10, 8, 30, tzinfo=UTC)
 
     result = record_daily_check(
         day=date(2026, 4, 10),
@@ -44,7 +44,7 @@ def test_weekly_planning_routine_updates_weekly_contract_and_preserves_lesson() 
         blockers=["Old blocker"],
         lesson="Keep routines state-first.",
     )
-    reviewed_at = datetime(2026, 4, 7, 16, 0, tzinfo=timezone.utc)
+    reviewed_at = datetime(2026, 4, 7, 16, 0, tzinfo=UTC)
 
     result = record_weekly_planning(
         week_start=date(2026, 4, 7),
@@ -72,7 +72,7 @@ def test_weekly_reflection_routine_updates_lesson_and_optionally_blockers() -> N
         cannot_drift=["Canonical state"],
         blockers=["Migration review"],
     )
-    reviewed_at = datetime(2026, 4, 11, 11, 0, tzinfo=timezone.utc)
+    reviewed_at = datetime(2026, 4, 11, 11, 0, tzinfo=UTC)
 
     result = record_weekly_reflection(
         week_start=date(2026, 4, 7),

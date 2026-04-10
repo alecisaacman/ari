@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,10 +26,10 @@ class DailyState(ARIModel):
     date: date
     priorities: list[str] = Field(default_factory=list, max_length=3)
     win_condition: str = ""
-    movement: Optional[bool] = None
-    stress: Optional[int] = Field(default=None, ge=1, le=10)
+    movement: bool | None = None
+    stress: int | None = Field(default=None, ge=1, le=10)
     next_action: str = ""
-    last_check_at: Optional[datetime] = None
+    last_check_at: datetime | None = None
 
 
 class WeeklyState(ARIModel):
@@ -39,7 +38,7 @@ class WeeklyState(ARIModel):
     cannot_drift: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     lesson: str = ""
-    last_review_at: Optional[datetime] = None
+    last_review_at: datetime | None = None
 
 
 class OpenLoop(ARIModel):
@@ -50,10 +49,10 @@ class OpenLoop(ARIModel):
     priority: OpenLoopPriority = OpenLoopPriority.MEDIUM
     source: str
     notes: str = ""
-    project_id: Optional[UUID] = None
+    project_id: UUID | None = None
     opened_at: datetime
-    due_at: Optional[datetime] = None
-    last_touched_at: Optional[datetime] = None
+    due_at: datetime | None = None
+    last_touched_at: datetime | None = None
 
 
 class Project(ARIModel):
@@ -71,17 +70,17 @@ class Signal(ARIModel):
     severity: SignalSeverity
     summary: str
     reason: str
-    evidence: list["EvidenceItem"] = Field(default_factory=list)
-    related_entity_type: Optional[str] = None
-    related_entity_id: Optional[UUID] = None
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    related_entity_type: str | None = None
+    related_entity_id: UUID | None = None
     detected_at: datetime
 
 
 class EvidenceItem(ARIModel):
     kind: str
     summary: str
-    entity_type: Optional[str] = None
-    entity_id: Optional[UUID] = None
+    entity_type: str | None = None
+    entity_id: UUID | None = None
     payload: dict[str, object] = Field(default_factory=dict)
 
 
@@ -106,4 +105,4 @@ class Alert(ARIModel):
     reason: str
     source_signal_ids: list[UUID] = Field(default_factory=list)
     created_at: datetime
-    sent_at: Optional[datetime] = None
+    sent_at: datetime | None = None

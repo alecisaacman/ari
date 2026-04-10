@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from ari_signals import generate_alerts, generate_signals
 from ari_state import (
@@ -13,7 +13,7 @@ from ari_state import (
 
 
 def test_generate_signals_produces_explainable_initial_signal_set() -> None:
-    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=timezone.utc)
+    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
     daily_state = DailyState(
         date=date(2026, 4, 10),
         priorities=["Inbox cleanup", "Admin sweep"],
@@ -64,7 +64,7 @@ def test_generate_signals_produces_explainable_initial_signal_set() -> None:
 
 
 def test_generate_alerts_preserves_signal_explainability() -> None:
-    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=timezone.utc)
+    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
     daily_state = DailyState(
         date=date(2026, 4, 10),
         stress=9,

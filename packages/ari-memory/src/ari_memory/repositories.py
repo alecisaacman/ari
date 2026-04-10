@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
 from uuid import UUID
 
+from ari_state import DailyState, Event, OpenLoop, WeeklyState
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ari_memory.tables import DailyStateRow, EventRow, OpenLoopRow, WeeklyStateRow
-from ari_state import DailyState, Event, OpenLoop, WeeklyState
 
 
 class DailyStateRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get(self, day: date) -> Optional[DailyState]:
+    def get(self, day: date) -> DailyState | None:
         row = self._session.get(DailyStateRow, day)
         if row is None:
             return None
@@ -52,7 +51,7 @@ class OpenLoopRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get(self, loop_id: UUID) -> Optional[OpenLoop]:
+    def get(self, loop_id: UUID) -> OpenLoop | None:
         row = self._session.get(OpenLoopRow, loop_id)
         if row is None:
             return None
@@ -60,7 +59,9 @@ class OpenLoopRepository:
 
     def list_open(self) -> list[OpenLoop]:
         rows = self._session.scalars(
-            select(OpenLoopRow).where(OpenLoopRow.status != "closed").order_by(OpenLoopRow.opened_at.desc())
+            select(OpenLoopRow)
+            .where(OpenLoopRow.status != "closed")
+            .order_by(OpenLoopRow.opened_at.desc())
         ).all()
         return [self._to_model(row) for row in rows]
 
@@ -103,7 +104,7 @@ class WeeklyStateRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get(self, week_start: date) -> Optional[WeeklyState]:
+    def get(self, week_start: date) -> WeeklyState | None:
         row = self._session.get(WeeklyStateRow, week_start)
         if row is None:
             return None
@@ -138,7 +139,7 @@ class EventRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get(self, event_id: UUID) -> Optional[Event]:
+    def get(self, event_id: UUID) -> Event | None:
         row = self._session.get(EventRow, event_id)
         if row is None:
             return None

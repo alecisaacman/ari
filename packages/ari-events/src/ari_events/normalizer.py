@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ari_events.types import NormalizedInput
 
@@ -27,5 +27,5 @@ class RawInputNormalizer:
 
     def _coerce_datetime(self, value: object) -> datetime:
         if isinstance(value, datetime):
-            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-        return datetime.now(tz=timezone.utc)
+            return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return datetime.now(tz=UTC)

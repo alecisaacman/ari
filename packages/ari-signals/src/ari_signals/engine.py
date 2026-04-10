@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Optional
 
 from ari_state import (
     Alert,
@@ -26,8 +25,8 @@ STALE_OPEN_LOOP_DAYS = 7
 def generate_signals(
     *,
     detected_at: datetime,
-    daily_state: Optional[DailyState] = None,
-    weekly_state: Optional[WeeklyState] = None,
+    daily_state: DailyState | None = None,
+    weekly_state: WeeklyState | None = None,
     open_loops: Sequence[OpenLoop] = (),
 ) -> list[Signal]:
     signals: list[Signal] = []
@@ -81,7 +80,7 @@ def _build_open_loop_accumulation_signal(
     *,
     open_loops: Sequence[OpenLoop],
     detected_at: datetime,
-) -> Optional[Signal]:
+) -> Signal | None:
     total_open_loops = len(open_loops)
     if total_open_loops < OPEN_LOOP_WARNING_THRESHOLD:
         return None
@@ -139,10 +138,10 @@ def _build_open_loop_accumulation_signal(
 
 def _build_weekly_trajectory_drift_signal(
     *,
-    daily_state: Optional[DailyState],
-    weekly_state: Optional[WeeklyState],
+    daily_state: DailyState | None,
+    weekly_state: WeeklyState | None,
     detected_at: datetime,
-) -> Optional[Signal]:
+) -> Signal | None:
     if daily_state is None or weekly_state is None or not weekly_state.outcomes:
         return None
 
@@ -192,9 +191,9 @@ def _build_weekly_trajectory_drift_signal(
 
 def _build_elevated_stress_signal(
     *,
-    daily_state: Optional[DailyState],
+    daily_state: DailyState | None,
     detected_at: datetime,
-) -> Optional[Signal]:
+) -> Signal | None:
     if daily_state is None or daily_state.stress is None:
         return None
     if daily_state.stress < ELEVATED_STRESS_WARNING_THRESHOLD:
