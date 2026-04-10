@@ -52,6 +52,16 @@ Milestone 1 delivers a home-computer ARI that can:
 - Intended repository baseline: Python 3.12
 - Current code is kept conservative enough to read cleanly on older interpreters, but the canonical project target remains 3.12.
 
+## CLI Read Surface
+
+The first operator CLI surface is read-only orchestration history:
+
+- `ari orchestration latest --state-date YYYY-MM-DD`
+- `ari orchestration previous --state-date YYYY-MM-DD`
+- `ari orchestration compare-latest-two --state-date YYYY-MM-DD`
+
+These commands read canonical persisted orchestration history and show linked signals, alerts, reuse vs new outputs, and whether the state fingerprint changed.
+
 ## Working Rules
 
 - Treat `docs/` as the architecture source of truth.

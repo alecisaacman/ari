@@ -26,6 +26,9 @@ dev = [
   "ruff>=0.7.2",
 ]
 
+[project.scripts]
+ari = "ari_cli:main"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
