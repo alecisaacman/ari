@@ -5,7 +5,7 @@
 - The home computer hosts the ARI brain.
 - Postgres is the durable system record.
 - Shared typed state models define the canonical data contract.
-- The orchestration layer reads and writes canonical state, evaluates signals, and emits alerts.
+- The orchestration layer reads canonical state, evaluates signals, persists signals, and emits durable alerts.
 
 ## Surfaces
 

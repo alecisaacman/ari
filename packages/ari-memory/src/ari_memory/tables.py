@@ -64,3 +64,32 @@ class EventRow(Base):
     body: Mapped[str] = mapped_column(Text, default="")
     payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     normalized_text: Mapped[str] = mapped_column(Text, default="")
+
+
+class SignalRow(Base):
+    __tablename__ = "signals"
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(64))
+    severity: Mapped[str] = mapped_column(String(32))
+    summary: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    related_entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    related_entity_id: Mapped[UUID | None] = mapped_column(SQLUUID(as_uuid=True), nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AlertRow(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    channel: Mapped[str] = mapped_column(String(32))
+    escalation_level: Mapped[str] = mapped_column(String(32), default="visible")
+    title: Mapped[str] = mapped_column(String(255))
+    message: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    source_signal_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

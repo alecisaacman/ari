@@ -58,13 +58,52 @@ def upgrade() -> None:
         sa.Column("normalized_text", sa.Text(), nullable=False, server_default=""),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_table(
+        "signals",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("kind", sa.String(length=64), nullable=False),
+        sa.Column("severity", sa.String(length=32), nullable=False),
+        sa.Column("summary", sa.Text(), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("evidence", sa.JSON(), nullable=False),
+        sa.Column("related_entity_type", sa.String(length=64), nullable=True),
+        sa.Column("related_entity_id", sa.UUID(), nullable=True),
+        sa.Column("detected_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_table(
+        "alerts",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("status", sa.String(length=32), nullable=False, server_default="pending"),
+        sa.Column("channel", sa.String(length=32), nullable=False),
+        sa.Column(
+            "escalation_level", sa.String(length=32), nullable=False, server_default="visible"
+        ),
+        sa.Column("title", sa.String(length=255), nullable=False),
+        sa.Column("message", sa.Text(), nullable=False),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("source_signal_ids", sa.JSON(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_alerts_status", "alerts", ["status"], unique=False)
+    op.create_index("ix_alerts_created_at", "alerts", ["created_at"], unique=False)
     op.create_index("ix_events_occurred_at", "events", ["occurred_at"], unique=False)
     op.create_index("ix_open_loops_status", "open_loops", ["status"], unique=False)
+    op.create_index("ix_signals_detected_at", "signals", ["detected_at"], unique=False)
+    op.create_index("ix_signals_severity", "signals", ["severity"], unique=False)
 
 
 def downgrade() -> None:
+    op.drop_index("ix_signals_severity", table_name="signals")
+    op.drop_index("ix_signals_detected_at", table_name="signals")
     op.drop_index("ix_open_loops_status", table_name="open_loops")
     op.drop_index("ix_events_occurred_at", table_name="events")
+    op.drop_index("ix_alerts_created_at", table_name="alerts")
+    op.drop_index("ix_alerts_status", table_name="alerts")
+    op.drop_table("alerts")
+    op.drop_table("signals")
     op.drop_table("events")
     op.drop_table("open_loops")
     op.drop_table("weekly_states")

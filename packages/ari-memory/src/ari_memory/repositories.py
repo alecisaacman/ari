@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID
 
-from ari_state import DailyState, Event, OpenLoop, WeeklyState
+from ari_state import Alert, DailyState, Event, EvidenceItem, OpenLoop, Signal, WeeklyState
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ari_memory.tables import DailyStateRow, EventRow, OpenLoopRow, WeeklyStateRow
+from ari_memory.tables import (
+    AlertRow,
+    DailyStateRow,
+    EventRow,
+    OpenLoopRow,
+    SignalRow,
+    WeeklyStateRow,
+)
 
 
 class DailyStateRepository:
@@ -43,7 +50,7 @@ class DailyStateRepository:
             movement=row.movement,
             stress=row.stress,
             next_action=row.next_action,
-            last_check_at=row.last_check_at,
+            last_check_at=_normalize_datetime(row.last_check_at),
         )
 
 
@@ -94,9 +101,9 @@ class OpenLoopRepository:
             source=row.source,
             notes=row.notes,
             project_id=row.project_id,
-            opened_at=row.opened_at,
-            due_at=row.due_at,
-            last_touched_at=row.last_touched_at,
+            opened_at=_normalize_datetime(row.opened_at),
+            due_at=_normalize_datetime(row.due_at),
+            last_touched_at=_normalize_datetime(row.last_touched_at),
         )
 
 
@@ -131,7 +138,7 @@ class WeeklyStateRepository:
             cannot_drift=row.cannot_drift,
             blockers=row.blockers,
             lesson=row.lesson,
-            last_review_at=row.last_review_at,
+            last_review_at=_normalize_datetime(row.last_review_at),
         )
 
 
@@ -171,9 +178,115 @@ class EventRepository:
             id=row.id,
             source=row.source,
             category=row.category,
-            occurred_at=row.occurred_at,
+            occurred_at=_normalize_datetime(row.occurred_at),
             title=row.title,
             body=row.body,
             payload=row.payload,
             normalized_text=row.normalized_text,
         )
+
+
+class SignalRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get(self, signal_id: UUID) -> Signal | None:
+        row = self._session.get(SignalRow, signal_id)
+        if row is None:
+            return None
+        return self._to_model(row)
+
+    def create(self, signal: Signal) -> Signal:
+        row = SignalRow(
+            id=signal.id,
+            kind=signal.kind,
+            severity=signal.severity,
+            summary=signal.summary,
+            reason=signal.reason,
+            evidence=[item.model_dump(mode="json") for item in signal.evidence],
+            related_entity_type=signal.related_entity_type,
+            related_entity_id=signal.related_entity_id,
+            detected_at=signal.detected_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return self._to_model(row)
+
+    def create_many(self, signals: list[Signal]) -> list[Signal]:
+        return [self.create(signal) for signal in signals]
+
+    def list_recent(self, limit: int = 20) -> list[Signal]:
+        rows = self._session.scalars(
+            select(SignalRow).order_by(SignalRow.detected_at.desc()).limit(limit)
+        ).all()
+        return [self._to_model(row) for row in rows]
+
+    def _to_model(self, row: SignalRow) -> Signal:
+        return Signal(
+            id=row.id,
+            kind=row.kind,
+            severity=row.severity,
+            summary=row.summary,
+            reason=row.reason,
+            evidence=[EvidenceItem.model_validate(item) for item in row.evidence],
+            related_entity_type=row.related_entity_type,
+            related_entity_id=row.related_entity_id,
+            detected_at=_normalize_datetime(row.detected_at),
+        )
+
+
+class AlertRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get(self, alert_id: UUID) -> Alert | None:
+        row = self._session.get(AlertRow, alert_id)
+        if row is None:
+            return None
+        return self._to_model(row)
+
+    def create(self, alert: Alert) -> Alert:
+        row = AlertRow(
+            id=alert.id,
+            status=alert.status,
+            channel=alert.channel,
+            escalation_level=alert.escalation_level,
+            title=alert.title,
+            message=alert.message,
+            reason=alert.reason,
+            source_signal_ids=[str(signal_id) for signal_id in alert.source_signal_ids],
+            created_at=alert.created_at,
+            sent_at=alert.sent_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return self._to_model(row)
+
+    def create_many(self, alerts: list[Alert]) -> list[Alert]:
+        return [self.create(alert) for alert in alerts]
+
+    def list_recent(self, limit: int = 20) -> list[Alert]:
+        rows = self._session.scalars(
+            select(AlertRow).order_by(AlertRow.created_at.desc()).limit(limit)
+        ).all()
+        return [self._to_model(row) for row in rows]
+
+    def _to_model(self, row: AlertRow) -> Alert:
+        return Alert(
+            id=row.id,
+            status=row.status,
+            channel=row.channel,
+            escalation_level=row.escalation_level,
+            title=row.title,
+            message=row.message,
+            reason=row.reason,
+            source_signal_ids=[UUID(signal_id) for signal_id in row.source_signal_ids],
+            created_at=_normalize_datetime(row.created_at),
+            sent_at=_normalize_datetime(row.sent_at),
+        )
+
+
+def _normalize_datetime(value: datetime | None) -> datetime | None:
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=UTC)

@@ -1,7 +1,16 @@
 from datetime import UTC, date, datetime
+from uuid import uuid4
 
-from ari_memory import Base, WeeklyStateRepository
-from ari_state import WeeklyState
+from ari_memory import AlertRepository, Base, SignalRepository, WeeklyStateRepository
+from ari_state import (
+    Alert,
+    AlertChannel,
+    AlertEscalationLevel,
+    EvidenceItem,
+    Signal,
+    SignalSeverity,
+    WeeklyState,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -32,7 +41,7 @@ def test_weekly_state_repository_upserts_and_gets() -> None:
         assert fetched.cannot_drift == created.cannot_drift
         assert fetched.blockers == created.blockers
         assert fetched.lesson == created.lesson
-        assert fetched.last_review_at == datetime(2026, 4, 6, 15, 0)
+        assert fetched.last_review_at == datetime(2026, 4, 6, 15, 0, tzinfo=UTC)
 
         updated = repository.upsert(
             WeeklyState(
@@ -47,3 +56,71 @@ def test_weekly_state_repository_upserts_and_gets() -> None:
 
         assert updated.outcomes == ["Ship the spine", "Add signals"]
         assert updated.lesson == "Protect the shared model first."
+
+
+def test_signal_repository_persists_explainable_evidence() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    signal = Signal(
+        kind="open_loop_accumulation",
+        severity=SignalSeverity.WARNING,
+        summary="7 open loops are active.",
+        reason="Open loops exceeded the operating threshold.",
+        evidence=[
+            EvidenceItem(
+                kind="open_loop_stats",
+                summary="Open loop volume exceeds the baseline threshold.",
+                entity_type="open_loop",
+                entity_id=uuid4(),
+                payload={
+                    "total_open_loops": 7,
+                    "stale_open_loop_ids": [str(uuid4())],
+                },
+            )
+        ],
+        related_entity_type="weekly_state",
+        related_entity_id=uuid4(),
+        detected_at=datetime(2026, 4, 10, 12, 0, tzinfo=UTC),
+    )
+
+    with Session(engine) as session:
+        repository = SignalRepository(session)
+        created = repository.create(signal)
+        session.commit()
+
+        fetched = repository.get(signal.id)
+        assert fetched is not None
+        assert fetched.id == created.id
+        assert fetched.reason == signal.reason
+        assert fetched.evidence[0].kind == "open_loop_stats"
+        assert fetched.evidence[0].payload["total_open_loops"] == 7
+        assert fetched.related_entity_type == "weekly_state"
+        assert fetched.detected_at == datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
+
+
+def test_alert_repository_persists_reason_and_source_signal_ids() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    source_signal_id = uuid4()
+    alert = Alert(
+        channel=AlertChannel.HUB,
+        escalation_level=AlertEscalationLevel.ELEVATED,
+        title="Trajectory drift",
+        message="Today's priorities are not reinforcing this week's outcomes.",
+        reason="No meaningful overlap was found between the weekly outcomes and priorities.",
+        source_signal_ids=[source_signal_id],
+        created_at=datetime(2026, 4, 10, 12, 0, tzinfo=UTC),
+    )
+
+    with Session(engine) as session:
+        repository = AlertRepository(session)
+        created = repository.create(alert)
+        session.commit()
+
+        fetched = repository.get(alert.id)
+        assert fetched is not None
+        assert fetched.id == created.id
+        assert fetched.reason == alert.reason
+        assert fetched.source_signal_ids == [source_signal_id]
+        assert fetched.escalation_level == AlertEscalationLevel.ELEVATED
+        assert fetched.created_at == datetime(2026, 4, 10, 12, 0, tzinfo=UTC)

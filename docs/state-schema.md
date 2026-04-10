@@ -136,6 +136,19 @@ Signals and alerts must preserve enough evidence to answer "why was this surface
 - Alerts retain `reason`, `source_signal_ids`, and `escalation_level`.
 - Surfaces should expose this explanation path without inventing alternate local logic.
 
+## Initial Orchestration Path
+
+The first `ari-core` orchestration path remains intentionally narrow.
+
+- accept execution inputs that identify the target state date and detection time
+- load the relevant `DailyState`, `WeeklyState`, and open `OpenLoop` records from persistence
+- run the canonical signal engine
+- persist the generated `Signal` records before creating alerts
+- generate `Alert` records from the persisted signals
+- persist the generated `Alert` records without delivering notifications
+
+This path must stay explainable end to end. `ari-core` orchestrates repository access and uses the canonical signal and alert models, but it must not add parallel signal or alert logic outside `packages/ari-signals`.
+
 ## Initial Routine Contracts
 
 The first routine layer writes directly onto the canonical state model and emits matching canonical events.
@@ -176,3 +189,4 @@ These signals are generated from canonical state and retain structured evidence 
 - Use migrations for schema evolution.
 - Use repository classes for data access.
 - Keep persistence entities aligned with canonical shared models.
+- Persist `Signal` and `Alert` as first-class durable records, not transient outputs.
