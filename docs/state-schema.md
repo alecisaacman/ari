@@ -136,6 +136,40 @@ Signals and alerts must preserve enough evidence to answer "why was this surface
 - Alerts retain `reason`, `source_signal_ids`, and `escalation_level`.
 - Surfaces should expose this explanation path without inventing alternate local logic.
 
+## Initial Routine Contracts
+
+The first routine layer writes directly onto the canonical state model and emits matching canonical events.
+
+### Daily Check
+
+- writes `DailyState`
+- fields updated: `priorities`, `win_condition`, `movement`, `stress`, `next_action`, `last_check_at`
+- emits `EventCategory.DAILY_UPDATE`
+
+### Weekly Planning
+
+- writes `WeeklyState`
+- fields updated: `outcomes`, `cannot_drift`, `blockers`, `last_review_at`
+- preserves `lesson` unless a later weekly reflection changes it
+- emits `EventCategory.WEEKLY_PLANNING`
+
+### Weekly Reflection
+
+- writes `WeeklyState`
+- fields updated: `lesson`, optional `blockers`, `last_review_at`
+- preserves the active week's `outcomes` and `cannot_drift`
+- emits `EventCategory.WEEKLY_REFLECTION`
+
+## Initial Signal Scope
+
+The first signal layer remains intentionally narrow and explainable.
+
+- `open_loop_accumulation`
+- `weekly_trajectory_drift`
+- `elevated_stress`
+
+These signals are generated from canonical state and retain structured evidence payloads so later surfaces can explain them without re-deriving logic.
+
 ## Persistence Strategy
 
 - Use Postgres as the durable store.

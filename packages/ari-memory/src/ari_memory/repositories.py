@@ -7,8 +7,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ari_memory.tables import DailyStateRow, EventRow, OpenLoopRow
-from ari_state import DailyState, Event, OpenLoop
+from ari_memory.tables import DailyStateRow, EventRow, OpenLoopRow, WeeklyStateRow
+from ari_state import DailyState, Event, OpenLoop, WeeklyState
 
 
 class DailyStateRepository:
@@ -96,6 +96,41 @@ class OpenLoopRepository:
             opened_at=row.opened_at,
             due_at=row.due_at,
             last_touched_at=row.last_touched_at,
+        )
+
+
+class WeeklyStateRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get(self, week_start: date) -> Optional[WeeklyState]:
+        row = self._session.get(WeeklyStateRow, week_start)
+        if row is None:
+            return None
+        return self._to_model(row)
+
+    def upsert(self, state: WeeklyState) -> WeeklyState:
+        row = self._session.get(WeeklyStateRow, state.week_start)
+        if row is None:
+            row = WeeklyStateRow(week_start=state.week_start)
+            self._session.add(row)
+
+        row.outcomes = list(state.outcomes)
+        row.cannot_drift = list(state.cannot_drift)
+        row.blockers = list(state.blockers)
+        row.lesson = state.lesson
+        row.last_review_at = state.last_review_at
+        self._session.flush()
+        return self._to_model(row)
+
+    def _to_model(self, row: WeeklyStateRow) -> WeeklyState:
+        return WeeklyState(
+            week_start=row.week_start,
+            outcomes=row.outcomes,
+            cannot_drift=row.cannot_drift,
+            blockers=row.blockers,
+            lesson=row.lesson,
+            last_review_at=row.last_review_at,
         )
 
 
