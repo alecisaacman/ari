@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from ari_state import Alert, DailyState, Event, EvidenceItem, OpenLoop, Signal, WeeklyState
+from ari_state import (
+    Alert,
+    DailyState,
+    Event,
+    EvidenceItem,
+    OpenLoop,
+    OrchestrationRun,
+    Signal,
+    WeeklyState,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +21,7 @@ from ari_memory.tables import (
     DailyStateRow,
     EventRow,
     OpenLoopRow,
+    OrchestrationRunRow,
     SignalRow,
     WeeklyStateRow,
 )
@@ -199,7 +209,9 @@ class SignalRepository:
     def create(self, signal: Signal) -> Signal:
         row = SignalRow(
             id=signal.id,
+            state_date=signal.state_date,
             kind=signal.kind,
+            fingerprint=signal.fingerprint,
             severity=signal.severity,
             summary=signal.summary,
             reason=signal.reason,
@@ -215,6 +227,17 @@ class SignalRepository:
     def create_many(self, signals: list[Signal]) -> list[Signal]:
         return [self.create(signal) for signal in signals]
 
+    def get_by_fingerprint(self, *, state_date: date, fingerprint: str) -> Signal | None:
+        row = self._session.scalar(
+            select(SignalRow).where(
+                SignalRow.state_date == state_date,
+                SignalRow.fingerprint == fingerprint,
+            )
+        )
+        if row is None:
+            return None
+        return self._to_model(row)
+
     def list_recent(self, limit: int = 20) -> list[Signal]:
         rows = self._session.scalars(
             select(SignalRow).order_by(SignalRow.detected_at.desc()).limit(limit)
@@ -224,7 +247,9 @@ class SignalRepository:
     def _to_model(self, row: SignalRow) -> Signal:
         return Signal(
             id=row.id,
+            state_date=row.state_date,
             kind=row.kind,
+            fingerprint=row.fingerprint,
             severity=row.severity,
             summary=row.summary,
             reason=row.reason,
@@ -248,6 +273,8 @@ class AlertRepository:
     def create(self, alert: Alert) -> Alert:
         row = AlertRow(
             id=alert.id,
+            state_date=alert.state_date,
+            fingerprint=alert.fingerprint,
             status=alert.status,
             channel=alert.channel,
             escalation_level=alert.escalation_level,
@@ -265,6 +292,17 @@ class AlertRepository:
     def create_many(self, alerts: list[Alert]) -> list[Alert]:
         return [self.create(alert) for alert in alerts]
 
+    def get_by_fingerprint(self, *, state_date: date, fingerprint: str) -> Alert | None:
+        row = self._session.scalar(
+            select(AlertRow).where(
+                AlertRow.state_date == state_date,
+                AlertRow.fingerprint == fingerprint,
+            )
+        )
+        if row is None:
+            return None
+        return self._to_model(row)
+
     def list_recent(self, limit: int = 20) -> list[Alert]:
         rows = self._session.scalars(
             select(AlertRow).order_by(AlertRow.created_at.desc()).limit(limit)
@@ -274,6 +312,8 @@ class AlertRepository:
     def _to_model(self, row: AlertRow) -> Alert:
         return Alert(
             id=row.id,
+            state_date=row.state_date,
+            fingerprint=row.fingerprint,
             status=row.status,
             channel=row.channel,
             escalation_level=row.escalation_level,
@@ -283,6 +323,53 @@ class AlertRepository:
             source_signal_ids=[UUID(signal_id) for signal_id in row.source_signal_ids],
             created_at=_normalize_datetime(row.created_at),
             sent_at=_normalize_datetime(row.sent_at),
+        )
+
+
+class OrchestrationRunRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create(self, run: OrchestrationRun) -> OrchestrationRun:
+        row = OrchestrationRunRow(
+            id=run.id,
+            state_date=run.state_date,
+            state_fingerprint=run.state_fingerprint,
+            executed_at=run.executed_at,
+            signal_ids=[str(signal_id) for signal_id in run.signal_ids],
+            alert_ids=[str(alert_id) for alert_id in run.alert_ids],
+        )
+        self._session.add(row)
+        self._session.flush()
+        return self._to_model(row)
+
+    def get_latest_for_state_date(self, state_date: date) -> OrchestrationRun | None:
+        row = self._session.scalar(
+            select(OrchestrationRunRow)
+            .where(OrchestrationRunRow.state_date == state_date)
+            .order_by(OrchestrationRunRow.executed_at.desc())
+            .limit(1)
+        )
+        if row is None:
+            return None
+        return self._to_model(row)
+
+    def list_for_state_date(self, state_date: date) -> list[OrchestrationRun]:
+        rows = self._session.scalars(
+            select(OrchestrationRunRow)
+            .where(OrchestrationRunRow.state_date == state_date)
+            .order_by(OrchestrationRunRow.executed_at.desc())
+        ).all()
+        return [self._to_model(row) for row in rows]
+
+    def _to_model(self, row: OrchestrationRunRow) -> OrchestrationRun:
+        return OrchestrationRun(
+            id=row.id,
+            state_date=row.state_date,
+            state_fingerprint=row.state_fingerprint,
+            executed_at=_normalize_datetime(row.executed_at),
+            signal_ids=[UUID(signal_id) for signal_id in row.signal_ids],
+            alert_ids=[UUID(alert_id) for alert_id in row.alert_ids],
         )
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Date, DateTime, String, Text
+from sqlalchemy import JSON, Date, DateTime, String, Text, UniqueConstraint
 from sqlalchemy import UUID as SQLUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -68,9 +68,18 @@ class EventRow(Base):
 
 class SignalRow(Base):
     __tablename__ = "signals"
+    __table_args__ = (
+        UniqueConstraint(
+            "state_date",
+            "fingerprint",
+            name="uq_signals_state_date_fingerprint",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    state_date: Mapped[date] = mapped_column(Date)
     kind: Mapped[str] = mapped_column(String(64))
+    fingerprint: Mapped[str] = mapped_column(String(64))
     severity: Mapped[str] = mapped_column(String(32))
     summary: Mapped[str] = mapped_column(Text)
     reason: Mapped[str] = mapped_column(Text)
@@ -82,8 +91,17 @@ class SignalRow(Base):
 
 class AlertRow(Base):
     __tablename__ = "alerts"
+    __table_args__ = (
+        UniqueConstraint(
+            "state_date",
+            "fingerprint",
+            name="uq_alerts_state_date_fingerprint",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    state_date: Mapped[date] = mapped_column(Date)
+    fingerprint: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), default="pending")
     channel: Mapped[str] = mapped_column(String(32))
     escalation_level: Mapped[str] = mapped_column(String(32), default="visible")
@@ -93,3 +111,14 @@ class AlertRow(Base):
     source_signal_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OrchestrationRunRow(Base):
+    __tablename__ = "orchestration_runs"
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    state_date: Mapped[date] = mapped_column(Date)
+    state_fingerprint: Mapped[str] = mapped_column(String(64))
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    signal_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    alert_ids: Mapped[list[str]] = mapped_column(JSON, default=list)

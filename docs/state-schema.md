@@ -128,6 +128,19 @@ Core fields:
 - `created_at`
 - `sent_at`
 
+### OrchestrationRun
+
+Represents one durable execution of the narrow orchestration path for a target state date.
+
+Core fields:
+
+- `id`
+- `state_date`
+- `state_fingerprint`
+- `executed_at`
+- `signal_ids`
+- `alert_ids`
+
 ## Explainability
 
 Signals and alerts must preserve enough evidence to answer "why was this surfaced?" directly.
@@ -148,6 +161,12 @@ The first `ari-core` orchestration path remains intentionally narrow.
 - persist the generated `Alert` records without delivering notifications
 
 This path must stay explainable end to end. `ari-core` orchestrates repository access and uses the canonical signal and alert models, but it must not add parallel signal or alert logic outside `packages/ari-signals`.
+
+Repeated orchestration runs must also stay stable and explainable.
+
+- persist a lightweight `OrchestrationRun` record for each execution
+- use durable fingerprints on persisted `Signal` and `Alert` records to avoid recreating identical outputs for the same `state_date`
+- preserve the original `reason`, `evidence`, and `source_signal_ids` chain when reusing prior records
 
 ## Initial Routine Contracts
 

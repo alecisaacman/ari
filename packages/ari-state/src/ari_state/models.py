@@ -66,7 +66,9 @@ class Project(ARIModel):
 
 class Signal(ARIModel):
     id: UUID = Field(default_factory=uuid4)
+    state_date: date | None = None
     kind: str
+    fingerprint: str = ""
     severity: SignalSeverity
     summary: str
     reason: str
@@ -97,6 +99,8 @@ class Event(ARIModel):
 
 class Alert(ARIModel):
     id: UUID = Field(default_factory=uuid4)
+    state_date: date | None = None
+    fingerprint: str = ""
     status: AlertStatus = AlertStatus.PENDING
     channel: AlertChannel
     escalation_level: AlertEscalationLevel = AlertEscalationLevel.VISIBLE
@@ -106,3 +110,12 @@ class Alert(ARIModel):
     source_signal_ids: list[UUID] = Field(default_factory=list)
     created_at: datetime
     sent_at: datetime | None = None
+
+
+class OrchestrationRun(ARIModel):
+    id: UUID = Field(default_factory=uuid4)
+    state_date: date
+    state_fingerprint: str
+    executed_at: datetime
+    signal_ids: list[UUID] = Field(default_factory=list)
+    alert_ids: list[UUID] = Field(default_factory=list)

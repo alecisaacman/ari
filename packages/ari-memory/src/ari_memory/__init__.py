@@ -4,6 +4,7 @@ from ari_memory.repositories import (
     DailyStateRepository,
     EventRepository,
     OpenLoopRepository,
+    OrchestrationRunRepository,
     SignalRepository,
     WeeklyStateRepository,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "DatabaseSettings",
     "EventRepository",
     "OpenLoopRepository",
+    "OrchestrationRunRepository",
     "SignalRepository",
     "WeeklyStateRepository",
     "create_engine",
