@@ -227,6 +227,14 @@ class SignalRepository:
     def create_many(self, signals: list[Signal]) -> list[Signal]:
         return [self.create(signal) for signal in signals]
 
+    def list_by_ids(self, signal_ids: list[UUID]) -> list[Signal]:
+        signals_by_id = {
+            signal_id: signal
+            for signal_id in signal_ids
+            if (signal := self.get(signal_id)) is not None
+        }
+        return [signals_by_id[signal_id] for signal_id in signal_ids if signal_id in signals_by_id]
+
     def get_by_fingerprint(self, *, state_date: date, fingerprint: str) -> Signal | None:
         row = self._session.scalar(
             select(SignalRow).where(
@@ -292,6 +300,12 @@ class AlertRepository:
     def create_many(self, alerts: list[Alert]) -> list[Alert]:
         return [self.create(alert) for alert in alerts]
 
+    def list_by_ids(self, alert_ids: list[UUID]) -> list[Alert]:
+        alerts_by_id = {
+            alert_id: alert for alert_id in alert_ids if (alert := self.get(alert_id)) is not None
+        }
+        return [alerts_by_id[alert_id] for alert_id in alert_ids if alert_id in alerts_by_id]
+
     def get_by_fingerprint(self, *, state_date: date, fingerprint: str) -> Alert | None:
         row = self._session.scalar(
             select(AlertRow).where(
@@ -344,23 +358,27 @@ class OrchestrationRunRepository:
         return self._to_model(row)
 
     def get_latest_for_state_date(self, state_date: date) -> OrchestrationRun | None:
-        row = self._session.scalar(
-            select(OrchestrationRunRow)
-            .where(OrchestrationRunRow.state_date == state_date)
-            .order_by(OrchestrationRunRow.executed_at.desc())
-            .limit(1)
-        )
+        row = self._session.scalar(self._state_date_runs_query(state_date).limit(1))
+        if row is None:
+            return None
+        return self._to_model(row)
+
+    def get_previous_for_state_date(self, state_date: date) -> OrchestrationRun | None:
+        row = self._session.scalar(self._state_date_runs_query(state_date).offset(1).limit(1))
         if row is None:
             return None
         return self._to_model(row)
 
     def list_for_state_date(self, state_date: date) -> list[OrchestrationRun]:
-        rows = self._session.scalars(
+        rows = self._session.scalars(self._state_date_runs_query(state_date)).all()
+        return [self._to_model(row) for row in rows]
+
+    def _state_date_runs_query(self, state_date: date):
+        return (
             select(OrchestrationRunRow)
             .where(OrchestrationRunRow.state_date == state_date)
-            .order_by(OrchestrationRunRow.executed_at.desc())
-        ).all()
-        return [self._to_model(row) for row in rows]
+            .order_by(OrchestrationRunRow.executed_at.desc(), OrchestrationRunRow.id.desc())
+        )
 
     def _to_model(self, row: OrchestrationRunRow) -> OrchestrationRun:
         return OrchestrationRun(

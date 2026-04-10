@@ -167,6 +167,7 @@ Repeated orchestration runs must also stay stable and explainable.
 - persist a lightweight `OrchestrationRun` record for each execution
 - use durable fingerprints on persisted `Signal` and `Alert` records to avoid recreating identical outputs for the same `state_date`
 - preserve the original `reason`, `evidence`, and `source_signal_ids` chain when reusing prior records
+- support a narrow read path that can load the latest run, the previous run, the linked signals and alerts for a run, and a direct comparison of the latest two runs for the same `state_date`
 
 ## Initial Routine Contracts
 
