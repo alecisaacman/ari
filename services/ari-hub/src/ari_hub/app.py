@@ -33,9 +33,20 @@ class OrchestrationHistoryClient:
     def compare_latest_two_runs(self, *, state_date: date) -> JSONDict:
         return self._fetch("/orchestration-runs/compare-latest-two", state_date=state_date)
 
-    def _fetch(self, path: str, *, state_date: date) -> JSONDict:
-        query = urlencode({"state_date": state_date.isoformat()})
-        url = f"{self._base_url}{path}?{query}"
+    def get_current_daily_state(self, *, state_date: date) -> JSONDict:
+        return self._fetch("/daily-states/current", state_date=state_date)
+
+    def get_current_weekly_state(self, *, state_date: date) -> JSONDict:
+        return self._fetch("/weekly-states/current", state_date=state_date)
+
+    def get_active_open_loops(self) -> JSONDict:
+        return self._fetch("/open-loops/active")
+
+    def _fetch(self, path: str, *, state_date: date | None = None) -> JSONDict:
+        url = f"{self._base_url}{path}"
+        if state_date is not None:
+            query = urlencode({"state_date": state_date.isoformat()})
+            url = f"{url}?{query}"
         try:
             with urlopen(url) as response:
                 return json.load(response)
@@ -61,26 +72,60 @@ def create_app(api_client: OrchestrationHistoryClient | None = None) -> FastAPI:
                     state_date=resolved_state_date,
                     latest_run=None,
                     comparison=None,
+                    daily_state=None,
+                    weekly_state=None,
+                    active_open_loops=None,
                     latest_error=error.detail,
                     comparison_error=None,
+                    daily_state_error=None,
+                    weekly_state_error=None,
+                    active_open_loops_error=None,
                 ),
                 status_code=error.status_code,
             )
 
         comparison: JSONDict | None = None
+        daily_state: JSONDict | None = None
+        weekly_state: JSONDict | None = None
+        active_open_loops: JSONDict | None = None
         comparison_error: str | None = None
+        daily_state_error: str | None = None
+        weekly_state_error: str | None = None
+        active_open_loops_error: str | None = None
         try:
             comparison = resolved_client.compare_latest_two_runs(state_date=resolved_state_date)
         except HubAPIError as error:
             comparison_error = error.detail
+        try:
+            daily_state = resolved_client.get_current_daily_state(
+                state_date=resolved_state_date
+            )
+        except HubAPIError as error:
+            daily_state_error = error.detail
+        try:
+            weekly_state = resolved_client.get_current_weekly_state(
+                state_date=resolved_state_date
+            )
+        except HubAPIError as error:
+            weekly_state_error = error.detail
+        try:
+            active_open_loops = resolved_client.get_active_open_loops()
+        except HubAPIError as error:
+            active_open_loops_error = error.detail
 
         return HTMLResponse(
             content=render_hub_page(
                 state_date=resolved_state_date,
                 latest_run=latest_run,
                 comparison=comparison,
+                daily_state=daily_state,
+                weekly_state=weekly_state,
+                active_open_loops=active_open_loops,
                 latest_error=None,
                 comparison_error=comparison_error,
+                daily_state_error=daily_state_error,
+                weekly_state_error=weekly_state_error,
+                active_open_loops_error=active_open_loops_error,
             )
         )
 
@@ -92,14 +137,32 @@ def render_hub_page(
     state_date: date,
     latest_run: JSONDict | None,
     comparison: JSONDict | None,
+    daily_state: JSONDict | None,
+    weekly_state: JSONDict | None,
+    active_open_loops: JSONDict | None,
     latest_error: str | None,
     comparison_error: str | None,
+    daily_state_error: str | None,
+    weekly_state_error: str | None,
+    active_open_loops_error: str | None,
 ) -> str:
     sections = [
         _render_latest_section(latest_run=latest_run, latest_error=latest_error),
         _render_comparison_section(
             comparison=comparison,
             comparison_error=comparison_error,
+        ),
+        _render_daily_state_section(
+            daily_state=daily_state,
+            daily_state_error=daily_state_error,
+        ),
+        _render_weekly_state_section(
+            weekly_state=weekly_state,
+            weekly_state_error=weekly_state_error,
+        ),
+        _render_open_loops_section(
+            active_open_loops=active_open_loops,
+            active_open_loops_error=active_open_loops_error,
         ),
         _render_signals_section(comparison=comparison, latest_run=latest_run),
         _render_alerts_section(comparison=comparison, latest_run=latest_run),
@@ -307,6 +370,111 @@ def _render_signals_section(
     )
 
 
+def _render_daily_state_section(
+    *,
+    daily_state: JSONDict | None,
+    daily_state_error: str | None,
+) -> str:
+    if daily_state is None:
+        return _render_section(
+            "Current Operational State",
+            f'<p class="empty">{escape(daily_state_error or "No daily state found.")}</p>',
+        )
+
+    movement = daily_state["movement"]
+    if movement is True:
+        movement_label = "recorded"
+    elif movement is False:
+        movement_label = "not recorded"
+    else:
+        movement_label = "unknown"
+    stress_label = "unknown" if daily_state["stress"] is None else str(daily_state["stress"])
+    win_condition = escape(daily_state["win_condition"])
+    next_action = escape(daily_state["next_action"])
+    return _render_section(
+        "Current Operational State",
+        "<dl>"
+        f"<dt>State date</dt><dd>{escape(daily_state['date'])}</dd>"
+        f"<dt>Top priorities</dt><dd>{_render_inline_list(daily_state['priorities'])}</dd>"
+        f"<dt>Win condition</dt><dd>{win_condition or _empty_inline('None set.')}</dd>"
+        f"<dt>Movement</dt><dd>{escape(movement_label)}</dd>"
+        f"<dt>Stress</dt><dd>{escape(stress_label)}</dd>"
+        f"<dt>Next action</dt><dd>{next_action or _empty_inline('None set.')}</dd>"
+        f"<dt>Last check</dt><dd>{escape(daily_state['last_check_at'] or 'unknown')}</dd>"
+        "</dl>",
+    )
+
+
+def _render_weekly_state_section(
+    *,
+    weekly_state: JSONDict | None,
+    weekly_state_error: str | None,
+) -> str:
+    if weekly_state is None:
+        return _render_section(
+            "Weekly Trajectory",
+            f'<p class="empty">{escape(weekly_state_error or "No weekly state found.")}</p>',
+        )
+
+    lesson = escape(weekly_state["lesson"])
+    return _render_section(
+        "Weekly Trajectory",
+        "<dl>"
+        f"<dt>Week start</dt><dd>{escape(weekly_state['week_start'])}</dd>"
+        f"<dt>Outcomes</dt><dd>{_render_inline_list(weekly_state['outcomes'])}</dd>"
+        f"<dt>Cannot drift</dt><dd>{_render_inline_list(weekly_state['cannot_drift'])}</dd>"
+        f"<dt>Blockers</dt><dd>{_render_inline_list(weekly_state['blockers'])}</dd>"
+        f"<dt>Lesson</dt><dd>{lesson or _empty_inline('None captured.')}</dd>"
+        f"<dt>Last review</dt><dd>{escape(weekly_state['last_review_at'] or 'unknown')}</dd>"
+        "</dl>",
+    )
+
+
+def _render_open_loops_section(
+    *,
+    active_open_loops: JSONDict | None,
+    active_open_loops_error: str | None,
+) -> str:
+    if active_open_loops is None:
+        return _render_section(
+            "Active Open Loops",
+            f'<p class="empty">{escape(active_open_loops_error or "No open loops available.")}</p>',
+        )
+
+    loops = _list_from(active_open_loops, "loops")
+    if not loops:
+        return _render_section(
+            "Active Open Loops",
+            '<p class="empty">No active open loops.</p>',
+        )
+
+    items = []
+    for loop in loops:
+        due_at = loop["due_at"] or "none"
+        last_touched = loop["last_touched_at"] or "unknown"
+        notes = escape(loop["notes"]) if loop["notes"] else _empty_inline("No notes.")
+        subtitle = (
+            f'{escape(loop["priority"])} | '
+            f'{escape(loop["kind"])} | '
+            f'{escape(loop["status"])}'
+        )
+        items.append(
+            "<article>"
+            f"<h3>{escape(loop['title'])}</h3>"
+            f'<p class="muted">{subtitle}</p>'
+            "<dl>"
+            f"<dt>Source</dt><dd>{escape(loop['source'])}</dd>"
+            f"<dt>Opened</dt><dd>{escape(loop['opened_at'])}</dd>"
+            f"<dt>Due</dt><dd>{escape(due_at)}</dd>"
+            f"<dt>Last touched</dt><dd>{escape(last_touched)}</dd>"
+            f"<dt>Project id</dt><dd>{escape(loop['project_id'] or 'none')}</dd>"
+            f"<dt>Notes</dt><dd>{notes}</dd>"
+            "</dl>"
+            "</article>"
+        )
+    return _render_section("Active Open Loops", "".join(items))
+
+
 def _render_alerts_section(
     *,
     comparison: JSONDict | None,
@@ -402,6 +570,12 @@ def _render_id_list(label: str, ids: list[str]) -> str:
     return f"<p><strong>{escape(label)}:</strong></p><div>{pills}</div>"
 
 
+def _render_inline_list(items: list[str]) -> str:
+    if not items:
+        return _empty_inline("None.")
+    return "".join(f'<span class="pill">{escape(item)}</span>' for item in items)
+
+
 def _classification_map(*, reused_ids: list[str], new_ids: list[str]) -> dict[str, str]:
     classification = {entity_id: "reused" for entity_id in reused_ids}
     classification.update({entity_id: "new" for entity_id in new_ids})
@@ -428,3 +602,7 @@ def _extract_error_detail(error: HTTPError) -> str:
 
 def _api_base_url() -> str:
     return os.environ.get("ARI_API_BASE_URL", "http://localhost:8000")
+
+
+def _empty_inline(message: str) -> str:
+    return f'<span class="empty">{escape(message)}</span>'

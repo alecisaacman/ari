@@ -21,9 +21,20 @@ from sqlalchemy.pool import StaticPool
 
 
 class StubHistoryClient:
-    def __init__(self, *, latest_run: dict[str, Any], comparison: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        *,
+        latest_run: dict[str, Any],
+        comparison: dict[str, Any],
+        daily_state: dict[str, Any],
+        weekly_state: dict[str, Any],
+        active_open_loops: dict[str, Any],
+    ) -> None:
         self.latest_run = latest_run
         self.comparison = comparison
+        self.daily_state = daily_state
+        self.weekly_state = weekly_state
+        self.active_open_loops = active_open_loops
         self.requested_dates: list[date] = []
 
     def get_latest_run(self, *, state_date: date) -> dict[str, Any]:
@@ -34,22 +45,50 @@ class StubHistoryClient:
         self.requested_dates.append(state_date)
         return self.comparison
 
+    def get_current_daily_state(self, *, state_date: date) -> dict[str, Any]:
+        self.requested_dates.append(state_date)
+        return self.daily_state
+
+    def get_current_weekly_state(self, *, state_date: date) -> dict[str, Any]:
+        self.requested_dates.append(state_date)
+        return self.weekly_state
+
+    def get_active_open_loops(self) -> dict[str, Any]:
+        return self.active_open_loops
+
 
 def test_hub_page_renders_expected_sections_and_change_markers() -> None:
-    latest_run, comparison = _build_read_models()
-    client = StubHistoryClient(latest_run=latest_run, comparison=comparison)
+    latest_run, comparison, daily_state, weekly_state, active_open_loops = _build_read_models()
+    client = StubHistoryClient(
+        latest_run=latest_run,
+        comparison=comparison,
+        daily_state=daily_state,
+        weekly_state=weekly_state,
+        active_open_loops=active_open_loops,
+    )
     app = create_hub_app(api_client=client)
 
     with TestClient(app) as test_client:
         response = test_client.get("/", params={"state_date": "2026-04-10"})
 
     assert response.status_code == 200
-    assert client.requested_dates == [date(2026, 4, 10), date(2026, 4, 10)]
+    assert client.requested_dates == [
+        date(2026, 4, 10),
+        date(2026, 4, 10),
+        date(2026, 4, 10),
+        date(2026, 4, 10),
+    ]
     body = response.text
     assert "Latest Run" in body
     assert "Latest vs Previous" in body
+    assert "Current Operational State" in body
+    assert "Weekly Trajectory" in body
+    assert "Active Open Loops" in body
     assert "Linked Signals" in body
     assert "Linked Alerts" in body
+    assert "Inbox cleanup" in body
+    assert "Launch the routine spine" in body
+    assert "Loop 0" in body
     assert "State fingerprint changed:</strong> yes" in body
     assert "Reused signal ids" in body
     assert "New signal ids" in body
@@ -62,7 +101,9 @@ def test_hub_page_renders_expected_sections_and_change_markers() -> None:
 def test_hub_page_consumes_canonical_api_payloads() -> None:
     session_factory = _build_changed_history_session_factory()
     api_app = create_api_app(session_factory)
-    latest_run, comparison = _build_read_models(api_app)
+    latest_run, comparison, daily_state, weekly_state, active_open_loops = _build_read_models(
+        api_app
+    )
     hub_app = create_hub_app(
         api_client=APIBackedHistoryClient(api_app),
     )
@@ -75,6 +116,9 @@ def test_hub_page_consumes_canonical_api_payloads() -> None:
     assert "ARI Hub" in body
     assert latest_run["run"]["run_id"] in body
     assert comparison["previous_run"]["run_id"] in body
+    assert daily_state["next_action"] in body
+    assert weekly_state["week_start"] in body
+    assert active_open_loops["loops"][0]["title"] in body
     assert comparison["signals"][0]["summary"] in body
     assert comparison["alerts"][0]["title"] in body
     assert "Latest Summary" in body
@@ -93,6 +137,25 @@ def test_hub_page_returns_not_found_when_latest_run_is_missing() -> None:
     assert "No orchestration run found for 2026-04-11." in response.text
 
 
+def test_hub_page_renders_empty_weekly_state_and_open_loops() -> None:
+    latest_run, comparison, daily_state, _, _ = _build_read_models()
+    app = create_hub_app(
+        api_client=StateGapHistoryClient(
+            latest_run=latest_run,
+            comparison=comparison,
+            daily_state=daily_state,
+            weekly_detail="No weekly state found for the week of 2026-04-06.",
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/", params={"state_date": "2026-04-10"})
+
+    assert response.status_code == 200
+    assert "No weekly state found for the week of 2026-04-06." in response.text
+    assert "No active open loops." in response.text
+
+
 class APIBackedHistoryClient:
     def __init__(self, api_app: Any) -> None:
         self._client = TestClient(api_app)
@@ -102,6 +165,17 @@ class APIBackedHistoryClient:
 
     def compare_latest_two_runs(self, *, state_date: date) -> dict[str, Any]:
         return self._get("/orchestration-runs/compare-latest-two", state_date)
+
+    def get_current_daily_state(self, *, state_date: date) -> dict[str, Any]:
+        return self._get("/daily-states/current", state_date)
+
+    def get_current_weekly_state(self, *, state_date: date) -> dict[str, Any]:
+        return self._get("/weekly-states/current", state_date)
+
+    def get_active_open_loops(self) -> dict[str, Any]:
+        response = self._client.get("/open-loops/active")
+        response.raise_for_status()
+        return response.json()
 
     def _get(self, path: str, state_date: date) -> dict[str, Any]:
         response = self._client.get(path, params={"state_date": state_date.isoformat()})
@@ -122,9 +196,39 @@ class MissingLatestHistoryClient:
         )
 
 
+class StateGapHistoryClient:
+    def __init__(
+        self,
+        *,
+        latest_run: dict[str, Any],
+        comparison: dict[str, Any],
+        daily_state: dict[str, Any],
+        weekly_detail: str,
+    ) -> None:
+        self._latest_run = latest_run
+        self._comparison = comparison
+        self._daily_state = daily_state
+        self._weekly_detail = weekly_detail
+
+    def get_latest_run(self, *, state_date: date) -> dict[str, Any]:
+        return self._latest_run
+
+    def compare_latest_two_runs(self, *, state_date: date) -> dict[str, Any]:
+        return self._comparison
+
+    def get_current_daily_state(self, *, state_date: date) -> dict[str, Any]:
+        return self._daily_state
+
+    def get_current_weekly_state(self, *, state_date: date) -> dict[str, Any]:
+        raise HubAPIError(status_code=404, detail=self._weekly_detail)
+
+    def get_active_open_loops(self) -> dict[str, Any]:
+        return {"loops": []}
+
+
 def _build_read_models(
     api_app: Any | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     resolved_api_app = api_app or create_api_app(_build_changed_history_session_factory())
     client = TestClient(resolved_api_app)
     latest_response = client.get(
@@ -135,9 +239,27 @@ def _build_read_models(
         "/orchestration-runs/compare-latest-two",
         params={"state_date": "2026-04-10"},
     )
+    daily_state_response = client.get(
+        "/daily-states/current",
+        params={"state_date": "2026-04-10"},
+    )
+    weekly_state_response = client.get(
+        "/weekly-states/current",
+        params={"state_date": "2026-04-10"},
+    )
+    open_loops_response = client.get("/open-loops/active")
     latest_response.raise_for_status()
     comparison_response.raise_for_status()
-    return latest_response.json(), comparison_response.json()
+    daily_state_response.raise_for_status()
+    weekly_state_response.raise_for_status()
+    open_loops_response.raise_for_status()
+    return (
+        latest_response.json(),
+        comparison_response.json(),
+        daily_state_response.json(),
+        weekly_state_response.json(),
+        open_loops_response.json(),
+    )
 
 
 def _build_changed_history_session_factory() -> sessionmaker[Session]:

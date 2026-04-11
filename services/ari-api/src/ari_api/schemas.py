@@ -4,7 +4,7 @@ from datetime import date, datetime
 from uuid import UUID
 
 from ari_core import OrchestrationRunComparison, OrchestrationRunDetails
-from ari_state import Alert, EvidenceItem, Signal
+from ari_state import Alert, DailyState, EvidenceItem, OpenLoop, Signal, WeeklyState
 from pydantic import BaseModel, ConfigDict
 
 
@@ -76,6 +76,43 @@ class OrchestrationRunComparisonResponse(APIModel):
     alerts: list[AlertResponse]
 
 
+class DailyStateResponse(APIModel):
+    date: date
+    priorities: list[str]
+    win_condition: str
+    movement: bool | None
+    stress: int | None
+    next_action: str
+    last_check_at: datetime | None
+
+
+class WeeklyStateResponse(APIModel):
+    week_start: date
+    outcomes: list[str]
+    cannot_drift: list[str]
+    blockers: list[str]
+    lesson: str
+    last_review_at: datetime | None
+
+
+class OpenLoopResponse(APIModel):
+    id: UUID
+    title: str
+    status: str
+    kind: str
+    priority: str
+    source: str
+    notes: str
+    project_id: UUID | None
+    opened_at: datetime
+    due_at: datetime | None
+    last_touched_at: datetime | None
+
+
+class ActiveOpenLoopsResponse(APIModel):
+    loops: list[OpenLoopResponse]
+
+
 def build_run_response(details: OrchestrationRunDetails) -> OrchestrationRunResponse:
     return OrchestrationRunResponse(
         run=_build_run_summary(details),
@@ -99,6 +136,35 @@ def build_run_comparison_response(
         new_alert_ids=[*comparison.new_alert_ids],
         signals=[_build_signal_response(signal) for signal in latest.signals],
         alerts=[_build_alert_response(alert) for alert in latest.alerts],
+    )
+
+
+def build_daily_state_response(state: DailyState) -> DailyStateResponse:
+    return DailyStateResponse(
+        date=state.date,
+        priorities=[*state.priorities],
+        win_condition=state.win_condition,
+        movement=state.movement,
+        stress=state.stress,
+        next_action=state.next_action,
+        last_check_at=state.last_check_at,
+    )
+
+
+def build_weekly_state_response(state: WeeklyState) -> WeeklyStateResponse:
+    return WeeklyStateResponse(
+        week_start=state.week_start,
+        outcomes=[*state.outcomes],
+        cannot_drift=[*state.cannot_drift],
+        blockers=[*state.blockers],
+        lesson=state.lesson,
+        last_review_at=state.last_review_at,
+    )
+
+
+def build_active_open_loops_response(loops: list[OpenLoop]) -> ActiveOpenLoopsResponse:
+    return ActiveOpenLoopsResponse(
+        loops=[_build_open_loop_response(loop) for loop in loops],
     )
 
 
@@ -154,4 +220,20 @@ def _build_evidence_item_response(item: EvidenceItem) -> EvidenceItemResponse:
         entity_type=item.entity_type,
         entity_id=item.entity_id,
         payload=dict(item.payload),
+    )
+
+
+def _build_open_loop_response(loop: OpenLoop) -> OpenLoopResponse:
+    return OpenLoopResponse(
+        id=loop.id,
+        title=loop.title,
+        status=loop.status,
+        kind=loop.kind,
+        priority=loop.priority,
+        source=loop.source,
+        notes=loop.notes,
+        project_id=loop.project_id,
+        opened_at=loop.opened_at,
+        due_at=loop.due_at,
+        last_touched_at=loop.last_touched_at,
     )

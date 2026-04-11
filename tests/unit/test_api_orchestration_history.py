@@ -1,7 +1,13 @@
 from datetime import UTC, date, datetime, timedelta
 
 from ari_api import create_app
-from ari_api.schemas import build_run_comparison_response, build_run_response
+from ari_api.schemas import (
+    build_active_open_loops_response,
+    build_daily_state_response,
+    build_run_comparison_response,
+    build_run_response,
+    build_weekly_state_response,
+)
 from ari_core import (
     RunSignalOrchestrationInput,
     compare_latest_two_runs,
@@ -147,6 +153,90 @@ def test_compare_latest_two_runs_endpoint_exposes_expected_shape_fields() -> Non
     ]
 
 
+def test_current_daily_state_endpoint_returns_canonical_daily_state() -> None:
+    session_factory = _build_changed_history_session_factory()
+    app = create_app(session_factory)
+
+    with session_factory() as session:
+        state = DailyStateRepository(session).get(date(2026, 4, 10))
+    assert state is not None
+    expected = build_daily_state_response(state).model_dump(mode="json")
+
+    with TestClient(app) as client:
+        response = client.get("/daily-states/current", params={"state_date": "2026-04-10"})
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_current_weekly_state_endpoint_uses_corresponding_week_start() -> None:
+    session_factory = _build_changed_history_session_factory()
+    app = create_app(session_factory)
+
+    with session_factory() as session:
+        state = WeeklyStateRepository(session).get(date(2026, 4, 6))
+    assert state is not None
+    expected = build_weekly_state_response(state).model_dump(mode="json")
+
+    with TestClient(app) as client:
+        response = client.get("/weekly-states/current", params={"state_date": "2026-04-10"})
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_active_open_loops_endpoint_returns_open_loops_only() -> None:
+    session_factory = _build_changed_history_session_factory()
+    app = create_app(session_factory)
+
+    with session_factory() as session:
+        loops = OpenLoopRepository(session).list_open()
+    expected = build_active_open_loops_response(loops).model_dump(mode="json")
+
+    with TestClient(app) as client:
+        response = client.get("/open-loops/active")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert response.json()["loops"]
+    assert all(loop["status"] != "closed" for loop in response.json()["loops"])
+
+
+def test_current_daily_state_endpoint_returns_not_found_when_missing() -> None:
+    session_factory = _build_empty_session_factory()
+    app = create_app(session_factory)
+
+    with TestClient(app) as client:
+        response = client.get("/daily-states/current", params={"state_date": "2026-04-11"})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "No daily state found for 2026-04-11."}
+
+
+def test_current_weekly_state_endpoint_returns_not_found_when_missing() -> None:
+    session_factory = _build_daily_only_session_factory()
+    app = create_app(session_factory)
+
+    with TestClient(app) as client:
+        response = client.get("/weekly-states/current", params={"state_date": "2026-04-11"})
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "No weekly state found for the week of 2026-04-06."
+    }
+
+
+def test_active_open_loops_endpoint_returns_empty_list_when_none_are_active() -> None:
+    session_factory = _build_empty_session_factory()
+    app = create_app(session_factory)
+
+    with TestClient(app) as client:
+        response = client.get("/open-loops/active")
+
+    assert response.status_code == 200
+    assert response.json() == {"loops": []}
+
+
 def _build_changed_history_session_factory() -> sessionmaker[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -193,6 +283,34 @@ def _build_changed_history_session_factory() -> sessionmaker[Session]:
         )
 
     return create_session_factory(engine)
+
+
+def _build_empty_session_factory() -> sessionmaker[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return create_session_factory(engine)
+
+
+def _build_daily_only_session_factory() -> sessionmaker[Session]:
+    session_factory = _build_empty_session_factory()
+    with session_factory() as session:
+        DailyStateRepository(session).upsert(
+            DailyState(
+                date=date(2026, 4, 11),
+                priorities=["Stabilize read surface"],
+                win_condition="Keep the slice thin.",
+                movement=None,
+                stress=None,
+                next_action="Check the API contract.",
+            )
+        )
+        session.commit()
+    return session_factory
 
 
 def _seed_orchestration_state(engine: Engine, *, detected_at: datetime) -> None:
