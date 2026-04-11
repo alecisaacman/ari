@@ -54,9 +54,21 @@ Shows the current `WeeklyState`:
 
 Shows what ARI thinks is changing in the system and why, with direct evidence.
 
+The hub should support a simple drill-down into one surfaced signal so the operator can inspect:
+
+- reason
+- structured evidence items
+- related entity references when present
+
 ### Alerts / Intelligence
 
 Shows escalations and high-value surfaced items with the reason they were elevated.
+
+The hub should support a simple drill-down into one surfaced alert so the operator can inspect:
+
+- reason
+- source signal ids
+- the linked source signal evidence chain through the API
 
 The hub should feel like an operating console, not a wellness dashboard.
 

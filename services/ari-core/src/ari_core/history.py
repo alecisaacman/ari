@@ -68,6 +68,22 @@ def compare_latest_two_runs(
     return _compare_runs(latest=latest, previous=previous)
 
 
+def get_signal_details(
+    session: Session,
+    *,
+    signal_id: UUID,
+) -> Signal | None:
+    return SignalRepository(session).get(signal_id)
+
+
+def get_alert_details(
+    session: Session,
+    *,
+    alert_id: UUID,
+) -> Alert | None:
+    return AlertRepository(session).get(alert_id)
+
+
 def _load_run_details(session: Session, *, run: OrchestrationRun) -> OrchestrationRunDetails:
     signals = SignalRepository(session).list_by_ids(run.signal_ids)
     alerts = AlertRepository(session).list_by_ids(run.alert_ids)

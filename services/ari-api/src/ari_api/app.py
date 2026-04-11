@@ -5,8 +5,10 @@ from datetime import date, timedelta
 
 from ari_core import (
     compare_latest_two_runs,
+    get_alert_details,
     get_latest_run_details,
     get_previous_run_details,
+    get_signal_details,
 )
 from ari_memory import (
     DailyStateRepository,
@@ -21,14 +23,18 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ari_api.schemas import (
     ActiveOpenLoopsResponse,
+    AlertResponse,
     DailyStateResponse,
     OrchestrationRunComparisonResponse,
     OrchestrationRunResponse,
+    SignalResponse,
     WeeklyStateResponse,
     build_active_open_loops_response,
+    build_alert_response,
     build_daily_state_response,
     build_run_comparison_response,
     build_run_response,
+    build_signal_response,
     build_weekly_state_response,
 )
 
@@ -95,6 +101,42 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                 ),
         )
         return build_run_comparison_response(comparison, latest, previous)
+
+    @app.get(
+        "/signals/{signal_id}",
+        response_model=SignalResponse,
+    )
+    def signal_detail(
+        signal_id: str,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> SignalResponse:
+        from uuid import UUID
+
+        signal = get_signal_details(session, signal_id=UUID(signal_id))
+        if signal is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No signal found for {signal_id}.",
+            )
+        return build_signal_response(signal)
+
+    @app.get(
+        "/alerts/{alert_id}",
+        response_model=AlertResponse,
+    )
+    def alert_detail(
+        alert_id: str,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> AlertResponse:
+        from uuid import UUID
+
+        alert = get_alert_details(session, alert_id=UUID(alert_id))
+        if alert is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No alert found for {alert_id}.",
+            )
+        return build_alert_response(alert)
 
     @app.get(
         "/daily-states/current",

@@ -3,16 +3,20 @@ from datetime import UTC, date, datetime, timedelta
 from ari_api import create_app
 from ari_api.schemas import (
     build_active_open_loops_response,
+    build_alert_response,
     build_daily_state_response,
     build_run_comparison_response,
     build_run_response,
+    build_signal_response,
     build_weekly_state_response,
 )
 from ari_core import (
     RunSignalOrchestrationInput,
     compare_latest_two_runs,
+    get_alert_details,
     get_latest_run_details,
     get_previous_run_details,
+    get_signal_details,
     run_signal_orchestration,
 )
 from ari_memory import Base, DailyStateRepository, OpenLoopRepository, WeeklyStateRepository
@@ -202,6 +206,42 @@ def test_active_open_loops_endpoint_returns_open_loops_only() -> None:
     assert all(loop["status"] != "closed" for loop in response.json()["loops"])
 
 
+def test_signal_detail_endpoint_returns_canonical_signal_read_model() -> None:
+    session_factory = _build_changed_history_session_factory()
+    app = create_app(session_factory)
+
+    with session_factory() as session:
+        latest = get_latest_run_details(session, state_date=date(2026, 4, 10))
+        assert latest is not None
+        signal = get_signal_details(session, signal_id=latest.signals[0].id)
+    assert signal is not None
+    expected = build_signal_response(signal).model_dump(mode="json")
+
+    with TestClient(app) as client:
+        response = client.get(f"/signals/{signal.id}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+def test_alert_detail_endpoint_returns_canonical_alert_read_model() -> None:
+    session_factory = _build_changed_history_session_factory()
+    app = create_app(session_factory)
+
+    with session_factory() as session:
+        latest = get_latest_run_details(session, state_date=date(2026, 4, 10))
+        assert latest is not None
+        alert = get_alert_details(session, alert_id=latest.alerts[0].id)
+    assert alert is not None
+    expected = build_alert_response(alert).model_dump(mode="json")
+
+    with TestClient(app) as client:
+        response = client.get(f"/alerts/{alert.id}")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
 def test_current_daily_state_endpoint_returns_not_found_when_missing() -> None:
     session_factory = _build_empty_session_factory()
     app = create_app(session_factory)
@@ -211,6 +251,30 @@ def test_current_daily_state_endpoint_returns_not_found_when_missing() -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "No daily state found for 2026-04-11."}
+
+
+def test_signal_detail_endpoint_returns_not_found_when_missing() -> None:
+    session_factory = _build_empty_session_factory()
+    app = create_app(session_factory)
+    missing_id = "11111111-1111-1111-1111-111111111111"
+
+    with TestClient(app) as client:
+        response = client.get(f"/signals/{missing_id}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": f"No signal found for {missing_id}."}
+
+
+def test_alert_detail_endpoint_returns_not_found_when_missing() -> None:
+    session_factory = _build_empty_session_factory()
+    app = create_app(session_factory)
+    missing_id = "22222222-2222-2222-2222-222222222222"
+
+    with TestClient(app) as client:
+        response = client.get(f"/alerts/{missing_id}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": f"No alert found for {missing_id}."}
 
 
 def test_current_weekly_state_endpoint_returns_not_found_when_missing() -> None:

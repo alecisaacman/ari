@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -9,6 +10,7 @@ from ari_core import (
     get_latest_run_details,
     run_signal_orchestration,
 )
+from ari_hub import app as hub_app_module
 from ari_hub import create_app as create_hub_app
 from ari_hub.app import HubAPIError
 from ari_memory import Base, DailyStateRepository, OpenLoopRepository, WeeklyStateRepository
@@ -35,6 +37,14 @@ class StubHistoryClient:
         self.daily_state = daily_state
         self.weekly_state = weekly_state
         self.active_open_loops = active_open_loops
+        signals = comparison.get("signals", latest_run.get("signals", []))
+        alerts = comparison.get("alerts", latest_run.get("alerts", []))
+        self.signal_details = {
+            signal["id"]: signal for signal in signals
+        }
+        self.alert_details = {
+            alert["id"]: alert for alert in alerts
+        }
         self.requested_dates: list[date] = []
 
     def get_latest_run(self, *, state_date: date) -> dict[str, Any]:
@@ -55,6 +65,12 @@ class StubHistoryClient:
 
     def get_active_open_loops(self) -> dict[str, Any]:
         return self.active_open_loops
+
+    def get_signal_detail(self, *, signal_id: Any) -> dict[str, Any]:
+        return self.signal_details[str(signal_id)]
+
+    def get_alert_detail(self, *, alert_id: Any) -> dict[str, Any]:
+        return self.alert_details[str(alert_id)]
 
 
 def test_hub_page_renders_expected_sections_and_change_markers() -> None:
@@ -156,6 +172,71 @@ def test_hub_page_renders_empty_weekly_state_and_open_loops() -> None:
     assert "No active open loops." in response.text
 
 
+def test_hub_page_renders_signal_detail_evidence_chain() -> None:
+    latest_run, comparison, daily_state, weekly_state, active_open_loops = _build_read_models()
+    signal_id = comparison["signals"][0]["id"]
+    app = create_hub_app(
+        api_client=StubHistoryClient(
+            latest_run=latest_run,
+            comparison=comparison,
+            daily_state=daily_state,
+            weekly_state=weekly_state,
+            active_open_loops=active_open_loops,
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/",
+            params={"state_date": "2026-04-10", "signal_id": signal_id},
+        )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "Signal Detail" in body
+    assert "Inspect signal detail" in body
+    assert "Evidence chain" in body
+    assert "Related entity type" in body
+    assert comparison["signals"][0]["reason"] in body
+    assert comparison["signals"][0]["evidence"][0]["summary"] in body
+
+
+def test_hub_page_renders_alert_detail_with_source_signal_chain() -> None:
+    latest_run, comparison, daily_state, weekly_state, active_open_loops = _build_read_models()
+    alert_id = comparison["alerts"][0]["id"]
+    source_signal_id = comparison["alerts"][0]["source_signal_ids"][0]
+    app = create_hub_app(
+        api_client=StubHistoryClient(
+            latest_run=latest_run,
+            comparison=comparison,
+            daily_state=daily_state,
+            weekly_state=weekly_state,
+            active_open_loops=active_open_loops,
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/",
+            params={"state_date": "2026-04-10", "alert_id": alert_id},
+        )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "Alert Detail" in body
+    assert "Source Signal Chain" in body
+    assert "Source signal ids" in body
+    assert source_signal_id in body
+    assert "Inspect alert detail" in body
+
+
+def test_hub_module_has_no_direct_persistence_dependency() -> None:
+    source = inspect.getsource(hub_app_module)
+
+    assert "ari_memory" not in source
+    assert "sqlalchemy" not in source
+
+
 class APIBackedHistoryClient:
     def __init__(self, api_app: Any) -> None:
         self._client = TestClient(api_app)
@@ -174,6 +255,16 @@ class APIBackedHistoryClient:
 
     def get_active_open_loops(self) -> dict[str, Any]:
         response = self._client.get("/open-loops/active")
+        response.raise_for_status()
+        return response.json()
+
+    def get_signal_detail(self, *, signal_id: Any) -> dict[str, Any]:
+        response = self._client.get(f"/signals/{signal_id}")
+        response.raise_for_status()
+        return response.json()
+
+    def get_alert_detail(self, *, alert_id: Any) -> dict[str, Any]:
+        response = self._client.get(f"/alerts/{alert_id}")
         response.raise_for_status()
         return response.json()
 
@@ -224,6 +315,12 @@ class StateGapHistoryClient:
 
     def get_active_open_loops(self) -> dict[str, Any]:
         return {"loops": []}
+
+    def get_signal_detail(self, *, signal_id: Any) -> dict[str, Any]:
+        raise HubAPIError(status_code=404, detail=f"No signal found for {signal_id}.")
+
+    def get_alert_detail(self, *, alert_id: Any) -> dict[str, Any]:
+        raise HubAPIError(status_code=404, detail=f"No alert found for {alert_id}.")
 
 
 def _build_read_models(

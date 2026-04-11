@@ -168,6 +168,14 @@ def build_active_open_loops_response(loops: list[OpenLoop]) -> ActiveOpenLoopsRe
     )
 
 
+def build_signal_response(signal: Signal) -> SignalResponse:
+    return _build_signal_response(signal)
+
+
+def build_alert_response(alert: Alert) -> AlertResponse:
+    return _build_alert_response(alert)
+
+
 def _build_run_summary(details: OrchestrationRunDetails) -> RunSummaryResponse:
     run = details.run
     return RunSummaryResponse(

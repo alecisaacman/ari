@@ -10,6 +10,7 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
+from uuid import UUID
 
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
@@ -42,6 +43,12 @@ class OrchestrationHistoryClient:
     def get_active_open_loops(self) -> JSONDict:
         return self._fetch("/open-loops/active")
 
+    def get_signal_detail(self, *, signal_id: UUID) -> JSONDict:
+        return self._fetch(f"/signals/{signal_id}")
+
+    def get_alert_detail(self, *, alert_id: UUID) -> JSONDict:
+        return self._fetch(f"/alerts/{alert_id}")
+
     def _fetch(self, path: str, *, state_date: date | None = None) -> JSONDict:
         url = f"{self._base_url}{path}"
         if state_date is not None:
@@ -62,6 +69,8 @@ def create_app(api_client: OrchestrationHistoryClient | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def hub_home(
         state_date: date | None = Query(default=None),  # noqa: B008
+        signal_id: UUID | None = Query(default=None),  # noqa: B008
+        alert_id: UUID | None = Query(default=None),  # noqa: B008
     ) -> HTMLResponse:
         resolved_state_date = state_date or date.today()
         try:
@@ -75,23 +84,33 @@ def create_app(api_client: OrchestrationHistoryClient | None = None) -> FastAPI:
                     daily_state=None,
                     weekly_state=None,
                     active_open_loops=None,
-                    latest_error=error.detail,
-                    comparison_error=None,
-                    daily_state_error=None,
-                    weekly_state_error=None,
-                    active_open_loops_error=None,
-                ),
-                status_code=error.status_code,
-            )
+                latest_error=error.detail,
+                comparison_error=None,
+                daily_state_error=None,
+                weekly_state_error=None,
+                active_open_loops_error=None,
+                selected_signal=None,
+                signal_detail_error=None,
+                selected_alert=None,
+                source_signals=[],
+                alert_detail_error=None,
+            ),
+            status_code=error.status_code,
+        )
 
         comparison: JSONDict | None = None
         daily_state: JSONDict | None = None
         weekly_state: JSONDict | None = None
         active_open_loops: JSONDict | None = None
+        selected_signal: JSONDict | None = None
+        selected_alert: JSONDict | None = None
+        source_signals: list[JSONDict] = []
         comparison_error: str | None = None
         daily_state_error: str | None = None
         weekly_state_error: str | None = None
         active_open_loops_error: str | None = None
+        signal_detail_error: str | None = None
+        alert_detail_error: str | None = None
         try:
             comparison = resolved_client.compare_latest_two_runs(state_date=resolved_state_date)
         except HubAPIError as error:
@@ -112,6 +131,26 @@ def create_app(api_client: OrchestrationHistoryClient | None = None) -> FastAPI:
             active_open_loops = resolved_client.get_active_open_loops()
         except HubAPIError as error:
             active_open_loops_error = error.detail
+        if signal_id is not None:
+            try:
+                selected_signal = resolved_client.get_signal_detail(signal_id=signal_id)
+            except HubAPIError as error:
+                signal_detail_error = error.detail
+        if alert_id is not None:
+            try:
+                selected_alert = resolved_client.get_alert_detail(alert_id=alert_id)
+            except HubAPIError as error:
+                alert_detail_error = error.detail
+            else:
+                for source_signal_id in _list_from(selected_alert, "source_signal_ids"):
+                    try:
+                        source_signals.append(
+                            resolved_client.get_signal_detail(
+                                signal_id=UUID(str(source_signal_id))
+                            )
+                        )
+                    except (HubAPIError, ValueError):
+                        continue
 
         return HTMLResponse(
             content=render_hub_page(
@@ -126,6 +165,11 @@ def create_app(api_client: OrchestrationHistoryClient | None = None) -> FastAPI:
                 daily_state_error=daily_state_error,
                 weekly_state_error=weekly_state_error,
                 active_open_loops_error=active_open_loops_error,
+                selected_signal=selected_signal,
+                signal_detail_error=signal_detail_error,
+                selected_alert=selected_alert,
+                source_signals=source_signals,
+                alert_detail_error=alert_detail_error,
             )
         )
 
@@ -145,6 +189,11 @@ def render_hub_page(
     daily_state_error: str | None,
     weekly_state_error: str | None,
     active_open_loops_error: str | None,
+    selected_signal: JSONDict | None,
+    signal_detail_error: str | None,
+    selected_alert: JSONDict | None,
+    source_signals: list[JSONDict],
+    alert_detail_error: str | None,
 ) -> str:
     sections = [
         _render_latest_section(latest_run=latest_run, latest_error=latest_error),
@@ -164,8 +213,27 @@ def render_hub_page(
             active_open_loops=active_open_loops,
             active_open_loops_error=active_open_loops_error,
         ),
-        _render_signals_section(comparison=comparison, latest_run=latest_run),
-        _render_alerts_section(comparison=comparison, latest_run=latest_run),
+        _render_signals_section(
+            comparison=comparison,
+            latest_run=latest_run,
+            state_date=state_date,
+        ),
+        _render_alerts_section(
+            comparison=comparison,
+            latest_run=latest_run,
+            state_date=state_date,
+        ),
+        _render_signal_detail_section(
+            state_date=state_date,
+            selected_signal=selected_signal,
+            signal_detail_error=signal_detail_error,
+        ),
+        _render_alert_detail_section(
+            state_date=state_date,
+            selected_alert=selected_alert,
+            source_signals=source_signals,
+            alert_detail_error=alert_detail_error,
+        ),
     ]
     return f"""<!doctype html>
 <html lang="en">
@@ -277,6 +345,26 @@ def render_hub_page(
       color: var(--muted);
       font-style: italic;
     }}
+    a {{
+      color: var(--accent);
+      text-decoration: none;
+    }}
+    a:hover {{
+      text-decoration: underline;
+    }}
+    .evidence-list {{
+      list-style: none;
+      padding-left: 0;
+      margin-top: 12px;
+    }}
+    .evidence-list li {{
+      border-left: 2px solid var(--line);
+      padding: 10px 0 10px 12px;
+      margin-bottom: 10px;
+    }}
+    .detail-actions {{
+      margin-top: 12px;
+    }}
   </style>
 </head>
 <body>
@@ -347,6 +435,7 @@ def _render_signals_section(
     *,
     comparison: JSONDict | None,
     latest_run: JSONDict | None,
+    state_date: date,
 ) -> str:
     signals = comparison["signals"] if comparison is not None else _list_from(latest_run, "signals")
     classification = _classification_map(
@@ -364,7 +453,11 @@ def _render_signals_section(
             ),
             body_builder=lambda signal: (
                 f"<p>{escape(signal['reason'])}</p>"
+                f"{_render_related_entity_row(signal)}"
                 f"{_render_evidence_list(signal['evidence'])}"
+                '<p class="detail-actions">'
+                f'<a href="{escape(_detail_href(state_date=state_date, signal_id=signal["id"]))}">'
+                "Inspect signal detail</a></p>"
             ),
         ),
     )
@@ -479,6 +572,7 @@ def _render_alerts_section(
     *,
     comparison: JSONDict | None,
     latest_run: JSONDict | None,
+    state_date: date,
 ) -> str:
     alerts = comparison["alerts"] if comparison is not None else _list_from(latest_run, "alerts")
     classification = _classification_map(
@@ -497,9 +591,106 @@ def _render_alerts_section(
             body_builder=lambda alert: (
                 f"<p>{escape(alert['message'])}</p>"
                 f"<p class=\"muted\">Reason: {escape(alert['reason'])}</p>"
-                f"{_render_id_list('Source signal ids', alert['source_signal_ids'])}"
+                f"{_render_signal_link_list(
+                    state_date,
+                    'Source signal ids',
+                    alert['source_signal_ids'],
+                )}"
+                '<p class="detail-actions">'
+                f'<a href="{escape(_detail_href(state_date=state_date, alert_id=alert["id"]))}">'
+                "Inspect alert detail</a></p>"
             ),
         ),
+    )
+
+
+def _render_signal_detail_section(
+    *,
+    state_date: date,
+    selected_signal: JSONDict | None,
+    signal_detail_error: str | None,
+) -> str:
+    if selected_signal is None:
+        if signal_detail_error is None:
+            return ""
+        return _render_section(
+            "Signal Detail",
+            f'<p class="empty">{escape(signal_detail_error)}</p>',
+        )
+
+    return _render_section(
+        "Signal Detail",
+        f"<h3>{escape(selected_signal['summary'])}</h3>"
+        f'<p class="muted">{escape(selected_signal["kind"])} | severity '
+        f'{escape(selected_signal["severity"])} | {escape(selected_signal["id"])}</p>'
+        "<dl>"
+        f"<dt>State date</dt><dd>{escape(selected_signal['state_date'] or 'none')}</dd>"
+        f"<dt>Detected at</dt><dd>{escape(selected_signal['detected_at'])}</dd>"
+        f"<dt>Fingerprint</dt><dd>{escape(selected_signal['fingerprint'])}</dd>"
+        f"<dt>Reason</dt><dd>{escape(selected_signal['reason'])}</dd>"
+        f"{_render_related_entity_detail_rows(selected_signal)}"
+        "</dl>"
+        f"{_render_evidence_list(selected_signal['evidence'])}"
+        '<p class="detail-actions">'
+        f'<a href="{escape(_detail_href(state_date=state_date))}">Clear detail</a></p>',
+    )
+
+
+def _render_alert_detail_section(
+    *,
+    state_date: date,
+    selected_alert: JSONDict | None,
+    source_signals: list[JSONDict],
+    alert_detail_error: str | None,
+) -> str:
+    if selected_alert is None:
+        if alert_detail_error is None:
+            return ""
+        return _render_section(
+            "Alert Detail",
+            f'<p class="empty">{escape(alert_detail_error)}</p>',
+        )
+
+    source_signal_chain = (
+        _render_entity_list(
+            entities=source_signals,
+            classification={},
+            title_key="summary",
+            subtitle_builder=lambda signal: (
+                f"{signal['kind']} | severity {signal['severity']} | {signal['id']}"
+            ),
+            body_builder=lambda signal: (
+                f"<p>{escape(signal['reason'])}</p>"
+                f"{_render_related_entity_row(signal)}"
+                f"{_render_evidence_list(signal['evidence'])}"
+            ),
+        )
+        if source_signals
+        else '<p class="empty">No source signal details available.</p>'
+    )
+    return _render_section(
+        "Alert Detail",
+        f"<h3>{escape(selected_alert['title'])}</h3>"
+        f'<p class="muted">{escape(selected_alert["status"])} | '
+        f'{escape(selected_alert["channel"])} | {escape(selected_alert["id"])}</p>'
+        "<dl>"
+        f"<dt>State date</dt><dd>{escape(selected_alert['state_date'] or 'none')}</dd>"
+        f"<dt>Created at</dt><dd>{escape(selected_alert['created_at'])}</dd>"
+        f"<dt>Escalation</dt><dd>{escape(selected_alert['escalation_level'])}</dd>"
+        f"<dt>Fingerprint</dt><dd>{escape(selected_alert['fingerprint'])}</dd>"
+        f"<dt>Reason</dt><dd>{escape(selected_alert['reason'])}</dd>"
+        f"<dt>Message</dt><dd>{escape(selected_alert['message'])}</dd>"
+        f"<dt>Sent at</dt><dd>{escape(selected_alert['sent_at'] or 'not sent')}</dd>"
+        "</dl>"
+        f"{_render_signal_link_list(
+            state_date,
+            'Source signal ids',
+            selected_alert['source_signal_ids'],
+        )}"
+        "<h3>Source Signal Chain</h3>"
+        f"{source_signal_chain}"
+        '<p class="detail-actions">'
+        f'<a href="{escape(_detail_href(state_date=state_date))}">Clear detail</a></p>',
     )
 
 
@@ -549,9 +740,15 @@ def _render_evidence_list(evidence: list[JSONDict]) -> str:
     if not evidence:
         return '<p class="empty">No evidence attached.</p>'
     items = "".join(
-        f"<li>{escape(item['kind'])}: {escape(item['summary'])}</li>" for item in evidence
+        "<li>"
+        f"<strong>{escape(item['summary'])}</strong>"
+        f'<p class="muted">{escape(item["kind"])}</p>'
+        f"{_render_entity_reference(item['entity_type'], item['entity_id'])}"
+        f"{_render_payload(item['payload'])}"
+        "</li>"
+        for item in evidence
     )
-    return f"<p class=\"muted\">Evidence</p><ul>{items}</ul>"
+    return f"<p class=\"muted\">Evidence chain</p><ul class=\"evidence-list\">{items}</ul>"
 
 
 def _render_section(title: str, body: str) -> str:
@@ -567,6 +764,18 @@ def _render_id_list(label: str, ids: list[str]) -> str:
     if not ids:
         return f"<p><strong>{escape(label)}:</strong> none</p>"
     pills = "".join(f'<span class="pill">{escape(item)}</span>' for item in ids)
+    return f"<p><strong>{escape(label)}:</strong></p><div>{pills}</div>"
+
+
+def _render_signal_link_list(state_date: date, label: str, ids: list[str]) -> str:
+    if not ids:
+        return f"<p><strong>{escape(label)}:</strong> none</p>"
+    pills = "".join(
+        '<a class="pill" href="'
+        f"{escape(_detail_href(state_date=state_date, signal_id=item))}"
+        f'">{escape(item)}</a>'
+        for item in ids
+    )
     return f"<p><strong>{escape(label)}:</strong></p><div>{pills}</div>"
 
 
@@ -606,3 +815,55 @@ def _api_base_url() -> str:
 
 def _empty_inline(message: str) -> str:
     return f'<span class="empty">{escape(message)}</span>'
+
+
+def _render_payload(payload: JSONDict) -> str:
+    if not payload:
+        return ""
+    return (
+        "<p><strong>Payload</strong></p>"
+        f"<pre>{escape(json.dumps(payload, indent=2, sort_keys=True))}</pre>"
+    )
+
+
+def _render_entity_reference(entity_type: str | None, entity_id: str | None) -> str:
+    if entity_type is None and entity_id is None:
+        return ""
+    return (
+        "<p class=\"muted\">Entity reference: "
+        f"{escape(entity_type or 'unknown')} / {escape(entity_id or 'unknown')}</p>"
+    )
+
+
+def _render_related_entity_row(signal: JSONDict) -> str:
+    entity_type = signal.get("related_entity_type")
+    entity_id = signal.get("related_entity_id")
+    if entity_type is None and entity_id is None:
+        return ""
+    return (
+        "<p class=\"muted\">Related entity: "
+        f"{escape(entity_type or 'unknown')} / {escape(entity_id or 'unknown')}</p>"
+    )
+
+
+def _render_related_entity_detail_rows(signal: JSONDict) -> str:
+    entity_type = signal.get("related_entity_type")
+    entity_id = signal.get("related_entity_id")
+    return (
+        f"<dt>Related entity type</dt><dd>{escape(entity_type or 'none')}</dd>"
+        f"<dt>Related entity id</dt><dd>{escape(entity_id or 'none')}</dd>"
+    )
+
+
+def _detail_href(
+    *,
+    state_date: date,
+    signal_id: str | None = None,
+    alert_id: str | None = None,
+) -> str:
+    query: dict[str, str] = {"state_date": state_date.isoformat()}
+    if signal_id is not None:
+        query["signal_id"] = str(signal_id)
+    if alert_id is not None:
+        query["alert_id"] = str(alert_id)
+    return f"/?{urlencode(query)}"
