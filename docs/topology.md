@@ -55,6 +55,6 @@ Responsibilities:
 ## Process Layout
 
 - `ari-core`: background routines, orchestration, drift detection, alert generation
-- `ari-api`: service boundary for state, events, and explainability queries
+- `ari-api`: service boundary for canonical state reads/writes, events, and explainability queries
 - `ari-hub`: primary web surface
 - shared packages: typed state, persistence, events, routines, signals, CLI

@@ -4,8 +4,17 @@ from datetime import date, datetime
 from uuid import UUID
 
 from ari_core import OrchestrationRunComparison, OrchestrationRunDetails
-from ari_state import Alert, DailyState, EvidenceItem, OpenLoop, Signal, WeeklyState
-from pydantic import BaseModel, ConfigDict
+from ari_state import (
+    Alert,
+    DailyState,
+    EvidenceItem,
+    OpenLoop,
+    OpenLoopKind,
+    OpenLoopPriority,
+    Signal,
+    WeeklyState,
+)
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class APIModel(BaseModel):
@@ -86,6 +95,15 @@ class DailyStateResponse(APIModel):
     last_check_at: datetime | None
 
 
+class DailyStateWriteRequest(APIModel):
+    priorities: list[str] | None = Field(default=None, max_length=3)
+    win_condition: str | None = None
+    movement: bool | None = None
+    stress: int | None = Field(default=None, ge=1, le=10)
+    next_action: str | None = None
+    checked_at: datetime | None = None
+
+
 class WeeklyStateResponse(APIModel):
     week_start: date
     outcomes: list[str]
@@ -93,6 +111,19 @@ class WeeklyStateResponse(APIModel):
     blockers: list[str]
     lesson: str
     last_review_at: datetime | None
+
+
+class WeeklyPlanWriteRequest(APIModel):
+    outcomes: list[str] | None = Field(default=None, max_length=3)
+    cannot_drift: list[str] | None = None
+    blockers: list[str] | None = None
+    reviewed_at: datetime | None = None
+
+
+class WeeklyReflectionWriteRequest(APIModel):
+    lesson: str
+    blockers: list[str] | None = None
+    reviewed_at: datetime | None = None
 
 
 class OpenLoopResponse(APIModel):
@@ -107,6 +138,21 @@ class OpenLoopResponse(APIModel):
     opened_at: datetime
     due_at: datetime | None
     last_touched_at: datetime | None
+
+
+class OpenLoopCreateRequest(APIModel):
+    title: str
+    source: str
+    kind: OpenLoopKind = OpenLoopKind.TASK
+    priority: OpenLoopPriority = OpenLoopPriority.MEDIUM
+    notes: str = ""
+    project_id: UUID | None = None
+    due_at: datetime | None = None
+    opened_at: datetime | None = None
+
+
+class OpenLoopResolveRequest(APIModel):
+    resolved_at: datetime | None = None
 
 
 class ActiveOpenLoopsResponse(APIModel):
@@ -166,6 +212,10 @@ def build_active_open_loops_response(loops: list[OpenLoop]) -> ActiveOpenLoopsRe
     return ActiveOpenLoopsResponse(
         loops=[_build_open_loop_response(loop) for loop in loops],
     )
+
+
+def build_open_loop_response(loop: OpenLoop) -> OpenLoopResponse:
+    return _build_open_loop_response(loop)
 
 
 def build_signal_response(signal: Signal) -> SignalResponse:

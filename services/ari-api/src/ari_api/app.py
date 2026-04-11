@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from ari_core import (
+    CreateOpenLoopInput,
+    DailyStateUpdate,
+    WeeklyPlanningUpdate,
+    WeeklyReflectionUpdate,
     compare_latest_two_runs,
+    create_open_loop,
     get_alert_details,
+    get_daily_state,
     get_latest_run_details,
     get_previous_run_details,
     get_signal_details,
+    get_weekly_state,
+    list_open_loops,
+    resolve_open_loop,
+    update_daily_state,
+    update_weekly_plan,
+    update_weekly_reflection,
 )
 from ari_memory import (
-    DailyStateRepository,
     DatabaseSettings,
-    OpenLoopRepository,
-    WeeklyStateRepository,
     create_engine,
     create_session_factory,
 )
@@ -25,13 +34,20 @@ from ari_api.schemas import (
     ActiveOpenLoopsResponse,
     AlertResponse,
     DailyStateResponse,
+    DailyStateWriteRequest,
+    OpenLoopCreateRequest,
+    OpenLoopResolveRequest,
+    OpenLoopResponse,
     OrchestrationRunComparisonResponse,
     OrchestrationRunResponse,
     SignalResponse,
+    WeeklyPlanWriteRequest,
+    WeeklyReflectionWriteRequest,
     WeeklyStateResponse,
     build_active_open_loops_response,
     build_alert_response,
     build_daily_state_response,
+    build_open_loop_response,
     build_run_comparison_response,
     build_run_response,
     build_signal_response,
@@ -146,13 +162,37 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         state_date: date = Query(...),  # noqa: B008
         session: Session = Depends(get_session),  # noqa: B008
     ) -> DailyStateResponse:
-        state = DailyStateRepository(session).get(state_date)
+        state = get_daily_state(session, day=state_date)
         if state is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"No daily state found for {state_date.isoformat()}.",
             )
         return build_daily_state_response(state)
+
+    @app.put(
+        "/daily-states/current",
+        response_model=DailyStateResponse,
+    )
+    def write_daily_state(
+        payload: DailyStateWriteRequest,
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> DailyStateResponse:
+        result = update_daily_state(
+            session,
+            day=state_date,
+            update=DailyStateUpdate(
+                priorities=None if payload.priorities is None else [*payload.priorities],
+                win_condition=payload.win_condition,
+                movement=payload.movement,
+                stress=payload.stress,
+                next_action=payload.next_action,
+            ),
+            checked_at=payload.checked_at or datetime.now(tz=UTC),
+            source="ari.api.daily_state",
+        )
+        return build_daily_state_response(result.state)
 
     @app.get(
         "/weekly-states/current",
@@ -163,7 +203,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         session: Session = Depends(get_session),  # noqa: B008
     ) -> WeeklyStateResponse:
         week_start = _week_start_for(state_date)
-        state = WeeklyStateRepository(session).get(week_start)
+        state = get_weekly_state(session, state_date=state_date)
         if state is None:
             raise HTTPException(
                 status_code=404,
@@ -174,6 +214,51 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
             )
         return build_weekly_state_response(state)
 
+    @app.put(
+        "/weekly-states/plan",
+        response_model=WeeklyStateResponse,
+    )
+    def write_weekly_plan(
+        payload: WeeklyPlanWriteRequest,
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> WeeklyStateResponse:
+        result = update_weekly_plan(
+            session,
+            state_date=state_date,
+            update=WeeklyPlanningUpdate(
+                outcomes=None if payload.outcomes is None else [*payload.outcomes],
+                cannot_drift=(
+                    None if payload.cannot_drift is None else [*payload.cannot_drift]
+                ),
+                blockers=None if payload.blockers is None else [*payload.blockers],
+            ),
+            reviewed_at=payload.reviewed_at or datetime.now(tz=UTC),
+            source="ari.api.weekly_plan",
+        )
+        return build_weekly_state_response(result.state)
+
+    @app.put(
+        "/weekly-states/reflection",
+        response_model=WeeklyStateResponse,
+    )
+    def write_weekly_reflection(
+        payload: WeeklyReflectionWriteRequest,
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> WeeklyStateResponse:
+        result = update_weekly_reflection(
+            session,
+            state_date=state_date,
+            update=WeeklyReflectionUpdate(
+                lesson=payload.lesson,
+                blockers=None if payload.blockers is None else [*payload.blockers],
+            ),
+            reviewed_at=payload.reviewed_at or datetime.now(tz=UTC),
+            source="ari.api.weekly_reflection",
+        )
+        return build_weekly_state_response(result.state)
+
     @app.get(
         "/open-loops/active",
         response_model=ActiveOpenLoopsResponse,
@@ -181,8 +266,57 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     def active_open_loops(
         session: Session = Depends(get_session),  # noqa: B008
     ) -> ActiveOpenLoopsResponse:
-        loops = OpenLoopRepository(session).list_open()
+        loops = list_open_loops(session)
         return build_active_open_loops_response(loops)
+
+    @app.post(
+        "/open-loops",
+        response_model=OpenLoopResponse,
+        status_code=201,
+    )
+    def add_open_loop(
+        payload: OpenLoopCreateRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> OpenLoopResponse:
+        result = create_open_loop(
+            session,
+            loop=CreateOpenLoopInput(
+                title=payload.title,
+                source=payload.source,
+                kind=payload.kind,
+                priority=payload.priority,
+                notes=payload.notes,
+                project_id=payload.project_id,
+                due_at=payload.due_at,
+            ),
+            opened_at=payload.opened_at or datetime.now(tz=UTC),
+            source="ari.api.open_loops",
+        )
+        return build_open_loop_response(result.state)
+
+    @app.post(
+        "/open-loops/{loop_id}/resolve",
+        response_model=OpenLoopResponse,
+    )
+    def close_open_loop(
+        loop_id: str,
+        payload: OpenLoopResolveRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> OpenLoopResponse:
+        from uuid import UUID
+
+        result = resolve_open_loop(
+            session,
+            loop_id=UUID(loop_id),
+            resolved_at=payload.resolved_at or datetime.now(tz=UTC),
+            source="ari.api.open_loops",
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No open loop found for {loop_id}.",
+            )
+        return build_open_loop_response(result.state)
 
     return app
 
