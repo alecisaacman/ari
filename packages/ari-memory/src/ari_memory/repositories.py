@@ -5,16 +5,25 @@ from uuid import UUID
 
 from ari_state import (
     Alert,
+    AlertChannel,
+    AlertEscalationLevel,
+    AlertStatus,
     DailyState,
     Event,
+    EventCategory,
     EvidenceItem,
     OpenLoop,
+    OpenLoopKind,
+    OpenLoopPriority,
+    OpenLoopStatus,
     OrchestrationRun,
     Signal,
+    SignalSeverity,
     WeeklyState,
 )
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from ari_memory.tables import (
     AlertRow,
@@ -105,13 +114,13 @@ class OpenLoopRepository:
         return OpenLoop(
             id=row.id,
             title=row.title,
-            status=row.status,
-            kind=row.kind,
-            priority=row.priority,
+            status=OpenLoopStatus(row.status),
+            kind=OpenLoopKind(row.kind),
+            priority=OpenLoopPriority(row.priority),
             source=row.source,
             notes=row.notes,
             project_id=row.project_id,
-            opened_at=_normalize_datetime(row.opened_at),
+            opened_at=_required_datetime(row.opened_at),
             due_at=_normalize_datetime(row.due_at),
             last_touched_at=_normalize_datetime(row.last_touched_at),
         )
@@ -187,8 +196,8 @@ class EventRepository:
         return Event(
             id=row.id,
             source=row.source,
-            category=row.category,
-            occurred_at=_normalize_datetime(row.occurred_at),
+            category=EventCategory(row.category),
+            occurred_at=_required_datetime(row.occurred_at),
             title=row.title,
             body=row.body,
             payload=row.payload,
@@ -258,13 +267,13 @@ class SignalRepository:
             state_date=row.state_date,
             kind=row.kind,
             fingerprint=row.fingerprint,
-            severity=row.severity,
+            severity=SignalSeverity(row.severity),
             summary=row.summary,
             reason=row.reason,
             evidence=[EvidenceItem.model_validate(item) for item in row.evidence],
             related_entity_type=row.related_entity_type,
             related_entity_id=row.related_entity_id,
-            detected_at=_normalize_datetime(row.detected_at),
+            detected_at=_required_datetime(row.detected_at),
         )
 
 
@@ -328,14 +337,14 @@ class AlertRepository:
             id=row.id,
             state_date=row.state_date,
             fingerprint=row.fingerprint,
-            status=row.status,
-            channel=row.channel,
-            escalation_level=row.escalation_level,
+            status=AlertStatus(row.status),
+            channel=AlertChannel(row.channel),
+            escalation_level=AlertEscalationLevel(row.escalation_level),
             title=row.title,
             message=row.message,
             reason=row.reason,
             source_signal_ids=[UUID(signal_id) for signal_id in row.source_signal_ids],
-            created_at=_normalize_datetime(row.created_at),
+            created_at=_required_datetime(row.created_at),
             sent_at=_normalize_datetime(row.sent_at),
         )
 
@@ -373,7 +382,7 @@ class OrchestrationRunRepository:
         rows = self._session.scalars(self._state_date_runs_query(state_date)).all()
         return [self._to_model(row) for row in rows]
 
-    def _state_date_runs_query(self, state_date: date):
+    def _state_date_runs_query(self, state_date: date) -> Select[tuple[OrchestrationRunRow]]:
         return (
             select(OrchestrationRunRow)
             .where(OrchestrationRunRow.state_date == state_date)
@@ -385,7 +394,7 @@ class OrchestrationRunRepository:
             id=row.id,
             state_date=row.state_date,
             state_fingerprint=row.state_fingerprint,
-            executed_at=_normalize_datetime(row.executed_at),
+            executed_at=_required_datetime(row.executed_at),
             signal_ids=[UUID(signal_id) for signal_id in row.signal_ids],
             alert_ids=[UUID(alert_id) for alert_id in row.alert_ids],
         )
@@ -395,3 +404,10 @@ def _normalize_datetime(value: datetime | None) -> datetime | None:
     if value is None or value.tzinfo is not None:
         return value
     return value.replace(tzinfo=UTC)
+
+
+def _required_datetime(value: datetime | None) -> datetime:
+    normalized = _normalize_datetime(value)
+    if normalized is None:
+        raise ValueError("Expected persisted datetime value")
+    return normalized

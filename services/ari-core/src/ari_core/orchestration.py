@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -191,6 +192,6 @@ def _alert_fingerprint(*, state_date: date, alert: Alert) -> str:
     return _fingerprint(payload)
 
 
-def _fingerprint(payload: dict[str, object]) -> str:
+def _fingerprint(payload: Mapping[str, object]) -> str:
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
