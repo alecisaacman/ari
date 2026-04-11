@@ -62,6 +62,16 @@ The first operator CLI surface is read-only orchestration history:
 
 These commands read canonical persisted orchestration history and show linked signals, alerts, reuse vs new outputs, and whether the state fingerprint changed.
 
+## API Read Surface
+
+The first `ari-api` surface is also narrow and read-only:
+
+- `GET /orchestration-runs/latest?state_date=YYYY-MM-DD`
+- `GET /orchestration-runs/previous?state_date=YYYY-MM-DD`
+- `GET /orchestration-runs/compare-latest-two?state_date=YYYY-MM-DD`
+
+These endpoints are a thin transport layer over canonical orchestration history queries and return structured explainability data for runs, linked signals, linked alerts, and reuse vs new output ids.
+
 ## Working Rules
 
 - Treat `docs/` as the architecture source of truth.

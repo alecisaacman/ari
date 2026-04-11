@@ -23,7 +23,7 @@ Background routines, orchestration, drift checks, and alert generation.
 
 ### `services/ari-api`
 
-API surface for reading and mutating canonical state.
+API surface for canonical read models and explainability queries. The first slice is a narrow read-only orchestration history surface.
 
 ### `services/ari-hub`
 
