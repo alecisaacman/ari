@@ -1,0 +1,10 @@
+.next
+node_modules
+runtime/*.db
+runtime/*.sqlite
+runtime/*.sqlite-shm
+runtime/*.sqlite-wal
+runtime/audio
+runtime/orchestration
+!runtime/orchestration/.gitkeep
+.env.local
