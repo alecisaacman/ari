@@ -1,89 +1,66 @@
-# ARI Canonical Repository
+# ARI — Agentic Recursive Intelligence
 
-This repository now holds the real ARI system in canonical service form:
+ARI is a personal intelligence system designed to move from passive AI assistance to active execution.
 
-- `services/ari-core`: the canonical ARI brain
-- `services/ari-api`: the transport layer over canonical ARI capabilities
-- `services/ari-hub`: the ACE hub surface
+**ARI is the brain. ACE is the interface.**
 
-ARI is the brain. ACE is the interface layer.
+## What this repository contains
 
-## What Lives Here Now
+- `services/ari-core` — canonical runtime / brain
+- `services/ari-api` — API contract over canonical capabilities
+- `services/ari-hub` — ACE hub surface
 
-Canonical in `ari-core`:
+## Current capabilities
 
-- notes
-- tasks
-- structured memory
-- policy and awareness derivation
-- coordination state
-- execution tracking
-- project planning state
+ARI now has:
+- canonical notes, tasks, and structured memory
+- canonical coordination and policy state
+- API-first hub-to-brain architecture
+- bounded coding/operator execution
+- execution lifecycle tracking and verification
 
-Surfaced in `ari-hub`:
+## Current milestone
 
-- chat and hub UI
-- approvals
-- activity feed
-- sessions and auth
-- trigger and voice entrypoints
-- workspace-scoped tools
+**v0.9 — Core convergence complete**
 
-## Repository Layout
+This means:
+- the real brain is canonical
+- the API seam is real
+- the hub is no longer the brain
+- execution is now a real capability
 
-- `services/ari-core/`: canonical Python ARI runtime
-- `services/ari-api/`: FastAPI wrapper over canonical ARI core modules
-- `services/ari-hub/`: Next.js ACE hub
-- `config/schema.sql`: canonical SQLite schema used by `ari-core`
-- `tests/`: canonical Python verification for the converged repo
-- `docs/`: architecture and product direction
+## Next milestone
 
-## Quick Start
+**v1.0 — Autonomous Coding Loop**
 
-1. Create a Python 3.12 environment and install repo dependencies:
+Goal:
+- generate coding actions
+- execute them
+- verify results
+- retry intelligently
+- move ARI toward replacing external coding agents over time
 
-```bash
-python3.12 -m venv .venv
-./.venv/bin/pip install '.[dev]'
-```
+## Direction
 
-2. Install hub dependencies:
+Long-term, ARI is being built toward:
+- a coding/operator system that can gradually replace Codex-like workflows
+- persistent self-documentation
+- premium multi-surface access
+- a future Inspection Cabinet
+- clean iOS and clean access points
 
-```bash
-cd services/ari-hub
-npm install
-```
+## Repository layout
 
-3. Run the canonical API:
+- `services/ari-core/`
+- `services/ari-api/`
+- `services/ari-hub/`
+- `config/schema.sql`
+- `tests/`
+- `docs/`
 
-```bash
-cd /path/to/projects/ari-canonical
-./.venv/bin/python -m uvicorn ari_api.main:app --host 127.0.0.1 --port 8000
-```
+## Working rule
 
-4. Run the hub:
-
-```bash
-cd services/ari-hub
-npm run dev
-```
-
-For LAN access:
-
-```bash
-npm run build
-npm run start:lan
-```
-
-## Verification Baseline
-
-- Python 3.12
-- `./.venv/bin/python -m pytest tests/unit -q`
-- `cd services/ari-hub && node --import tsx --test --test-reporter spec tests/auth.test.ts tests/workspace.test.ts tests/orchestration-classifier.test.ts`
-- `cd services/ari-hub && npm run build`
-
-## Working Rule
-
-Keep ARI canonical.
-Keep ACE thin.
+Keep ARI canonical.  
+Keep ACE thin.  
+Keep external providers pluggable.  
 If a capability belongs to the brain, move it inward.

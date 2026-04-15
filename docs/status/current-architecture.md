@@ -1,0 +1,29 @@
+# Current Architecture
+
+## Core Rule
+- ARI is the brain
+- ACE is the interface / hub
+
+## Services
+- `services/ari-core` — canonical runtime and intelligence core
+- `services/ari-api` — API contract over canonical capabilities
+- `services/ari-hub` — interface surface and client
+
+## Canonical in ARI
+- notes
+- tasks
+- structured memory
+- coordination state
+- policy / derivation
+- execution layer for bounded coding actions
+
+## Still evolving
+- autonomous coding loop
+- outbound notifications
+- interface control
+- universal shell helper
+- Inspection Cabinet
+- clean iOS / clean access points
+
+## Important principle
+External model providers should remain pluggable services, not the identity of the brain itself.

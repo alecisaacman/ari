@@ -1,67 +1,37 @@
-# ARI Execution Intent (v0.9 → v1.0)
+# ARI Execution Intent
 
-## Current State
+## Current milestone
+v0.9-core-converged
 
-ARI has:
-- canonical brain (ari-core)
-- API contract (ari-api)
-- hub interface (ari-hub)
-- execution layer (file + command + verification)
-
-ARI can:
-- mutate files
-- run tests/build
-- verify outcomes
+## What ARI can do now
+- persist canonical memory and tasks
+- coordinate through a canonical API
+- execute bounded coding actions
+- mutate files safely
+- run allowlisted verification commands
 - persist execution lifecycle
+- surface execution state in the hub
 
-## Problem
+## What ARI cannot do yet
+- generate good coding actions automatically from high-level goals
+- retry intelligently after failure
+- run full multi-step coding loops
+- replace Codex
 
-ARI executes once, but does not iterate.
+## Next objective
+Build the autonomous coding loop engine.
 
-It cannot:
-- repair failures
-- retry intelligently
-- improve outputs across attempts
-- complete multi-step coding objectives
+## Success criteria
+Given a coding goal, ARI can:
+1. generate a candidate action
+2. apply the change
+3. run verification
+4. analyze result
+5. retry intelligently
+6. stop on success or clean failure
 
-## Next Objective
-
-Build the **Autonomous Coding Loop Engine**
-
-## Target Behavior
-
-Given:
-
-"Fix failing tests"
-
-ARI should:
-
-1. generate a coding action
-2. execute it
-3. evaluate result
-4. if failed → generate fix
-5. repeat until success
-
-## Success Criteria
-
-ARI can:
-
-- run multiple attempts automatically
-- improve between attempts
-- fix simple failures (syntax, test errors)
-- stop intelligently (success or max attempts)
-- expose loop state via API
-- display loop progress in hub
-
-## Non-Goals (for now)
-
-- full repo reasoning
-- complex refactors
-- arbitrary shell execution
-
-## Definition of Done
-
-- multi-step loop runs end-to-end
-- ARI retries without user input
-- at least one real test case passes via loop
-- system behaves deterministically
+## Non-goals for this step
+- arbitrary shell access
+- destructive system operations
+- large multi-file semantic refactors
+- full unattended autonomy

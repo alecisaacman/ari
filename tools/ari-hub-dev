@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+cd "/Users/alecisaacman/ARI (codex)/projects/ari-canonical/services/ari-hub" && npm run dev
