@@ -1,331 +1,331 @@
 from __future__ import annotations
 
-from collections.abc import Generator
-from datetime import UTC, date, datetime, timedelta
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
-from ari_core import (
-    CreateOpenLoopInput,
-    DailyStateUpdate,
-    WeeklyPlanningUpdate,
-    WeeklyReflectionUpdate,
-    compare_latest_two_runs,
-    create_open_loop,
-    get_alert_details,
-    get_daily_state,
-    get_latest_run_details,
-    get_previous_run_details,
-    get_signal_details,
-    get_weekly_state,
-    list_open_loops,
-    resolve_open_loop,
-    update_daily_state,
-    update_weekly_plan,
-    update_weekly_reflection,
-)
-from ari_memory import (
-    DatabaseSettings,
-    create_engine,
-    create_session_factory,
-)
-from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlalchemy.orm import Session, sessionmaker
+from fastapi import FastAPI, HTTPException, Query
 
 from ari_api.schemas import (
-    ActiveOpenLoopsResponse,
-    AlertResponse,
-    DailyStateResponse,
-    DailyStateWriteRequest,
-    OpenLoopCreateRequest,
-    OpenLoopResolveRequest,
-    OpenLoopResponse,
-    OrchestrationRunComparisonResponse,
-    OrchestrationRunResponse,
-    SignalResponse,
-    WeeklyPlanWriteRequest,
-    WeeklyReflectionWriteRequest,
-    WeeklyStateResponse,
-    build_active_open_loops_response,
-    build_alert_response,
-    build_daily_state_response,
-    build_open_loop_response,
-    build_run_comparison_response,
-    build_run_response,
-    build_signal_response,
-    build_weekly_state_response,
+    CodingActionCreateRequest,
+    CoordinationUpsertRequest,
+    ExecutionCommandRequest,
+    ExecutionPatchFileRequest,
+    ExecutionReadFileRequest,
+    ExecutionWriteFileRequest,
+    MemoryCreateRequest,
+    NoteCreateRequest,
+    OrchestrationClassifyRequest,
+    PolicyPayloadRequest,
+    ProjectDraftRequest,
+    TaskCreateRequest,
 )
+from ari_core.core.paths import DB_PATH
+from ari_core.modules.coordination.db import (
+    ENTITY_CONFIG,
+    get_coordination_entity,
+    list_coordination_entities,
+    put_coordination_entity,
+)
+from ari_core.modules.execution.engine import (
+    approve_operator_action,
+    create_operator_action,
+    execute_command,
+    get_execution_snapshot,
+    get_operator_action,
+    patch_file,
+    read_file,
+    run_operator_action,
+    write_file,
+)
+from ari_core.modules.memory.db import (
+    get_ari_memory,
+    list_ari_memories,
+    remember_ari_memory,
+    search_ari_memories,
+)
+from ari_core.modules.notes.db import save_ari_note, search_ari_notes
+from ari_core.modules.policy.engine import (
+    build_project_draft,
+    classify_builder_output,
+    derive_awareness,
+    detect_capability_gaps,
+    get_latest_awareness_snapshot,
+    get_top_improvement_focus,
+    store_awareness_snapshot,
+    sync_project_focus,
+)
+from ari_core.modules.tasks.db import create_ari_task, get_ari_task, list_ari_tasks, search_ari_tasks
 
 
-def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
-    resolved_session_factory = session_factory or _build_session_factory()
+def create_app() -> FastAPI:
     app = FastAPI(title="ARI API", version="0.1.0")
 
-    def get_session() -> Generator[Session, None, None]:
-        with resolved_session_factory() as session:
-            yield session
+    def guard(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        try:
+            return operation()
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
-    @app.get(
-        "/orchestration-runs/latest",
-        response_model=OrchestrationRunResponse,
-    )
-    def latest_orchestration_run(
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> OrchestrationRunResponse:
-        details = get_latest_run_details(session, state_date=state_date)
-        if details is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No orchestration run found for {state_date.isoformat()}.",
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        return {
+            "service": "ari-api",
+            "dbPath": str(DB_PATH),
+            "dbExists": Path(DB_PATH).exists(),
+            "entities": sorted(ENTITY_CONFIG.keys()),
+        }
+
+    @app.post("/notes")
+    def create_note(payload: NoteCreateRequest) -> dict[str, Any]:
+        return _row_to_note(save_ari_note(payload.title, payload.content))
+
+    @app.get("/notes")
+    def list_notes(
+        query: str = Query(default=""),
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "query": query,
+            "notes": [_row_to_note(row) for row in search_ari_notes(query, limit=limit)],
+        }
+
+    @app.post("/tasks")
+    def create_task(payload: TaskCreateRequest) -> dict[str, Any]:
+        return _row_to_task(create_ari_task(payload.title, payload.notes))
+
+    @app.get("/tasks")
+    def list_tasks(
+        query: str = Query(default=""),
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        rows = search_ari_tasks(query, limit=limit) if query.strip() else list_ari_tasks(limit=limit)
+        return {"query": query, "tasks": [_row_to_task(row) for row in rows]}
+
+    @app.get("/tasks/{task_id}")
+    def get_task(task_id: int) -> dict[str, Any]:
+        task = get_ari_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found.")
+        return _row_to_task(task)
+
+    @app.post("/memory")
+    def create_memory(payload: MemoryCreateRequest) -> dict[str, Any]:
+        return _row_to_memory(
+            remember_ari_memory(
+                payload.type,
+                payload.title,
+                payload.content,
+                tags=payload.tags,
             )
-        return build_run_response(details)
-
-    @app.get(
-        "/orchestration-runs/previous",
-        response_model=OrchestrationRunResponse,
-    )
-    def previous_orchestration_run(
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> OrchestrationRunResponse:
-        details = get_previous_run_details(session, state_date=state_date)
-        if details is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"No previous orchestration run found for {state_date.isoformat()}."
-                ),
-            )
-        return build_run_response(details)
-
-    @app.get(
-        "/orchestration-runs/compare-latest-two",
-        response_model=OrchestrationRunComparisonResponse,
-    )
-    def compare_latest_two_orchestration_runs(
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> OrchestrationRunComparisonResponse:
-        comparison = compare_latest_two_runs(session, state_date=state_date)
-        latest = get_latest_run_details(session, state_date=state_date)
-        previous = get_previous_run_details(session, state_date=state_date)
-        if comparison is None or latest is None or previous is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "Need at least two orchestration runs to compare "
-                    f"for {state_date.isoformat()}."
-                ),
         )
-        return build_run_comparison_response(comparison, latest, previous)
 
-    @app.get(
-        "/signals/{signal_id}",
-        response_model=SignalResponse,
-    )
-    def signal_detail(
-        signal_id: str,
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> SignalResponse:
-        from uuid import UUID
+    @app.get("/memory")
+    def list_memory(
+        query: str = Query(default=""),
+        types: list[str] = Query(default=[]),
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        if query.strip():
+            rows = search_ari_memories(query, limit=limit, memory_types=types)
+        else:
+            rows = list_ari_memories(memory_types=types, limit=limit)
+        return {"query": query, "memories": [_row_to_memory(row) for row in rows]}
 
-        signal = get_signal_details(session, signal_id=UUID(signal_id))
-        if signal is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No signal found for {signal_id}.",
-            )
-        return build_signal_response(signal)
+    @app.get("/memory/{memory_id}")
+    def get_memory(memory_id: int) -> dict[str, Any]:
+        record = get_ari_memory(memory_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found.")
+        return _row_to_memory(record)
 
-    @app.get(
-        "/alerts/{alert_id}",
-        response_model=AlertResponse,
-    )
-    def alert_detail(
-        alert_id: str,
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> AlertResponse:
-        from uuid import UUID
+    @app.put("/coordination/{entity}")
+    def put_coordination(entity: str, payload: CoordinationUpsertRequest) -> dict[str, Any]:
+        _ensure_entity(entity)
+        return _row_to_record(put_coordination_entity(entity, payload.payload))
 
-        alert = get_alert_details(session, alert_id=UUID(alert_id))
-        if alert is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No alert found for {alert_id}.",
-            )
-        return build_alert_response(alert)
+    @app.get("/coordination/{entity}")
+    def list_coordination(
+        entity: str,
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        _ensure_entity(entity)
+        return {
+            "records": [_row_to_record(row) for row in list_coordination_entities(entity, limit=limit)]
+        }
 
-    @app.get(
-        "/daily-states/current",
-        response_model=DailyStateResponse,
-    )
-    def current_daily_state(
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> DailyStateResponse:
-        state = get_daily_state(session, day=state_date)
-        if state is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No daily state found for {state_date.isoformat()}.",
-            )
-        return build_daily_state_response(state)
+    @app.get("/coordination/{entity}/{record_id}")
+    def get_coordination(entity: str, record_id: str) -> dict[str, Any]:
+        _ensure_entity(entity)
+        row = get_coordination_entity(entity, record_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"{entity} record {record_id} not found.")
+        return _row_to_record(row)
 
-    @app.put(
-        "/daily-states/current",
-        response_model=DailyStateResponse,
-    )
-    def write_daily_state(
-        payload: DailyStateWriteRequest,
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> DailyStateResponse:
-        result = update_daily_state(
-            session,
-            day=state_date,
-            update=DailyStateUpdate(
-                priorities=None if payload.priorities is None else [*payload.priorities],
-                win_condition=payload.win_condition,
-                movement=payload.movement,
-                stress=payload.stress,
-                next_action=payload.next_action,
-            ),
-            checked_at=payload.checked_at or datetime.now(tz=UTC),
-            source="ari.api.daily_state",
+    @app.get("/orchestration")
+    def list_orchestration_records(
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        return list_coordination("orchestration_record", limit)
+
+    @app.get("/orchestration/{record_id}")
+    def get_orchestration_record(record_id: str) -> dict[str, Any]:
+        return get_coordination("orchestration_record", record_id)
+
+    @app.put("/orchestration")
+    def put_orchestration_record(payload: CoordinationUpsertRequest) -> dict[str, Any]:
+        return put_coordination("orchestration_record", payload)
+
+    @app.post("/awareness/derive")
+    def awareness_derive(payload: PolicyPayloadRequest) -> dict[str, Any]:
+        return derive_awareness(payload.payload)
+
+    @app.post("/awareness/store")
+    def awareness_store(payload: PolicyPayloadRequest) -> dict[str, Any]:
+        return store_awareness_snapshot(payload.payload)
+
+    @app.get("/awareness/latest")
+    def awareness_latest() -> dict[str, Any]:
+        return {"snapshot": get_latest_awareness_snapshot()}
+
+    @app.post("/policy/orchestration/classify")
+    def policy_orchestration_classify(payload: OrchestrationClassifyRequest) -> dict[str, Any]:
+        return classify_builder_output(
+            payload.rawOutput,
+            current_priority=payload.currentPriority,
+            latest_decision=payload.latestDecision,
         )
-        return build_daily_state_response(result.state)
 
-    @app.get(
-        "/weekly-states/current",
-        response_model=WeeklyStateResponse,
-    )
-    def current_weekly_state(
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> WeeklyStateResponse:
-        week_start = _week_start_for(state_date)
-        state = get_weekly_state(session, state_date=state_date)
-        if state is None:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "No weekly state found for the week of "
-                    f"{week_start.isoformat()}."
-                ),
-            )
-        return build_weekly_state_response(state)
+    @app.post("/policy/improvements/detect")
+    def policy_improvements_detect(payload: PolicyPayloadRequest) -> dict[str, Any]:
+        return {"drafts": detect_capability_gaps(payload.payload)}
 
-    @app.put(
-        "/weekly-states/plan",
-        response_model=WeeklyStateResponse,
-    )
-    def write_weekly_plan(
-        payload: WeeklyPlanWriteRequest,
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> WeeklyStateResponse:
-        result = update_weekly_plan(
-            session,
-            state_date=state_date,
-            update=WeeklyPlanningUpdate(
-                outcomes=None if payload.outcomes is None else [*payload.outcomes],
-                cannot_drift=(
-                    None if payload.cannot_drift is None else [*payload.cannot_drift]
-                ),
-                blockers=None if payload.blockers is None else [*payload.blockers],
-            ),
-            reviewed_at=payload.reviewed_at or datetime.now(tz=UTC),
-            source="ari.api.weekly_plan",
+    @app.get("/policy/improvements/focus")
+    def policy_improvements_focus() -> dict[str, Any]:
+        return {"record": get_top_improvement_focus()}
+
+    @app.post("/policy/projects/draft")
+    def policy_projects_draft(payload: ProjectDraftRequest) -> dict[str, Any]:
+        return build_project_draft(payload.model_dump())
+
+    @app.get("/policy/projects/focus")
+    def policy_projects_focus() -> dict[str, Any]:
+        return {"focus": sync_project_focus()}
+
+    @app.post("/execution/command")
+    def execution_command(payload: ExecutionCommandRequest) -> dict[str, Any]:
+        return guard(lambda: execute_command(payload.command, cwd=payload.cwd, timeout_seconds=payload.timeoutSeconds))
+
+    @app.post("/execution/files/read")
+    def execution_read_file(payload: ExecutionReadFileRequest) -> dict[str, Any]:
+        return guard(lambda: read_file(payload.path))
+
+    @app.post("/execution/files/write")
+    def execution_write_file(payload: ExecutionWriteFileRequest) -> dict[str, Any]:
+        return guard(lambda: write_file(payload.path, payload.content, action_id=payload.actionId))
+
+    @app.post("/execution/files/patch")
+    def execution_patch_file(payload: ExecutionPatchFileRequest) -> dict[str, Any]:
+        return guard(lambda: patch_file(payload.path, find_text=payload.find, replace_text=payload.replace, action_id=payload.actionId))
+
+    @app.post("/execution/actions")
+    def execution_create_action(payload: CodingActionCreateRequest) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "action": create_operator_action(
+                    title=payload.title,
+                    summary=payload.summary,
+                    operations=[operation.model_dump(exclude_none=True) for operation in payload.operations],
+                    verify_command=payload.verifyCommand,
+                    working_directory=payload.workingDirectory,
+                    approval_required=payload.approvalRequired,
+                )
+            }
         )
-        return build_weekly_state_response(result.state)
 
-    @app.put(
-        "/weekly-states/reflection",
-        response_model=WeeklyStateResponse,
-    )
-    def write_weekly_reflection(
-        payload: WeeklyReflectionWriteRequest,
-        state_date: date = Query(...),  # noqa: B008
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> WeeklyStateResponse:
-        result = update_weekly_reflection(
-            session,
-            state_date=state_date,
-            update=WeeklyReflectionUpdate(
-                lesson=payload.lesson,
-                blockers=None if payload.blockers is None else [*payload.blockers],
-            ),
-            reviewed_at=payload.reviewed_at or datetime.now(tz=UTC),
-            source="ari.api.weekly_reflection",
-        )
-        return build_weekly_state_response(result.state)
+    @app.get("/execution/actions")
+    def execution_list_actions(
+        limit: int = Query(default=6, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"actions": get_execution_snapshot(limit=limit)["recent_actions"]}
 
-    @app.get(
-        "/open-loops/active",
-        response_model=ActiveOpenLoopsResponse,
-    )
-    def active_open_loops(
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> ActiveOpenLoopsResponse:
-        loops = list_open_loops(session)
-        return build_active_open_loops_response(loops)
+    @app.get("/execution/actions/{action_id}")
+    def execution_get_action(action_id: str) -> dict[str, Any]:
+        action = get_operator_action(action_id)
+        if action is None:
+            raise HTTPException(status_code=404, detail=f"Execution action {action_id} not found.")
+        return {"action": action}
 
-    @app.post(
-        "/open-loops",
-        response_model=OpenLoopResponse,
-        status_code=201,
-    )
-    def add_open_loop(
-        payload: OpenLoopCreateRequest,
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> OpenLoopResponse:
-        result = create_open_loop(
-            session,
-            loop=CreateOpenLoopInput(
-                title=payload.title,
-                source=payload.source,
-                kind=payload.kind,
-                priority=payload.priority,
-                notes=payload.notes,
-                project_id=payload.project_id,
-                due_at=payload.due_at,
-            ),
-            opened_at=payload.opened_at or datetime.now(tz=UTC),
-            source="ari.api.open_loops",
-        )
-        return build_open_loop_response(result.state)
+    @app.post("/execution/actions/{action_id}/approve")
+    def execution_approve_action(action_id: str) -> dict[str, Any]:
+        return guard(lambda: {"action": approve_operator_action(action_id)})
 
-    @app.post(
-        "/open-loops/{loop_id}/resolve",
-        response_model=OpenLoopResponse,
-    )
-    def close_open_loop(
-        loop_id: str,
-        payload: OpenLoopResolveRequest,
-        session: Session = Depends(get_session),  # noqa: B008
-    ) -> OpenLoopResponse:
-        from uuid import UUID
+    @app.post("/execution/actions/{action_id}/run")
+    def execution_run_action(action_id: str) -> dict[str, Any]:
+        return guard(lambda: run_operator_action(action_id))
 
-        result = resolve_open_loop(
-            session,
-            loop_id=UUID(loop_id),
-            resolved_at=payload.resolved_at or datetime.now(tz=UTC),
-            source="ari.api.open_loops",
-        )
-        if result is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No open loop found for {loop_id}.",
-            )
-        return build_open_loop_response(result.state)
+    @app.get("/execution/snapshot")
+    def execution_snapshot(
+        limit: int = Query(default=6, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return get_execution_snapshot(limit=limit)
 
     return app
 
 
-def _build_session_factory() -> sessionmaker[Session]:
-    settings = DatabaseSettings()
-    engine = create_engine(settings.database_url)
-    return create_session_factory(engine)
+def _ensure_entity(entity: str) -> None:
+    if entity not in ENTITY_CONFIG:
+        raise HTTPException(status_code=404, detail=f"Unknown coordination entity: {entity}")
 
 
-def _week_start_for(day: date) -> date:
-    return day - timedelta(days=day.weekday())
+def _row_to_record(row: Any) -> dict[str, Any]:
+    return {key: row[key] for key in row.keys()}
+
+
+def _row_to_note(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "title": row["title"],
+        "content": row["body"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _row_to_task(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "title": row["title"],
+        "status": row["status"],
+        "notes": row["notes"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _row_to_memory(row: Any) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "type": row["type"],
+        "title": row["title"],
+        "content": row["content"],
+        "tags": _json_array(row["tags_json"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _json_array(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(value) for value in raw]
+    import json
+
+    try:
+        decoded = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return [str(value) for value in decoded]
