@@ -1,4 +1,4 @@
-import { runCanonicalCommand as runCanonicalCommandSync } from "@/src/core/ari-spine/runtime";
+import { isSubprocessBridgeMode, requestAriApi, runCanonicalJsonCommand } from "@/src/core/ari-spine/api-client";
 
 export type CanonicalNote = {
   id: string;
@@ -7,10 +7,6 @@ export type CanonicalNote = {
   createdAt: string;
   updatedAt: string;
 };
-
-async function runCanonicalCommand(args: string[]): Promise<string> {
-  return runCanonicalCommandSync(args);
-}
 
 function parseCanonicalNote(payload: {
   id: number;
@@ -29,26 +25,48 @@ function parseCanonicalNote(payload: {
 }
 
 export async function saveCanonicalNote(title: string, content: string): Promise<CanonicalNote> {
-  const stdout = await runCanonicalCommand(["api", "notes", "save", "--title", title, "--body", content, "--json"]);
-  return parseCanonicalNote(JSON.parse(stdout) as {
-    id: number;
-    title: string;
-    content: string;
-    created_at: string;
-    updated_at: string;
-  });
+  const payload = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{
+        id: number;
+        title: string;
+        content: string;
+        created_at: string;
+        updated_at: string;
+      }>(["api", "notes", "save", "--title", title, "--body", content, "--json"])
+    : await requestAriApi<{
+        id: number;
+        title: string;
+        content: string;
+        created_at: string;
+        updated_at: string;
+      }>("POST", "/notes", {
+        body: { title, content }
+      });
+
+  return parseCanonicalNote(payload);
 }
 
 export async function searchCanonicalNotes(query: string, limit = 10): Promise<CanonicalNote[]> {
-  const stdout = await runCanonicalCommand(["api", "notes", "search", "--query", query, "--limit", String(limit), "--json"]);
-  const payload = JSON.parse(stdout) as {
-    notes: Array<{
-      id: number;
-      title: string;
-      content: string;
-      created_at: string;
-      updated_at: string;
-    }>;
-  };
+  const payload = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{
+        notes: Array<{
+          id: number;
+          title: string;
+          content: string;
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>(["api", "notes", "search", "--query", query, "--limit", String(limit), "--json"])
+    : await requestAriApi<{
+        notes: Array<{
+          id: number;
+          title: string;
+          content: string;
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>("GET", "/notes", {
+        query: { query, limit }
+      });
   return payload.notes.map(parseCanonicalNote);
 }

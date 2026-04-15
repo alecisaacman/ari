@@ -43,3 +43,43 @@ class OrchestrationClassifyRequest(APIModel):
 class ProjectDraftRequest(APIModel):
     goal: str
     source: Literal["goal", "active_project", "manual"] = "manual"
+
+
+class ExecutionCommandRequest(APIModel):
+    command: str
+    cwd: str = "."
+    timeoutSeconds: int = 60
+
+
+class ExecutionReadFileRequest(APIModel):
+    path: str
+
+
+class ExecutionWriteFileRequest(APIModel):
+    path: str
+    content: str
+    actionId: str | None = None
+
+
+class ExecutionPatchFileRequest(APIModel):
+    path: str
+    find: str
+    replace: str
+    actionId: str | None = None
+
+
+class CodingOperation(APIModel):
+    type: Literal["write", "patch"]
+    path: str
+    content: str | None = None
+    find: str | None = None
+    replace: str | None = None
+
+
+class CodingActionCreateRequest(APIModel):
+    title: str
+    summary: str = ""
+    operations: list[CodingOperation] = Field(default_factory=list)
+    verifyCommand: str = ""
+    workingDirectory: str = "."
+    approvalRequired: bool | None = None

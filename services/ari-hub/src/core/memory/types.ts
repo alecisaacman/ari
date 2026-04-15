@@ -92,10 +92,11 @@ export type ProjectFocusSnapshot = {
 };
 
 export type ExecutionState = "pending" | "moving" | "blocked" | "completed" | "failed";
+export type CodingActionStatus = "proposed" | "approved" | "applied" | "verified" | "failed";
 
 export type ExecutionTrackedItem = {
   id: string;
-  kind: "task" | "improvement" | "dispatch";
+  kind: "task" | "improvement" | "dispatch" | "coding_action";
   title: string;
   state: ExecutionState;
   stage: string;
@@ -112,6 +113,79 @@ export type ExecutionOverview = {
   moving: ExecutionTrackedItem[];
   blocked: ExecutionTrackedItem[];
   completed: ExecutionTrackedItem[];
+};
+
+export type CommandRunRecord = {
+  id: string;
+  actionId: string;
+  command: string;
+  cwd: string;
+  success: boolean;
+  exitCode: number;
+  timedOut: boolean;
+  retryable: boolean;
+  stdout: string;
+  stderr: string;
+  classification: {
+    success: boolean;
+    failure: boolean;
+    retryable: boolean;
+  };
+  createdAt: string;
+};
+
+export type FileMutationRecord = {
+  id: string;
+  actionId?: string;
+  path: string;
+  operation: "write" | "patch";
+  success: boolean;
+  details: string;
+  previousSha256?: string;
+  newSha256?: string;
+  createdAt: string;
+};
+
+export type CodingOperation = {
+  type: "write" | "patch";
+  path: string;
+  content?: string;
+  find?: string;
+  replace?: string;
+};
+
+export type CodingActionRecord = {
+  id: string;
+  title: string;
+  summary: string;
+  status: CodingActionStatus;
+  approvalRequired: boolean;
+  risky: boolean;
+  targetPaths: string[];
+  operations: CodingOperation[];
+  verifyCommand: string;
+  workingDirectory: string;
+  currentStep: string;
+  lastCommandRunId?: string;
+  lastCommandSummary: string;
+  resultSummary: string;
+  retryable: boolean;
+  blockedReason?: string;
+  createdAt: string;
+  approvedAt?: string;
+  appliedAt?: string;
+  testedAt?: string;
+  passedAt?: string;
+  failedAt?: string;
+  verifiedAt?: string;
+  updatedAt: string;
+};
+
+export type CodingExecutionSnapshot = {
+  currentAction: CodingActionRecord | null;
+  recentActions: CodingActionRecord[];
+  lastCommandRun: CommandRunRecord | null;
+  lastFileMutation: FileMutationRecord | null;
 };
 
 export type DecisionRecord = {
@@ -235,6 +309,7 @@ export type ActiveStateSnapshot = {
   improvementLifecycle: ImprovementRecord[];
   awareness: AwarenessSnapshot | null;
   execution: ExecutionOverview;
+  codingExecution: CodingExecutionSnapshot;
   projectFocus: ProjectFocusSnapshot | null;
   operatorChannels: OperatorChannelSnapshot;
 };
@@ -252,6 +327,7 @@ export type MemoryContext = {
   improvementLifecycle: ImprovementRecord[];
   awareness: AwarenessSnapshot | null;
   execution: ExecutionOverview;
+  codingExecution: CodingExecutionSnapshot;
   projectFocus: ProjectFocusSnapshot | null;
   operatorChannels: OperatorChannelSnapshot;
   summaryLines: string[];

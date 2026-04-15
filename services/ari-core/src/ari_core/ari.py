@@ -23,6 +23,18 @@ from .modules.memory.api import (
     handle_api_memory_remember,
     handle_api_memory_search,
 )
+from .modules.execution.api import (
+    handle_api_execution_action_approve,
+    handle_api_execution_action_create,
+    handle_api_execution_action_get,
+    handle_api_execution_action_list,
+    handle_api_execution_action_run,
+    handle_api_execution_command,
+    handle_api_execution_patch_file,
+    handle_api_execution_read_file,
+    handle_api_execution_snapshot,
+    handle_api_execution_write_file,
+)
 from .modules.coordination.api import (
     handle_api_coordination_get,
     handle_api_coordination_list,
@@ -304,6 +316,59 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     tasks_search_parser.add_argument("--limit", type=int, default=10, help="Maximum tasks to return.")
     tasks_search_parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
 
+    execution_parser = api_subparsers.add_parser("execution", help="Canonical ARI execution and operator commands.")
+    execution_subparsers = execution_parser.add_subparsers(dest="api_execution_command", required=True)
+
+    command_parser = execution_subparsers.add_parser("command", help="Execute an allowlisted terminal command.")
+    command_parser.add_argument("--command", required=True, help="Allowlisted terminal command.")
+    command_parser.add_argument("--cwd", default=".", help="Working directory relative to the execution root.")
+    command_parser.add_argument("--timeout-seconds", type=int, default=60, help="Command timeout in seconds.")
+
+    read_file_parser = execution_subparsers.add_parser("read-file", help="Read a file inside the execution root.")
+    read_file_parser.add_argument("--path", required=True, help="Path relative to the execution root.")
+
+    write_file_parser = execution_subparsers.add_parser("write-file", help="Replace file content inside the execution root.")
+    write_file_parser.add_argument("--path", required=True, help="Path relative to the execution root.")
+    write_file_parser.add_argument("--content", required=True, help="Full file content.")
+    write_file_parser.add_argument("--action-id", help="Optional coding action id for mutation logging.")
+
+    patch_file_parser = execution_subparsers.add_parser("patch-file", help="Apply a simple search/replace patch inside the execution root.")
+    patch_file_parser.add_argument("--path", required=True, help="Path relative to the execution root.")
+    patch_file_parser.add_argument("--find", required=True, help="Exact text to replace.")
+    patch_file_parser.add_argument("--replace", required=True, help="Replacement text.")
+    patch_file_parser.add_argument("--action-id", help="Optional coding action id for mutation logging.")
+
+    action_parser = execution_subparsers.add_parser("actions", help="Canonical coding action lifecycle commands.")
+    action_subparsers = action_parser.add_subparsers(dest="api_execution_action_command", required=True)
+
+    action_create_parser = action_subparsers.add_parser("create", help="Create a coding action.")
+    action_create_parser.add_argument("--title", required=True, help="Short action title.")
+    action_create_parser.add_argument("--summary", default="", help="Optional summary.")
+    action_create_parser.add_argument("--operations-json", required=True, help="JSON array of file operations.")
+    action_create_parser.add_argument("--verify-command", default="", help="Allowlisted verification command.")
+    action_create_parser.add_argument("--working-directory", default=".", help="Working directory relative to the execution root.")
+    action_create_parser.add_argument(
+        "--approval-required",
+        choices=["auto", "true", "false"],
+        default="auto",
+        help="Whether approval is required before running.",
+    )
+
+    action_get_parser = action_subparsers.add_parser("get", help="Get a coding action.")
+    action_get_parser.add_argument("--id", required=True, help="Coding action id.")
+
+    action_list_parser = action_subparsers.add_parser("list", help="List coding actions.")
+    action_list_parser.add_argument("--limit", type=int, default=6, help="Maximum actions to return.")
+
+    action_approve_parser = action_subparsers.add_parser("approve", help="Approve a coding action.")
+    action_approve_parser.add_argument("--id", required=True, help="Coding action id.")
+
+    action_run_parser = action_subparsers.add_parser("run", help="Run a coding action end to end.")
+    action_run_parser.add_argument("--id", required=True, help="Coding action id.")
+
+    snapshot_parser = execution_subparsers.add_parser("snapshot", help="Get the current coding execution snapshot.")
+    snapshot_parser.add_argument("--limit", type=int, default=6, help="Maximum actions to return.")
+
 
 def _add_legacy_alias_parsers(subparsers: argparse._SubParsersAction) -> None:
     subparsers.add_parser("today", help=argparse.SUPPRESS)
@@ -523,6 +588,26 @@ def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
             return handle_api_tasks_get(args, db_path=db_path)
         if args.api_command == "tasks" and args.api_tasks_command == "search":
             return handle_api_tasks_search(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "command":
+            return handle_api_execution_command(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "read-file":
+            return handle_api_execution_read_file(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "write-file":
+            return handle_api_execution_write_file(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "patch-file":
+            return handle_api_execution_patch_file(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "snapshot":
+            return handle_api_execution_snapshot(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "actions" and args.api_execution_action_command == "create":
+            return handle_api_execution_action_create(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "actions" and args.api_execution_action_command == "get":
+            return handle_api_execution_action_get(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "actions" and args.api_execution_action_command == "list":
+            return handle_api_execution_action_list(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "actions" and args.api_execution_action_command == "approve":
+            return handle_api_execution_action_approve(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "actions" and args.api_execution_action_command == "run":
+            return handle_api_execution_action_run(args, db_path=db_path)
 
     parser.error("Unknown ARI command.")
     return 2

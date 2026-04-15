@@ -1,5 +1,6 @@
 import { buildAwarenessSnapshot } from "@/src/core/agent/awareness";
 import { getExecutionOverview, refreshExecutionOutcomes } from "@/src/core/agent/execution";
+import { getCanonicalCodingExecutionSnapshot } from "@/src/core/ari-spine/execution-bridge";
 import { getTopImprovementFocus, listImprovementLifecycle } from "@/src/core/agent/self-improvement";
 import { ensureProjectPlanFromMemory, syncProjectExecutionState } from "@/src/core/planning/project-planning";
 import { buildOperatorChannelSnapshot, summarizeOperatorChannelState } from "@/src/core/operator/channels";
@@ -136,6 +137,16 @@ function collectSignals(state: ActiveStateSnapshot): WorkingStateSignal[] {
     });
   }
 
+  if (state.codingExecution.currentAction) {
+    signals.push({
+      id: `coding-${state.codingExecution.currentAction.id}`,
+      title: "Coding action is active",
+      body: `${state.codingExecution.currentAction.title} is ${state.codingExecution.currentAction.status}. ${state.codingExecution.currentAction.resultSummary}`,
+      kind: state.codingExecution.currentAction.status === "failed" ? "runtime" : "priority",
+      createdAt: state.codingExecution.currentAction.updatedAt
+    });
+  }
+
   return signals.slice(0, 5);
 }
 
@@ -263,7 +274,8 @@ export function getActiveStateSnapshot(): ActiveStateSnapshot {
     topImprovement: getTopImprovementFocus(),
     improvementLifecycle: listImprovementLifecycle(4),
     awareness: null,
-    execution: refreshExecutionOutcomes(),
+    execution: { moving: [], blocked: [], completed: [] },
+    codingExecution: getCanonicalCodingExecutionSnapshot(),
     projectFocus: syncProjectExecutionState(),
     operatorChannels: {
       channels: [],
@@ -272,6 +284,8 @@ export function getActiveStateSnapshot(): ActiveStateSnapshot {
     }
   };
 
+  refreshExecutionOutcomes();
+  state.execution = getExecutionOverview();
   state.operatorChannels = buildOperatorChannelSnapshot({
     orchestration,
     pendingApprovalsCount: state.pendingApprovals.length,
@@ -304,6 +318,18 @@ export function retrieveMemoryContext(query: string): MemoryContext {
     ...state.recentHistory.slice(0, 2).map((item) => `Recent history: ${item.title} => ${item.body}`),
     ...state.execution.blocked.slice(0, 2).map((item) => `Blocked: ${item.title} => ${item.blockedReason}`),
     ...state.execution.moving.slice(0, 2).map((item) => `Moving: ${item.title} => ${item.nextAction}`),
+    ...(state.codingExecution.currentAction
+      ? [
+          `Coding action: ${state.codingExecution.currentAction.title} (${state.codingExecution.currentAction.status}).`,
+          `Coding step: ${state.codingExecution.currentAction.currentStep}`,
+          `Coding result: ${state.codingExecution.currentAction.resultSummary}`,
+          state.codingExecution.lastCommandRun
+            ? `Last command: ${state.codingExecution.lastCommandRun.command} => ${
+                state.codingExecution.lastCommandRun.success ? "passed" : "failed"
+              }`
+            : ""
+        ].filter(Boolean)
+      : []),
     ...summarizeOperatorChannelState(state.operatorChannels),
     ...(state.awareness
       ? [
@@ -335,6 +361,7 @@ export function retrieveMemoryContext(query: string): MemoryContext {
     improvementLifecycle: state.improvementLifecycle,
     awareness: state.awareness,
     execution: getExecutionOverview(),
+    codingExecution: state.codingExecution,
     projectFocus: state.projectFocus,
     operatorChannels: state.operatorChannels,
     summaryLines

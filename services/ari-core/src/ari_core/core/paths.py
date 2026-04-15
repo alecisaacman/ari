@@ -17,6 +17,7 @@ NETWORKING_MODULE_DIR = MODULES_DIR / "networking-crm"
 STATE_DIR = NETWORKING_MODULE_DIR / "state"
 DB_PATH = STATE_DIR / "networking.db"
 SCHEMA_PATH = CONFIG_DIR / "schema.sql"
+EXECUTION_ROOT = Path(os.environ.get("ARI_EXECUTION_ROOT", str(PROJECT_ROOT))).expanduser()
 
 
 def ari_path(*parts: str) -> Path:

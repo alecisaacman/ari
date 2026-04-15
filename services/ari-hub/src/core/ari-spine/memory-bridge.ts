@@ -1,5 +1,5 @@
 import type { MemoryRecord, MemoryType } from "@/src/core/memory/types";
-import { runCanonicalCommand } from "@/src/core/ari-spine/runtime";
+import { isSubprocessBridgeMode, requestAriApiSync, runCanonicalJsonCommand } from "@/src/core/ari-spine/api-client";
 
 export const LOCAL_MEMORY_TYPES = new Set<MemoryType>(["note", "episodic_history", "conversation_history"]);
 
@@ -28,31 +28,29 @@ export function isCanonicalMemoryType(type: MemoryType): boolean {
 }
 
 export function rememberCanonicalMemory(type: MemoryType, title: string, content: string, tags: string[] = []): MemoryRecord {
-  const stdout = runCanonicalCommand([
-    "api",
-    "memory",
-    "remember",
-    "--type",
-    type,
-    "--title",
-    title,
-    "--body",
-    content,
-    "--tags-json",
-    JSON.stringify(tags),
-    "--json"
-  ]);
-  return parseCanonicalMemory(
-    JSON.parse(stdout) as {
-      id: string;
-      type: MemoryType;
-      title: string;
-      content: string;
-      tags: string[];
-      created_at: string;
-      updated_at: string;
-    }
-  );
+  const payload = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{
+        id: string;
+        type: MemoryType;
+        title: string;
+        content: string;
+        tags: string[];
+        created_at: string;
+        updated_at: string;
+      }>(["api", "memory", "remember", "--type", type, "--title", title, "--body", content, "--tags-json", JSON.stringify(tags), "--json"])
+    : requestAriApiSync<{
+        id: string;
+        type: MemoryType;
+        title: string;
+        content: string;
+        tags: string[];
+        created_at: string;
+        updated_at: string;
+      }>("POST", "/memory", {
+        body: { type, title, content, tags }
+      });
+
+  return parseCanonicalMemory(payload);
 }
 
 export function listCanonicalMemoriesByTypes(types: MemoryType[], limit = 20): MemoryRecord[] {
@@ -60,42 +58,59 @@ export function listCanonicalMemoriesByTypes(types: MemoryType[], limit = 20): M
     return [];
   }
 
-  const args = ["api", "memory", "list", "--limit", String(limit), "--json"];
-  for (const type of types) {
-    args.push("--type", type);
-  }
-
-  const stdout = runCanonicalCommand(args);
-  const payload = JSON.parse(stdout) as {
-    memories: Array<{
-      id: string;
-      type: MemoryType;
-      title: string;
-      content: string;
-      tags: string[];
-      created_at: string;
-      updated_at: string;
-    }>;
-  };
+  const payload = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{
+        memories: Array<{
+          id: string;
+          type: MemoryType;
+          title: string;
+          content: string;
+          tags: string[];
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>(["api", "memory", "list", ...types.flatMap((type) => ["--type", type]), "--limit", String(limit), "--json"])
+    : requestAriApiSync<{
+        memories: Array<{
+          id: string;
+          type: MemoryType;
+          title: string;
+          content: string;
+          tags: string[];
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>("GET", "/memory", {
+        query: { limit, types }
+      });
   return payload.memories.map(parseCanonicalMemory);
 }
 
 export function searchCanonicalMemories(query: string, limit = 20, types: MemoryType[] = []): MemoryRecord[] {
-  const args = ["api", "memory", "search", "--query", query, "--limit", String(limit), "--json"];
-  for (const type of types) {
-    args.push("--type", type);
-  }
-  const stdout = runCanonicalCommand(args);
-  const payload = JSON.parse(stdout) as {
-    memories: Array<{
-      id: string;
-      type: MemoryType;
-      title: string;
-      content: string;
-      tags: string[];
-      created_at: string;
-      updated_at: string;
-    }>;
-  };
+  const payload = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{
+        memories: Array<{
+          id: string;
+          type: MemoryType;
+          title: string;
+          content: string;
+          tags: string[];
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>(["api", "memory", "search", "--query", query, ...types.flatMap((type) => ["--type", type]), "--limit", String(limit), "--json"])
+    : requestAriApiSync<{
+        memories: Array<{
+          id: string;
+          type: MemoryType;
+          title: string;
+          content: string;
+          tags: string[];
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>("GET", "/memory", {
+        query: { query, limit, types }
+      });
   return payload.memories.map(parseCanonicalMemory);
 }

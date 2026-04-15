@@ -1,5 +1,10 @@
 import { AUTONOMY_MODEL, listAriEvents, listPendingApprovals, resolveApproval } from "@/src/core/agent/activity";
 import { ensureBackgroundRuntime } from "@/src/core/agent/background-runtime";
+import {
+  approveCanonicalCodingAction,
+  createCanonicalCodingAction,
+  runCanonicalCodingAction
+} from "@/src/core/ari-spine/execution-bridge";
 import { getConfig } from "@/src/core/config";
 import { getDatabase } from "@/src/core/db/database";
 import { runTurn } from "@/src/core/agent/run-turn";
@@ -188,5 +193,36 @@ export async function handleOrchestrationDispatch(recordId: string) {
   return {
     ok: true,
     ...dispatchOrchestrationInstruction(recordId)
+  };
+}
+
+export async function handleCodingActionCreate(payload: {
+  title: string;
+  summary?: string;
+  operations: Array<{ type: "write" | "patch"; path: string; content?: string; find?: string; replace?: string }>;
+  verifyCommand?: string;
+  workingDirectory?: string;
+  approvalRequired?: boolean | null;
+}) {
+  ensureBackgroundRuntime();
+  return {
+    ok: true,
+    action: await createCanonicalCodingAction(payload)
+  };
+}
+
+export async function handleCodingActionApprove(actionId: string) {
+  ensureBackgroundRuntime();
+  return {
+    ok: true,
+    action: await approveCanonicalCodingAction(actionId)
+  };
+}
+
+export async function handleCodingActionRun(actionId: string) {
+  ensureBackgroundRuntime();
+  return {
+    ok: true,
+    ...(await runCanonicalCodingAction(actionId))
   };
 }

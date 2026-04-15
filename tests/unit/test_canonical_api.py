@@ -17,6 +17,26 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
+    monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "execution-root"))
+    execution_root = tmp_path / "execution-root"
+    execution_root.mkdir(parents=True, exist_ok=True)
+    (execution_root / "operator-target.js").write_text("export const status = 'pending';\n", encoding="utf-8")
+    (execution_root / "operator-check.test.mjs").write_text(
+        "\n".join(
+            [
+                "import assert from 'node:assert/strict';",
+                "import fs from 'node:fs';",
+                "import test from 'node:test';",
+                "",
+                "test('operator target is ready', () => {",
+                "  const source = fs.readFileSync(new URL('./operator-target.js', import.meta.url), 'utf8');",
+                "  assert.match(source, /ready/);",
+                "});",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     _purge_modules()
 
     from ari_api import create_app
@@ -113,3 +133,39 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         )
         assert classify.status_code == 200
         assert classify.json()["classification"] in {"auto_pass", "auto_summarize", "escalate_to_alec"}
+
+        action = client.post(
+            "/execution/actions",
+            json={
+                "title": "Promote operator target",
+                "summary": "Patch a file and verify it.",
+                "operations": [
+                    {
+                        "type": "patch",
+                        "path": "operator-target.js",
+                        "find": "pending",
+                        "replace": "ready",
+                    }
+                ],
+                "verifyCommand": "node --test operator-check.test.mjs",
+                "workingDirectory": ".",
+                "approvalRequired": False,
+            },
+        )
+        assert action.status_code == 200
+        action_id = action.json()["action"]["id"]
+
+        approved = client.post(f"/execution/actions/{action_id}/approve")
+        assert approved.status_code == 200
+        assert approved.json()["action"]["status"] == "approved"
+
+        ran = client.post(f"/execution/actions/{action_id}/run")
+        assert ran.status_code == 200
+        assert ran.json()["action"]["status"] == "verified"
+        assert ran.json()["command_run"]["success"] is True
+        assert ran.json()["mutations"][0]["path"] == "operator-target.js"
+
+        snapshot = client.get("/execution/snapshot")
+        assert snapshot.status_code == 200
+        assert snapshot.json()["current_action"]["id"] == action_id
+        assert snapshot.json()["last_command_run"]["success"] is True

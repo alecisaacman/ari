@@ -196,6 +196,60 @@ create table if not exists ari_execution_outcomes (
     updated_at text not null
 );
 
+create table if not exists ari_coding_actions (
+    id text primary key,
+    title text not null,
+    summary text not null,
+    status text not null,
+    approval_required integer not null,
+    risky integer not null,
+    target_paths_json text not null,
+    operations_json text not null,
+    verify_command text not null,
+    working_directory text not null,
+    current_step text not null,
+    last_command_run_id text,
+    last_command_summary text not null,
+    result_summary text not null,
+    retryable integer not null default 0,
+    blocked_reason text,
+    created_at text not null,
+    approved_at text,
+    applied_at text,
+    tested_at text,
+    passed_at text,
+    failed_at text,
+    verified_at text,
+    updated_at text not null
+);
+
+create table if not exists ari_command_runs (
+    id text primary key,
+    action_id text not null,
+    command text not null,
+    cwd text not null,
+    success integer not null,
+    exit_code integer not null,
+    timed_out integer not null,
+    retryable integer not null,
+    stdout text not null,
+    stderr text not null,
+    classification_json text not null,
+    created_at text not null
+);
+
+create table if not exists ari_file_mutations (
+    id text primary key,
+    action_id text,
+    path text not null,
+    operation text not null,
+    success integer not null,
+    details text not null,
+    previous_sha256 text,
+    new_sha256 text,
+    created_at text not null
+);
+
 create table if not exists ari_awareness_snapshots (
     id text primary key,
     mode text not null,

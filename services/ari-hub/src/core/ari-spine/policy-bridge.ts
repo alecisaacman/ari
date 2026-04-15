@@ -1,4 +1,4 @@
-import { runCanonicalCommand } from "@/src/core/ari-spine/runtime";
+import { isSubprocessBridgeMode, requestAriApiSync, runCanonicalJsonCommand } from "@/src/core/ari-spine/api-client";
 import type {
   AwarenessSnapshot,
   DecisionRecord,
@@ -71,18 +71,32 @@ export function deriveCanonicalAwareness(payload: {
   recentIntent: string[];
   recentDecisions: DecisionRecord[];
 }): AwarenessSnapshot {
-  const stdout = runCanonicalCommand(["api", "policy", "awareness", "derive", "--payload-json", JSON.stringify(payload)]);
-  return JSON.parse(stdout) as AwarenessSnapshot;
+  return isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<AwarenessSnapshot>(["api", "policy", "awareness", "derive", "--payload-json", JSON.stringify(payload)])
+    : requestAriApiSync<AwarenessSnapshot>("POST", "/awareness/derive", {
+        body: { payload }
+      });
 }
 
 export function storeCanonicalAwareness(snapshot: AwarenessSnapshot): { snapshot: AwarenessSnapshot; changed: boolean } {
-  const stdout = runCanonicalCommand(["api", "policy", "awareness", "store", "--payload-json", JSON.stringify(snapshot)]);
-  return JSON.parse(stdout) as { snapshot: AwarenessSnapshot; changed: boolean };
+  return isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{ snapshot: AwarenessSnapshot; changed: boolean }>([
+        "api",
+        "policy",
+        "awareness",
+        "store",
+        "--payload-json",
+        JSON.stringify(snapshot)
+      ])
+    : requestAriApiSync<{ snapshot: AwarenessSnapshot; changed: boolean }>("POST", "/awareness/store", {
+        body: { payload: snapshot }
+      });
 }
 
 export function getLatestCanonicalAwareness(): AwarenessSnapshot | null {
-  const stdout = runCanonicalCommand(["api", "policy", "awareness", "latest"]);
-  const payload = JSON.parse(stdout) as { snapshot: AwarenessSnapshot | null };
+  const payload = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{ snapshot: AwarenessSnapshot | null }>(["api", "policy", "awareness", "latest"])
+    : requestAriApiSync<{ snapshot: AwarenessSnapshot | null }>("GET", "/awareness/latest");
   return payload.snapshot;
 }
 
@@ -91,8 +105,17 @@ export function classifyCanonicalBuilderOutput(payload: {
   currentPriority?: string;
   latestDecision?: string;
 }): OrchestrationClassification {
-  const stdout = runCanonicalCommand(["api", "policy", "orchestration-classify", "--payload-json", JSON.stringify(payload)]);
-  return JSON.parse(stdout) as OrchestrationClassification;
+  return isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<OrchestrationClassification>([
+        "api",
+        "policy",
+        "orchestration-classify",
+        "--payload-json",
+        JSON.stringify(payload)
+      ])
+    : requestAriApiSync<OrchestrationClassification>("POST", "/policy/orchestration/classify", {
+        body: payload
+      });
 }
 
 export function detectCanonicalCapabilityGaps(payload: {
@@ -102,14 +125,25 @@ export function detectCanonicalCapabilityGaps(payload: {
   escalationTexts: string[];
   approvalCounts: Record<string, number>;
 }): ImprovementDraft[] {
-  const stdout = runCanonicalCommand(["api", "policy", "improvements", "detect", "--payload-json", JSON.stringify(payload)]);
-  const parsed = JSON.parse(stdout) as { drafts: ImprovementDraft[] };
+  const parsed = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{ drafts: ImprovementDraft[] }>([
+        "api",
+        "policy",
+        "improvements",
+        "detect",
+        "--payload-json",
+        JSON.stringify(payload)
+      ])
+    : requestAriApiSync<{ drafts: ImprovementDraft[] }>("POST", "/policy/improvements/detect", {
+        body: { payload }
+      });
   return parsed.drafts;
 }
 
 export function getCanonicalTopImprovementFocus(): ImprovementRecord | null {
-  const stdout = runCanonicalCommand(["api", "policy", "improvements", "focus"]);
-  const parsed = JSON.parse(stdout) as { record: ImprovementRecord | null };
+  const parsed = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{ record: ImprovementRecord | null }>(["api", "policy", "improvements", "focus"])
+    : requestAriApiSync<{ record: ImprovementRecord | null }>("GET", "/policy/improvements/focus");
   return parsed.record;
 }
 
@@ -117,13 +151,24 @@ export function buildCanonicalProjectDraft(payload: {
   goal: string;
   source: "goal" | "active_project" | "manual";
 }): ProjectDraft {
-  const stdout = runCanonicalCommand(["api", "policy", "project", "draft", "--payload-json", JSON.stringify(payload)]);
-  return JSON.parse(stdout) as ProjectDraft;
+  return isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<ProjectDraft>([
+        "api",
+        "policy",
+        "project",
+        "draft",
+        "--payload-json",
+        JSON.stringify(payload)
+      ])
+    : requestAriApiSync<ProjectDraft>("POST", "/policy/projects/draft", {
+        body: payload
+      });
 }
 
 export function getCanonicalProjectFocus(): ProjectFocusSnapshot | null {
-  const stdout = runCanonicalCommand(["api", "policy", "project", "focus"]);
-  const parsed = JSON.parse(stdout) as { focus: ProjectFocusSnapshot | null };
+  const parsed = isSubprocessBridgeMode()
+    ? runCanonicalJsonCommand<{ focus: ProjectFocusSnapshot | null }>(["api", "policy", "project", "focus"])
+    : requestAriApiSync<{ focus: ProjectFocusSnapshot | null }>("GET", "/policy/projects/focus");
   return parsed.focus;
 }
 

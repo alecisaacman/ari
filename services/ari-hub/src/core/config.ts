@@ -3,6 +3,7 @@ import path from "node:path";
 export type AppMode = "hosted" | "fallback";
 export type OrchestrationMode = "manual" | "assisted" | "auto";
 export type BuilderConsumerMode = "off" | "polling";
+export type CanonicalBridgeMode = "api" | "subprocess";
 
 export type AriConfig = {
   appName: string;
@@ -34,6 +35,9 @@ export type AriConfig = {
   canonicalAriProjectRoot: string;
   canonicalAriHome: string;
   canonicalPythonCommand: string;
+  canonicalApiBaseUrl: string;
+  canonicalApiTimeoutMs: number;
+  canonicalBridgeMode: CanonicalBridgeMode;
   executionStallMinutes: number;
 };
 
@@ -76,6 +80,11 @@ export function getConfig(): AriConfig {
     canonicalAriProjectRoot: process.env.ARI_CANONICAL_PROJECT_ROOT || path.resolve(projectRoot, "..", ".."),
     canonicalAriHome: process.env.ARI_CANONICAL_HOME || "",
     canonicalPythonCommand: process.env.ARI_CANONICAL_PYTHON || "python3.12",
+    canonicalApiBaseUrl: process.env.ARI_API_BASE_URL || "http://127.0.0.1:8000",
+    canonicalApiTimeoutMs: Number.isFinite(Number(process.env.ARI_API_TIMEOUT_MS))
+      ? Math.max(500, Number(process.env.ARI_API_TIMEOUT_MS))
+      : 5000,
+    canonicalBridgeMode: process.env.ARI_CANONICAL_BRIDGE_MODE === "subprocess" ? "subprocess" : "api",
     executionStallMinutes: Number.isFinite(Number(process.env.ARI_EXECUTION_STALL_MINUTES))
       ? Math.max(0, Number(process.env.ARI_EXECUTION_STALL_MINUTES))
       : 60

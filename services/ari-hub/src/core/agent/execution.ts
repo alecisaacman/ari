@@ -7,7 +7,7 @@ import { listRecentDispatchRecords } from "@/src/core/orchestration/dispatch-rec
 
 type OutcomeRow = {
   item_key: string;
-  item_type: "task" | "improvement" | "dispatch";
+  item_type: "task" | "improvement" | "dispatch" | "coding_action";
   item_id: string;
   title: string;
   state: "pending" | "moving" | "blocked" | "completed" | "failed";

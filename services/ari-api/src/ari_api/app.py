@@ -7,7 +7,12 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 
 from ari_api.schemas import (
+    CodingActionCreateRequest,
     CoordinationUpsertRequest,
+    ExecutionCommandRequest,
+    ExecutionPatchFileRequest,
+    ExecutionReadFileRequest,
+    ExecutionWriteFileRequest,
     MemoryCreateRequest,
     NoteCreateRequest,
     OrchestrationClassifyRequest,
@@ -21,6 +26,17 @@ from ari_core.modules.coordination.db import (
     get_coordination_entity,
     list_coordination_entities,
     put_coordination_entity,
+)
+from ari_core.modules.execution.engine import (
+    approve_operator_action,
+    create_operator_action,
+    execute_command,
+    get_execution_snapshot,
+    get_operator_action,
+    patch_file,
+    read_file,
+    run_operator_action,
+    write_file,
 )
 from ari_core.modules.memory.db import (
     get_ari_memory,
@@ -44,6 +60,12 @@ from ari_core.modules.tasks.db import create_ari_task, get_ari_task, list_ari_ta
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ARI API", version="0.1.0")
+
+    def guard(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        try:
+            return operation()
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -189,6 +211,64 @@ def create_app() -> FastAPI:
     @app.get("/policy/projects/focus")
     def policy_projects_focus() -> dict[str, Any]:
         return {"focus": sync_project_focus()}
+
+    @app.post("/execution/command")
+    def execution_command(payload: ExecutionCommandRequest) -> dict[str, Any]:
+        return guard(lambda: execute_command(payload.command, cwd=payload.cwd, timeout_seconds=payload.timeoutSeconds))
+
+    @app.post("/execution/files/read")
+    def execution_read_file(payload: ExecutionReadFileRequest) -> dict[str, Any]:
+        return guard(lambda: read_file(payload.path))
+
+    @app.post("/execution/files/write")
+    def execution_write_file(payload: ExecutionWriteFileRequest) -> dict[str, Any]:
+        return guard(lambda: write_file(payload.path, payload.content, action_id=payload.actionId))
+
+    @app.post("/execution/files/patch")
+    def execution_patch_file(payload: ExecutionPatchFileRequest) -> dict[str, Any]:
+        return guard(lambda: patch_file(payload.path, find_text=payload.find, replace_text=payload.replace, action_id=payload.actionId))
+
+    @app.post("/execution/actions")
+    def execution_create_action(payload: CodingActionCreateRequest) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "action": create_operator_action(
+                    title=payload.title,
+                    summary=payload.summary,
+                    operations=[operation.model_dump(exclude_none=True) for operation in payload.operations],
+                    verify_command=payload.verifyCommand,
+                    working_directory=payload.workingDirectory,
+                    approval_required=payload.approvalRequired,
+                )
+            }
+        )
+
+    @app.get("/execution/actions")
+    def execution_list_actions(
+        limit: int = Query(default=6, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"actions": get_execution_snapshot(limit=limit)["recent_actions"]}
+
+    @app.get("/execution/actions/{action_id}")
+    def execution_get_action(action_id: str) -> dict[str, Any]:
+        action = get_operator_action(action_id)
+        if action is None:
+            raise HTTPException(status_code=404, detail=f"Execution action {action_id} not found.")
+        return {"action": action}
+
+    @app.post("/execution/actions/{action_id}/approve")
+    def execution_approve_action(action_id: str) -> dict[str, Any]:
+        return guard(lambda: {"action": approve_operator_action(action_id)})
+
+    @app.post("/execution/actions/{action_id}/run")
+    def execution_run_action(action_id: str) -> dict[str, Any]:
+        return guard(lambda: run_operator_action(action_id))
+
+    @app.get("/execution/snapshot")
+    def execution_snapshot(
+        limit: int = Query(default=6, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return get_execution_snapshot(limit=limit)
 
     return app
 

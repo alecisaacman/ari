@@ -484,6 +484,7 @@ export function ACEConsole({ initialHealth }: ACEConsoleProps) {
   const awarenessTracking = awareness?.tracking || [];
   const recentIntent = awareness?.recentIntent || [];
   const execution = activeState?.execution || { moving: [], blocked: [], completed: [] };
+  const codingExecution = activeState?.codingExecution || { currentAction: null, recentActions: [], lastCommandRun: null, lastFileMutation: null };
   const projectFocus = activeState?.projectFocus || null;
   const operatorChannels = activeState?.operatorChannels.channels || [];
   const availableChannels = operatorChannels.filter((channel) => channel.status === "available");
@@ -495,6 +496,9 @@ export function ACEConsole({ initialHealth }: ACEConsoleProps) {
   const headerSignals = [
     currentFocus[0]
       ? { label: "Focus", value: currentFocus[0].title }
+      : null,
+    codingExecution.currentAction
+      ? { label: "Execution", value: codingExecution.currentAction.title }
       : null,
     leadApproval
       ? { label: "Approval", value: leadApproval.title }
@@ -832,6 +836,32 @@ export function ACEConsole({ initialHealth }: ACEConsoleProps) {
                 </div>
                 <div className="state-cluster">
                   <strong>Execution</strong>
+                  {codingExecution.currentAction ? (
+                    <>
+                      <div className="state-line">
+                        <span>{codingExecution.currentAction.title}</span>
+                        <small>
+                          {codingExecution.currentAction.status} / {codingExecution.currentAction.currentStep.replace(/_/g, " ")}
+                        </small>
+                      </div>
+                      <div className="state-line">
+                        <span>{codingExecution.currentAction.resultSummary}</span>
+                      </div>
+                      {codingExecution.lastCommandRun ? (
+                        <div className="state-line">
+                          <span>Last command: {codingExecution.lastCommandRun.command}</span>
+                          <small>{codingExecution.lastCommandRun.success ? "passed" : "failed"}</small>
+                        </div>
+                      ) : null}
+                      {codingExecution.lastFileMutation ? (
+                        <div className="state-line">
+                          <span>
+                            File change: {codingExecution.lastFileMutation.operation} {codingExecution.lastFileMutation.path}
+                          </span>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
                   {execution.blocked[0] ? (
                     <div className="state-line">
                       <span>Blocked: {execution.blocked[0].title}</span>
@@ -860,7 +890,7 @@ export function ACEConsole({ initialHealth }: ACEConsoleProps) {
                       <small>{execution.completed[0].verificationSignal || execution.completed[0].evidence}</small>
                     </div>
                   ) : null}
-                  {!execution.blocked[0] && !execution.moving[0] && !execution.completed[0] ? (
+                  {!codingExecution.currentAction && !execution.blocked[0] && !execution.moving[0] && !execution.completed[0] ? (
                     <p className="helper-text">No tracked execution items are active yet.</p>
                   ) : null}
                 </div>
