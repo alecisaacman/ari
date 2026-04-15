@@ -5,18 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ari"
 version = "0.1.0"
-description = "ARI canonical implementation"
+description = "Canonical ARI brain, API, and hub integration"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "alembic>=1.15.0",
   "fastapi>=0.115.0",
-  "psycopg[binary]>=3.2.0",
   "pydantic>=2.9.0",
-  "pydantic-settings>=2.6.1",
   "python-dotenv>=1.0.1",
-  "sqlalchemy>=2.0.36",
   "typing-extensions>=4.12.2",
+  "uvicorn>=0.34.0",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +26,7 @@ dev = [
 ]
 
 [project.scripts]
-ari = "ari_cli:main"
+ari = "ari_core.ari:main"
 
 [tool.ruff]
 line-length = 100
@@ -41,30 +38,16 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [
-  "packages/ari-state/src",
-  "packages/ari-memory/src",
-  "packages/ari-events/src",
-  "packages/ari-routines/src",
-  "packages/ari-signals/src",
-  "packages/ari-cli/src",
   "services/ari-core/src",
   "services/ari-api/src",
-  "services/ari-hub/src",
 ]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 mypy_path = [
-  "packages/ari-state/src",
-  "packages/ari-memory/src",
-  "packages/ari-events/src",
-  "packages/ari-routines/src",
-  "packages/ari-signals/src",
-  "packages/ari-cli/src",
   "services/ari-core/src",
   "services/ari-api/src",
-  "services/ari-hub/src",
 ]
 warn_unused_configs = true
 
@@ -73,14 +56,7 @@ py-modules = []
 
 [tool.setuptools.packages.find]
 where = [
-  "packages/ari-state/src",
-  "packages/ari-memory/src",
-  "packages/ari-events/src",
-  "packages/ari-routines/src",
-  "packages/ari-signals/src",
-  "packages/ari-cli/src",
   "services/ari-core/src",
   "services/ari-api/src",
-  "services/ari-hub/src",
 ]
 include = ["ari_*"]
