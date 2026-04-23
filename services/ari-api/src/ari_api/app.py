@@ -4,22 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
-
-from ari_api.schemas import (
-    CodingActionCreateRequest,
-    CoordinationUpsertRequest,
-    ExecutionCommandRequest,
-    ExecutionPatchFileRequest,
-    ExecutionReadFileRequest,
-    ExecutionWriteFileRequest,
-    MemoryCreateRequest,
-    NoteCreateRequest,
-    OrchestrationClassifyRequest,
-    PolicyPayloadRequest,
-    ProjectDraftRequest,
-    TaskCreateRequest,
-)
 from ari_core.core.paths import DB_PATH
 from ari_core.modules.coordination.db import (
     ENTITY_CONFIG,
@@ -27,6 +11,7 @@ from ari_core.modules.coordination.db import (
     list_coordination_entities,
     put_coordination_entity,
 )
+from ari_core.modules.execution.controller import run_execution_goal
 from ari_core.modules.execution.engine import (
     approve_operator_action,
     create_operator_action,
@@ -38,6 +23,8 @@ from ari_core.modules.execution.engine import (
     run_operator_action,
     write_file,
 )
+from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
+from ari_core.modules.execution.models import ExecutionGoal
 from ari_core.modules.memory.db import (
     get_ari_memory,
     list_ari_memories,
@@ -55,7 +42,31 @@ from ari_core.modules.policy.engine import (
     store_awareness_snapshot,
     sync_project_focus,
 )
-from ari_core.modules.tasks.db import create_ari_task, get_ari_task, list_ari_tasks, search_ari_tasks
+from ari_core.modules.tasks.db import (
+    create_ari_task,
+    get_ari_task,
+    list_ari_tasks,
+    search_ari_tasks,
+)
+from fastapi import FastAPI, HTTPException, Query
+
+from ari_api.schemas import (
+    CodingActionCreateRequest,
+    CoordinationUpsertRequest,
+    ExecutionCommandRequest,
+    ExecutionGoalRequest,
+    ExecutionPatchFileRequest,
+    ExecutionReadFileRequest,
+    ExecutionWriteFileRequest,
+    MemoryCreateRequest,
+    NoteCreateRequest,
+    OrchestrationClassifyRequest,
+    PolicyPayloadRequest,
+    ProjectDraftRequest,
+    TaskCreateRequest,
+)
+
+MEMORY_TYPES_QUERY = Query(default_factory=list)
 
 
 def create_app() -> FastAPI:
@@ -99,7 +110,9 @@ def create_app() -> FastAPI:
         query: str = Query(default=""),
         limit: int = Query(default=20, ge=1, le=200),
     ) -> dict[str, Any]:
-        rows = search_ari_tasks(query, limit=limit) if query.strip() else list_ari_tasks(limit=limit)
+        rows = (
+            search_ari_tasks(query, limit=limit) if query.strip() else list_ari_tasks(limit=limit)
+        )
         return {"query": query, "tasks": [_row_to_task(row) for row in rows]}
 
     @app.get("/tasks/{task_id}")
@@ -123,7 +136,7 @@ def create_app() -> FastAPI:
     @app.get("/memory")
     def list_memory(
         query: str = Query(default=""),
-        types: list[str] = Query(default=[]),
+        types: list[str] = MEMORY_TYPES_QUERY,
         limit: int = Query(default=20, ge=1, le=200),
     ) -> dict[str, Any]:
         if query.strip():
@@ -151,7 +164,9 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         _ensure_entity(entity)
         return {
-            "records": [_row_to_record(row) for row in list_coordination_entities(entity, limit=limit)]
+            "records": [
+                _row_to_record(row) for row in list_coordination_entities(entity, limit=limit)
+            ]
         }
 
     @app.get("/coordination/{entity}/{record_id}")
@@ -214,7 +229,13 @@ def create_app() -> FastAPI:
 
     @app.post("/execution/command")
     def execution_command(payload: ExecutionCommandRequest) -> dict[str, Any]:
-        return guard(lambda: execute_command(payload.command, cwd=payload.cwd, timeout_seconds=payload.timeoutSeconds))
+        return guard(
+            lambda: execute_command(
+                payload.command,
+                cwd=payload.cwd,
+                timeout_seconds=payload.timeoutSeconds,
+            )
+        )
 
     @app.post("/execution/files/read")
     def execution_read_file(payload: ExecutionReadFileRequest) -> dict[str, Any]:
@@ -222,11 +243,49 @@ def create_app() -> FastAPI:
 
     @app.post("/execution/files/write")
     def execution_write_file(payload: ExecutionWriteFileRequest) -> dict[str, Any]:
-        return guard(lambda: write_file(payload.path, payload.content, action_id=payload.actionId))
+        return guard(
+            lambda: write_file(
+                payload.path,
+                payload.content,
+                action_id=payload.actionId,
+            )
+        )
 
     @app.post("/execution/files/patch")
     def execution_patch_file(payload: ExecutionPatchFileRequest) -> dict[str, Any]:
-        return guard(lambda: patch_file(payload.path, find_text=payload.find, replace_text=payload.replace, action_id=payload.actionId))
+        return guard(
+            lambda: patch_file(
+                payload.path,
+                find_text=payload.find,
+                replace_text=payload.replace,
+                action_id=payload.actionId,
+            )
+        )
+
+    @app.post("/execution/goals")
+    def execution_goal(payload: ExecutionGoalRequest) -> dict[str, Any]:
+        return guard(
+            lambda: run_execution_goal(
+                ExecutionGoal(
+                    objective=payload.goal,
+                    max_cycles=payload.maxCycles,
+                ),
+                planner_mode=payload.planner,
+            ).to_dict()
+        )
+
+    @app.get("/execution/runs")
+    def execution_runs(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"runs": list_execution_runs(limit=limit)}
+
+    @app.get("/execution/runs/{run_id}")
+    def execution_run(run_id: str) -> dict[str, Any]:
+        run = get_execution_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Execution run {run_id} not found.")
+        return {"run": run}
 
     @app.post("/execution/actions")
     def execution_create_action(payload: CodingActionCreateRequest) -> dict[str, Any]:
@@ -235,7 +294,9 @@ def create_app() -> FastAPI:
                 "action": create_operator_action(
                     title=payload.title,
                     summary=payload.summary,
-                    operations=[operation.model_dump(exclude_none=True) for operation in payload.operations],
+                    operations=[
+                        operation.model_dump(exclude_none=True) for operation in payload.operations
+                    ],
                     verify_command=payload.verifyCommand,
                     working_directory=payload.workingDirectory,
                     approval_required=payload.approvalRequired,

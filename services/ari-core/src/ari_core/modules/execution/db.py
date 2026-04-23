@@ -4,7 +4,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from uuid import uuid4
 
 from ...core.paths import DB_PATH
@@ -83,19 +83,29 @@ def create_coding_action(
             ),
         )
         connection.commit()
-        row = connection.execute("select * from ari_coding_actions where id = ?", (payload["id"],)).fetchone()
+        row = connection.execute(
+            "select * from ari_coding_actions where id = ?",
+            (payload["id"],),
+        ).fetchone()
     assert row is not None
     return row
 
 
-def update_coding_action(action_id: str, changes: dict[str, Any], db_path: Path = DB_PATH) -> sqlite3.Row:
+def update_coding_action(
+    action_id: str,
+    changes: dict[str, Any],
+    db_path: Path = DB_PATH,
+) -> sqlite3.Row:
     initialize_database(db_path=db_path)
     columns = ", ".join(f"{column} = ?" for column in changes)
     values = list(changes.values()) + [action_id]
     with get_connection(db_path) as connection:
         connection.execute(f"update ari_coding_actions set {columns} where id = ?", values)
         connection.commit()
-        row = connection.execute("select * from ari_coding_actions where id = ?", (action_id,)).fetchone()
+        row = connection.execute(
+            "select * from ari_coding_actions where id = ?",
+            (action_id,),
+        ).fetchone()
     if row is None:
         raise ValueError(f"Unknown coding action: {action_id}")
     return row
@@ -105,7 +115,10 @@ def get_coding_action(action_id: str, db_path: Path = DB_PATH) -> sqlite3.Row | 
     if not db_path.exists():
         return None
     with get_connection(db_path) as connection:
-        return connection.execute("select * from ari_coding_actions where id = ?", (action_id,)).fetchone()
+        return connection.execute(
+            "select * from ari_coding_actions where id = ?",
+            (action_id,),
+        ).fetchone()
 
 
 def list_coding_actions(limit: int = 10, db_path: Path = DB_PATH) -> list[sqlite3.Row]:
@@ -160,7 +173,10 @@ def create_command_run(payload: dict[str, Any], db_path: Path = DB_PATH) -> sqli
             ),
         )
         connection.commit()
-        row = connection.execute("select * from ari_command_runs where id = ?", (payload["id"],)).fetchone()
+        row = connection.execute(
+            "select * from ari_command_runs where id = ?",
+            (payload["id"],),
+        ).fetchone()
     assert row is not None
     return row
 
@@ -169,7 +185,10 @@ def get_command_run(command_run_id: str, db_path: Path = DB_PATH) -> sqlite3.Row
     if not db_path.exists():
         return None
     with get_connection(db_path) as connection:
-        return connection.execute("select * from ari_command_runs where id = ?", (command_run_id,)).fetchone()
+        return connection.execute(
+            "select * from ari_command_runs where id = ?",
+            (command_run_id,),
+        ).fetchone()
 
 
 def list_command_runs(limit: int = 10, db_path: Path = DB_PATH) -> list[sqlite3.Row]:
@@ -218,7 +237,10 @@ def create_file_mutation(payload: dict[str, Any], db_path: Path = DB_PATH) -> sq
             ),
         )
         connection.commit()
-        row = connection.execute("select * from ari_file_mutations where id = ?", (payload["id"],)).fetchone()
+        row = connection.execute(
+            "select * from ari_file_mutations where id = ?",
+            (payload["id"],),
+        ).fetchone()
     assert row is not None
     return row
 
@@ -352,4 +374,3 @@ def _decode_json_list(raw: str | None) -> list[Any]:
     if not isinstance(decoded, list):
         return []
     return decoded
-

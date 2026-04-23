@@ -260,3 +260,137 @@ create table if not exists ari_awareness_snapshots (
     signature text not null,
     created_at text not null
 );
+
+create table if not exists ari_decision_records (
+    id text primary key,
+    orchestration_run_id text not null,
+    signal_id text,
+    intent text not null,
+    decision_type text not null,
+    priority integer not null,
+    reasoning text not null,
+    related_signal_ids_json text not null,
+    related_entity_type text,
+    related_entity_id text,
+    proposed_action_json text not null,
+    requires_approval integer not null,
+    action_json text not null,
+    confidence real not null,
+    created_at text not null
+);
+
+create table if not exists ari_decision_dispatch_records (
+    id text primary key,
+    decision_id text not null,
+    decision_reference text not null,
+    status text not null,
+    reason text not null,
+    action_json text not null,
+    execution_result_json text not null,
+    created_at text not null
+);
+
+create table if not exists ari_decision_evaluation_records (
+    id text primary key,
+    decision_id text not null,
+    dispatch_record_id text not null,
+    decision_reference text not null,
+    status text not null,
+    reason text not null,
+    next_step text not null,
+    created_at text not null
+);
+
+create table if not exists ari_decision_cycle_records (
+    id text primary key,
+    orchestration_run_id text not null,
+    status text not null,
+    reason text not null,
+    decision_count integer not null,
+    dispatch_count integer not null,
+    evaluation_count integer not null,
+    created_at text not null
+);
+
+create table if not exists ari_runtime_loop_records (
+    id text primary key,
+    goal text not null,
+    status text not null,
+    reason text not null,
+    cycles_run integer not null,
+    max_cycles integer not null,
+    final_output text not null,
+    final_error text not null,
+    last_worker_run_id text,
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists ari_runtime_worker_runs (
+    id text primary key,
+    loop_id text not null,
+    cycle_index integer not null,
+    prompt text not null,
+    backend text not null,
+    command_json text not null,
+    cwd text not null,
+    success integer not null,
+    retryable integer not null,
+    exit_code integer not null,
+    stdout text not null,
+    stderr text not null,
+    created_at text not null
+);
+
+create table if not exists ari_runtime_controller_decisions (
+    id text primary key,
+    loop_id text not null,
+    cycle_index integer not null,
+    goal text not null,
+    selected_slice_key text not null,
+    selected_slice_title text not null,
+    selected_slice_milestone text not null,
+    selection_reason text not null,
+    evidence_json text not null,
+    verification_plan_json text not null,
+    outcome_status text not null,
+    outcome_reason text not null,
+    next_control_action text not null,
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists ari_runtime_action_plans (
+    id text primary key,
+    loop_id text not null,
+    cycle_index integer not null,
+    slice_key text not null,
+    milestone text not null,
+    attempt_kind text not null,
+    task_description text not null,
+    constraints_json text not null,
+    likely_files_json text not null,
+    expected_symbols_json text not null,
+    verification_expectations_json text not null,
+    retry_refinement_hints_json text not null,
+    failed_checks_json text not null,
+    prompt_text text not null,
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists ari_runtime_execution_runs (
+    id text primary key,
+    goal_id text not null,
+    objective text not null,
+    status text not null,
+    reason text not null,
+    cycles_run integer not null,
+    max_cycles integer not null,
+    repo_root text not null,
+    contexts_json text not null,
+    decisions_json text not null,
+    results_json text not null,
+    created_at text not null,
+    updated_at text not null
+);

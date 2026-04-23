@@ -68,6 +68,12 @@ class ExecutionPatchFileRequest(APIModel):
     actionId: str | None = None
 
 
+class ExecutionGoalRequest(APIModel):
+    goal: str
+    maxCycles: int = 1
+    planner: Literal["rule_based", "model"] = "rule_based"
+
+
 class CodingOperation(APIModel):
     type: Literal["write", "patch"]
     path: str

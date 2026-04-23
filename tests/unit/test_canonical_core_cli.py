@@ -140,4 +140,62 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     awareness = json.loads(awareness_output.getvalue())
     assert awareness["summary"]
     assert awareness["currentFocus"]
+
+    execution_root = tmp_path / "execution-root"
+    execution_root.mkdir()
+    goal_output = StringIO()
+    with redirect_stdout(goal_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "goal",
+                "--goal",
+                "write file proof.txt with execution core ready",
+                "--execution-root",
+                str(execution_root),
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    goal_result = json.loads(goal_output.getvalue())
+    assert goal_result["status"] == "completed"
+    assert goal_result["decisions"][0]["planner_name"] == "rule_based"
+    assert (execution_root / "proof.txt").read_text(encoding="utf-8") == "execution core ready"
+
+    runs_output = StringIO()
+    with redirect_stdout(runs_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "runs",
+                "list",
+                "--limit",
+                "3",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    runs = json.loads(runs_output.getvalue())["runs"]
+    assert runs[0]["id"] == goal_result["id"]
+    assert runs[0]["planner_config"]["selected"] == "rule_based"
+
+    run_output = StringIO()
+    with redirect_stdout(run_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "runs",
+                "show",
+                "--id",
+                goal_result["id"],
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    shown = json.loads(run_output.getvalue())["run"]
+    assert shown["id"] == goal_result["id"]
+    assert shown["results"][0]["verified"] is True
     assert db_path.exists()

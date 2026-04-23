@@ -43,7 +43,14 @@ ALLOWED_WRITE_SUFFIXES = {
     ".yaml",
 }
 
-RETRYABLE_PATTERNS = ("timed out", "timeout", "temporar", "eaddrinuse", "connection reset", "network")
+RETRYABLE_PATTERNS = (
+    "timed out",
+    "timeout",
+    "temporar",
+    "eaddrinuse",
+    "connection reset",
+    "network",
+)
 DISALLOWED_COMMAND_TOKENS = ("&&", "||", "|", ";", ">", "<", "$(", "`", "\n")
 
 
@@ -59,7 +66,12 @@ def _is_within_root(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
-def resolve_execution_path(raw_path: str, *, must_exist: bool = False, allow_directory: bool = False) -> Path:
+def resolve_execution_path(
+    raw_path: str,
+    *,
+    must_exist: bool = False,
+    allow_directory: bool = False,
+) -> Path:
     if not raw_path.strip():
         raise ValueError("path is required")
 
@@ -111,7 +123,11 @@ def _record_mutation(
             "operation": operation,
             "success": success,
             "details": details,
-            "previous_sha256": _sha256_for_content(previous_content) if previous_content is not None else None,
+            "previous_sha256": (
+                _sha256_for_content(previous_content)
+                if previous_content is not None
+                else None
+            ),
             "new_sha256": _sha256_for_content(new_content) if new_content is not None else None,
             "created_at": _timestamp(),
         },
@@ -134,7 +150,13 @@ def read_file(path: str) -> dict[str, Any]:
     }
 
 
-def write_file(path: str, content: str, *, action_id: str | None = None, db_path: Path = DB_PATH) -> dict[str, Any]:
+def write_file(
+    path: str,
+    content: str,
+    *,
+    action_id: str | None = None,
+    db_path: Path = DB_PATH,
+) -> dict[str, Any]:
     resolved = resolve_execution_path(path)
     _validate_mutation_path(resolved)
     resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -224,7 +246,9 @@ def _command_is_allowed(argv: list[str]) -> bool:
 
 def classify_result(result: dict[str, Any]) -> dict[str, Any]:
     combined = f"{result['stdout']}\n{result['stderr']}".lower()
-    retryable = bool(result["timed_out"]) or any(pattern in combined for pattern in RETRYABLE_PATTERNS)
+    retryable = bool(result["timed_out"]) or any(
+        pattern in combined for pattern in RETRYABLE_PATTERNS
+    )
     return {
         "success": bool(result["success"]),
         "failure": not bool(result["success"]),
@@ -271,7 +295,9 @@ def execute_command(command: str, *, cwd: str = ".", timeout_seconds: int = 60) 
     return result
 
 
-def _normalize_operations(operations: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+def _normalize_operations(
+    operations: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
     normalized: list[dict[str, Any]] = []
     target_paths: list[str] = []
 
@@ -312,7 +338,11 @@ def _normalize_operations(operations: list[dict[str, Any]]) -> tuple[list[dict[s
     return normalized, target_paths
 
 
-def _is_risky_action(target_paths: list[str], operations: list[dict[str, Any]], verify_command: str) -> bool:
+def _is_risky_action(
+    target_paths: list[str],
+    operations: list[dict[str, Any]],
+    verify_command: str,
+) -> bool:
     if len(target_paths) > 1:
         return True
     if any(operation["type"] == "write" for operation in operations):
@@ -370,7 +400,11 @@ def create_operator_action(
         state="pending",
         stage="proposed",
         state_since=payload["created_at"],
-        next_action="Approve and run the coding action." if payload["approval_required"] else "Run the coding action.",
+        next_action=(
+            "Approve and run the coding action."
+            if payload["approval_required"]
+            else "Run the coding action."
+        ),
         metadata={"target_paths": payload["target_paths"], "status": payload["status"]},
         db_path=db_path,
     )
@@ -416,7 +450,14 @@ def _apply_action_operations(action: dict[str, Any], *, db_path: Path) -> list[d
     mutations: list[dict[str, Any]] = []
     for operation in action["operations"]:
         if operation["type"] == "write":
-            mutations.append(write_file(operation["path"], operation["content"], action_id=action["id"], db_path=db_path)["mutation"])
+            mutations.append(
+                write_file(
+                    operation["path"],
+                    operation["content"],
+                    action_id=action["id"],
+                    db_path=db_path,
+                )["mutation"]
+            )
         elif operation["type"] == "patch":
             mutations.append(
                 patch_file(
@@ -589,10 +630,22 @@ def run_operator_action(action_id: str, db_path: Path = DB_PATH) -> dict[str, An
 
 
 def get_execution_snapshot(limit: int = 6, db_path: Path = DB_PATH) -> dict[str, Any]:
-    actions = [row_to_coding_action_payload(row) for row in list_coding_actions(limit=limit, db_path=db_path)]
-    command_runs = [row_to_command_run_payload(row) for row in list_command_runs(limit=1, db_path=db_path)]
-    mutations = [row_to_file_mutation_payload(row) for row in list_file_mutations(limit=1, db_path=db_path)]
-    current_action = next((item for item in actions if item["status"] != "verified"), actions[0] if actions else None)
+    actions = [
+        row_to_coding_action_payload(row)
+        for row in list_coding_actions(limit=limit, db_path=db_path)
+    ]
+    command_runs = [
+        row_to_command_run_payload(row)
+        for row in list_command_runs(limit=1, db_path=db_path)
+    ]
+    mutations = [
+        row_to_file_mutation_payload(row)
+        for row in list_file_mutations(limit=1, db_path=db_path)
+    ]
+    current_action = next(
+        (item for item in actions if item["status"] != "verified"),
+        actions[0] if actions else None,
+    )
     return {
         "current_action": current_action,
         "recent_actions": actions,
@@ -613,4 +666,3 @@ def get_operator_command_run(command_run_id: str, db_path: Path = DB_PATH) -> di
     if row is None:
         return None
     return row_to_command_run_payload(row)
-

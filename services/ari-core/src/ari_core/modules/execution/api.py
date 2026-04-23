@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
+from .controller import run_execution_goal
 from .engine import (
     approve_operator_action,
     create_operator_action,
@@ -13,10 +14,20 @@ from .engine import (
     run_operator_action,
     write_file,
 )
+from .inspection import get_execution_run, list_execution_runs
+from .models import ExecutionGoal
 
 
 def handle_api_execution_command(args, db_path: Path = DB_PATH) -> int:
-    print(json.dumps(execute_command(args.command, cwd=args.cwd, timeout_seconds=args.timeout_seconds)))
+    print(
+        json.dumps(
+            execute_command(
+                args.command,
+                cwd=args.cwd,
+                timeout_seconds=args.timeout_seconds,
+            )
+        )
+    )
     return 0
 
 
@@ -26,7 +37,16 @@ def handle_api_execution_read_file(args, db_path: Path = DB_PATH) -> int:
 
 
 def handle_api_execution_write_file(args, db_path: Path = DB_PATH) -> int:
-    print(json.dumps(write_file(args.path, args.content, action_id=args.action_id, db_path=db_path)))
+    print(
+        json.dumps(
+            write_file(
+                args.path,
+                args.content,
+                action_id=args.action_id,
+                db_path=db_path,
+            )
+        )
+    )
     return 0
 
 
@@ -45,11 +65,41 @@ def handle_api_execution_patch_file(args, db_path: Path = DB_PATH) -> int:
     return 0
 
 
+def handle_api_execution_goal(args, db_path: Path = DB_PATH) -> int:
+    result = run_execution_goal(
+        ExecutionGoal(
+            objective=args.goal,
+            max_cycles=args.max_cycles,
+        ),
+        execution_root=args.execution_root,
+        db_path=db_path,
+        planner_mode=args.planner,
+    )
+    print(json.dumps(result.to_dict()))
+    return 0
+
+
+def handle_api_execution_runs_list(args, db_path: Path = DB_PATH) -> int:
+    print(json.dumps({"runs": list_execution_runs(limit=args.limit, db_path=db_path)}))
+    return 0
+
+
+def handle_api_execution_runs_show(args, db_path: Path = DB_PATH) -> int:
+    run = get_execution_run(args.id, db_path=db_path)
+    if run is None:
+        print(json.dumps({"error": f"Execution run {args.id} not found."}))
+        return 1
+    print(json.dumps({"run": run}))
+    return 0
+
+
 def handle_api_execution_action_create(args, db_path: Path = DB_PATH) -> int:
     operations = json.loads(args.operations_json)
     if not isinstance(operations, list):
         raise ValueError("operations_json must decode to a list.")
-    approval_required = None if args.approval_required == "auto" else args.approval_required == "true"
+    approval_required = (
+        None if args.approval_required == "auto" else args.approval_required == "true"
+    )
     print(
         json.dumps(
             create_operator_action(
@@ -93,4 +143,3 @@ def handle_api_execution_action_run(args, db_path: Path = DB_PATH) -> int:
 def handle_api_execution_snapshot(args, db_path: Path = DB_PATH) -> int:
     print(json.dumps(get_execution_snapshot(limit=args.limit, db_path=db_path)))
     return 0
-

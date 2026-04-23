@@ -8,7 +8,12 @@ from fastapi.testclient import TestClient
 
 def _purge_modules() -> None:
     for module_name in list(sys.modules):
-        if module_name == "ari_core" or module_name.startswith("ari_core.") or module_name == "ari_api" or module_name.startswith("ari_api."):
+        if (
+            module_name == "ari_core"
+            or module_name.startswith("ari_core.")
+            or module_name == "ari_api"
+            or module_name.startswith("ari_api.")
+        ):
             sys.modules.pop(module_name, None)
 
 
@@ -20,7 +25,9 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
     monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "execution-root"))
     execution_root = tmp_path / "execution-root"
     execution_root.mkdir(parents=True, exist_ok=True)
-    (execution_root / "operator-target.js").write_text("export const status = 'pending';\n", encoding="utf-8")
+    (execution_root / "operator-target.js").write_text(
+        "export const status = 'pending';\n", encoding="utf-8"
+    )
     (execution_root / "operator-check.test.mjs").write_text(
         "\n".join(
             [
@@ -29,7 +36,10 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
                 "import test from 'node:test';",
                 "",
                 "test('operator target is ready', () => {",
-                "  const source = fs.readFileSync(new URL('./operator-target.js', import.meta.url), 'utf8');",
+                "  const source = fs.readFileSync(",
+                "    new URL('./operator-target.js', import.meta.url),",
+                "    'utf8',",
+                "  );",
                 "  assert.match(source, /ready/);",
                 "});",
                 "",
@@ -86,7 +96,9 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
                     "id": "proj-1",
                     "title": "Canonical repo integration",
                     "goal": "Collapse the imported prototypes into the real service structure.",
-                    "completion_criteria": "ari-core, ari-api, and ari-hub all run from canonical services.",
+                    "completion_criteria": (
+                        "ari-core, ari-api, and ari-hub all run from canonical services."
+                    ),
                     "status": "active",
                     "source": "integration",
                     "created_at": "2026-04-15T02:00:00Z",
@@ -115,7 +127,10 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert awareness.json()["summary"]
         assert awareness.json()["currentFocus"]
 
-        stored_awareness = client.post("/awareness/store", json={"payload": awareness.json()})
+        stored_awareness = client.post(
+            "/awareness/store",
+            json={"payload": awareness.json()},
+        )
         assert stored_awareness.status_code == 200
         assert stored_awareness.json()["snapshot"]["summary"] == awareness.json()["summary"]
 
@@ -132,7 +147,11 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             },
         )
         assert classify.status_code == 200
-        assert classify.json()["classification"] in {"auto_pass", "auto_summarize", "escalate_to_alec"}
+        assert classify.json()["classification"] in {
+            "auto_pass",
+            "auto_summarize",
+            "escalate_to_alec",
+        }
 
         action = client.post(
             "/execution/actions",
@@ -169,3 +188,43 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert snapshot.status_code == 200
         assert snapshot.json()["current_action"]["id"] == action_id
         assert snapshot.json()["last_command_run"]["success"] is True
+
+        goal = client.post(
+            "/execution/goals",
+            json={
+                "goal": "write file goal-proof.txt with canonical goal execution",
+                "maxCycles": 1,
+            },
+        )
+        assert goal.status_code == 200
+        assert goal.json()["status"] == "completed"
+        assert goal.json()["decisions"][0]["planner_name"] == "rule_based"
+        assert (execution_root / "goal-proof.txt").read_text(
+            encoding="utf-8"
+        ) == "canonical goal execution"
+
+        runs = client.get("/execution/runs")
+        assert runs.status_code == 200
+        assert runs.json()["runs"][0]["id"] == goal.json()["id"]
+
+        run = client.get(f"/execution/runs/{goal.json()['id']}")
+        assert run.status_code == 200
+        assert run.json()["run"]["status"] == "completed"
+        assert run.json()["run"]["results"][0]["verified"] is True
+
+        fallback_goal = client.post(
+            "/execution/goals",
+            json={
+                "goal": "compose a broad autonomous rewrite",
+                "maxCycles": 1,
+                "planner": "model",
+            },
+        )
+        assert fallback_goal.status_code == 200
+        assert fallback_goal.json()["status"] == "rejected"
+        assert fallback_goal.json()["planner_config"]["requested"] == "model"
+        assert "no completion function" in fallback_goal.json()["planner_config"]["fallback_reason"]
+
+        fallback_run = client.get(f"/execution/runs/{fallback_goal.json()['id']}")
+        assert fallback_run.status_code == 200
+        assert fallback_run.json()["run"]["results"][0]["error"]

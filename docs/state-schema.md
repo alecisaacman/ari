@@ -2,211 +2,199 @@
 
 ## Canonical Principle
 
-There is one canonical shared state model across all surfaces.
+There is one canonical shared state model across ARI.
 
-The canonical models are defined in `packages/ari-state` and persisted through `packages/ari-memory`. API, hub, CLI, notifications, and later voice should depend on those shared models instead of inventing local variants.
+The canonical source of truth lives in:
 
-## Initial Canonical Models
+- `services/ari-core` for domain logic and persistence access
+- `services/ari-api` for the default contract into that logic
+- `config/schema.sql` for the durable SQLite schema
 
-### DailyState
+The hub, CLI, notifications, and later mobile surfaces must consume this canonical state instead of inventing local ownership.
 
-Represents the active day-level operating frame for ARI.
+## Durable Canonical Domains
 
-Core fields:
+### Notes
 
-- `date`
-- `priorities` (top 1-3)
-- `win_condition`
-- `movement` (`true`/`false`/`null`)
-- `stress` (`1..10` or `null`)
-- `next_action`
-- `last_check_at`
-
-### WeeklyState
-
-Represents the current week-level frame and review context.
-
-Core fields:
-
-- `week_start`
-- `outcomes` (top 3)
-- `cannot_drift`
-- `blockers`
-- `lesson`
-- `last_review_at`
-
-### OpenLoop
-
-Represents an unresolved commitment, question, or active thread that should not be silently lost.
+Canonical note storage lives in ARI and is surfaced through the API and hub.
 
 Core fields:
 
 - `id`
-- `title`
-- `status`
-- `kind`
-- `priority`
-- `source`
-- `notes`
-- `project_id`
-- `opened_at`
-- `due_at`
-- `last_touched_at`
-
-### Project
-
-Represents a longer-lived area of execution containing related loops and events.
-
-Core fields:
-
-- `id`
-- `slug`
-- `name`
-- `status`
-- `summary`
-- `tags`
-
-### Signal
-
-Represents an interpretable system observation derived from state or events.
-
-Core fields:
-
-- `id`
-- `kind`
-- `severity`
-- `summary`
-- `reason`
-- `evidence`
-- `related_entity_type`
-- `related_entity_id`
-- `detected_at`
-
-### Event
-
-Represents normalized system input or internal activity.
-
-Core fields:
-
-- `id`
-- `source`
-- `category`
-- `occurred_at`
 - `title`
 - `body`
-- `payload`
-- `normalized_text`
-
-Initial event categories:
-
-- `daily_update`
-- `weekly_planning`
-- `weekly_reflection`
-- `open_loop_add`
-- `open_loop_update`
-- `open_loop_resolve`
-- `project_update`
-- `signal_generated`
-- `alert_generated`
-- `capture`
-- `intelligence_item`
-
-### Alert
-
-Represents a surfaced escalation created from one or more signals.
-
-Core fields:
-
-- `id`
-- `status`
-- `channel`
-- `escalation_level`
-- `title`
-- `message`
-- `reason`
-- `source_signal_ids`
+- `tags`
 - `created_at`
-- `sent_at`
+- `updated_at`
 
-### OrchestrationRun
+### Tasks
 
-Represents one durable execution of the narrow orchestration path for a target state date.
+Tasks are canonical ARI work items.
 
 Core fields:
 
 - `id`
-- `state_date`
-- `state_fingerprint`
-- `executed_at`
-- `signal_ids`
-- `alert_ids`
+- `title`
+- `status`
+- `priority`
+- `details`
+- `created_at`
+- `updated_at`
+- `completed_at`
+
+### Structured Memory
+
+Structured memory is canonical and brain-owned.
+
+Current memory types include:
+
+- `identity`
+- `preference`
+- `goal`
+- `active_project`
+- `priority`
+- `routine`
+- `operating_principle`
+- `approval_decision`
+- `working_state`
+- `fact`
+
+Core fields:
+
+- `id`
+- `memory_type`
+- `title`
+- `content`
+- `tags`
+- `created_at`
+- `updated_at`
+
+### Coordination State
+
+Coordination state is canonical and includes the execution/planning spine that used to drift into ACE.
+
+Current coordination records include:
+
+- orchestration records
+- self-improvements
+- projects
+- project milestones
+- project steps
+- builder dispatch records
+- execution outcomes
+
+These records support:
+
+- orchestration history
+- improvement lifecycle tracking
+- project-level planning state
+- dispatch truth
+- execution truth
+
+### Awareness Snapshots
+
+ARI persists derived awareness snapshots canonically.
+
+These snapshots summarize:
+
+- current focus
+- top blockers
+- top improvement
+- active project state
+- recent reasoning context
+
+They are derived from canonical state, not authored locally by the hub.
+
+### Coding Actions
+
+Bounded coding actions are now canonical operator records.
+
+They are the first real execution layer for ARI’s coding loop.
+
+Lifecycle stages:
+
+- `proposed`
+- `approved`
+- `applied`
+- `tested`
+- `passed`
+- `failed`
+- `verified`
+
+Supporting execution records:
+
+- `ari_coding_actions`
+- `ari_file_mutations`
+- `ari_command_runs`
+- `ari_execution_outcomes`
+- `ari_runtime_execution_runs`
+
+Coding actions retain:
+
+- changed files
+- mutation history
+- verification commands
+- stdout / stderr
+- exit code
+- final outcome
+
+Runtime execution runs retain:
+
+- execution goal
+- repo context snapshots
+- worker decisions
+- worker plans
+- action results
+- verification results
+- retry / stop outcome
 
 ## Explainability
 
-Signals and alerts must preserve enough evidence to answer "why was this surfaced?" directly.
+Canonical state must remain explainable.
 
-- Signals retain `reason` and structured `evidence`.
-- Alerts retain `reason`, `source_signal_ids`, and `escalation_level`.
-- Surfaces should expose this explanation path without inventing alternate local logic.
+ARI should always be able to answer:
 
-## Initial Orchestration Path
+- what changed
+- why it changed
+- what evidence exists
+- what command ran
+- what succeeded or failed
+- whether a conclusion is proven or inferred
 
-The first `ari-core` orchestration path remains intentionally narrow.
+This applies especially to:
 
-- accept execution inputs that identify the target state date and detection time
-- load the relevant `DailyState`, `WeeklyState`, and open `OpenLoop` records from persistence
-- run the canonical signal engine
-- persist the generated `Signal` records before creating alerts
-- generate `Alert` records from the persisted signals
-- persist the generated `Alert` records without delivering notifications
+- orchestration decisions
+- self-improvement lifecycle movement
+- execution outcomes
+- coding action verification
 
-This path must stay explainable end to end. `ari-core` orchestrates repository access and uses the canonical signal and alert models, but it must not add parallel signal or alert logic outside `packages/ari-signals`.
+## Current Execution Model
 
-Repeated orchestration runs must also stay stable and explainable.
+The current operator layer is intentionally bounded.
 
-- persist a lightweight `OrchestrationRun` record for each execution
-- use durable fingerprints on persisted `Signal` and `Alert` records to avoid recreating identical outputs for the same `state_date`
-- preserve the original `reason`, `evidence`, and `source_signal_ids` chain when reusing prior records
-- support a narrow read path that can load the latest run, the previous run, the linked signals and alerts for a run, direct signal and alert detail by id, and a direct comparison of the latest two runs for the same `state_date`
+ARI can now:
 
-## Initial Routine Contracts
+- read files inside the execution root
+- write or patch approved files inside the execution root
+- run allowlisted verification commands
+- build bounded worker plans from explicit goals
+- execute and verify multi-action plans
+- persist command results and mutation history
+- surface execution truth through the API and hub
 
-The first routine layer writes directly onto the canonical state model and emits matching canonical events.
+ARI cannot yet:
 
-### Daily Check
+- generate high-quality coding actions autonomously
+- retry intelligently after failure
+- run a full model-driven decision-and-repair loop
+- control a live terminal session broadly
 
-- writes `DailyState`
-- fields updated: `priorities`, `win_condition`, `movement`, `stress`, `next_action`, `last_check_at`
-- emits `EventCategory.DAILY_UPDATE`
-
-### Weekly Planning
-
-- writes `WeeklyState`
-- fields updated: `outcomes`, `cannot_drift`, `blockers`, `last_review_at`
-- preserves `lesson` unless a later weekly reflection changes it
-- emits `EventCategory.WEEKLY_PLANNING`
-
-### Weekly Reflection
-
-- writes `WeeklyState`
-- fields updated: `lesson`, optional `blockers`, `last_review_at`
-- preserves the active week's `outcomes` and `cannot_drift`
-- emits `EventCategory.WEEKLY_REFLECTION`
-
-## Initial Signal Scope
-
-The first signal layer remains intentionally narrow and explainable.
-
-- `open_loop_accumulation`
-- `weekly_trajectory_drift`
-- `elevated_stress`
-
-These signals are generated from canonical state and retain structured evidence payloads so later surfaces can explain them without re-deriving logic.
+That remaining gap is the current product bottleneck.
 
 ## Persistence Strategy
 
-- Use Postgres as the durable store.
-- Use migrations for schema evolution.
-- Use repository classes for data access.
-- Keep persistence entities aligned with canonical shared models.
-- Persist `Signal` and `Alert` as first-class durable records, not transient outputs.
+- SQLite is the durable local store.
+- `config/schema.sql` is the canonical schema source.
+- `services/ari-core` owns repository and mutation logic.
+- `services/ari-api` is the default service contract.
+- `services/ari-hub` consumes canonical state and should not become a second brain.
