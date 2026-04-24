@@ -16,6 +16,7 @@ from .modules.execution.api import (
     handle_api_execution_action_list,
     handle_api_execution_action_run,
     handle_api_execution_command,
+    handle_api_execution_context,
     handle_api_execution_goal,
     handle_api_execution_patch_file,
     handle_api_execution_read_file,
@@ -797,6 +798,15 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
 
     execution_subparsers.add_parser("tools", help="List canonical execution tools.")
 
+    context_parser = execution_subparsers.add_parser(
+        "context", help="Inspect canonical repo context used for execution planning."
+    )
+    context_parser.add_argument(
+        "--execution-root",
+        default=None,
+        help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
+    )
+
     action_parser = execution_subparsers.add_parser(
         "actions", help="Canonical coding action lifecycle commands."
     )
@@ -1268,6 +1278,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_execution_goal(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "tools":
             return handle_api_execution_tools(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "context":
+            return handle_api_execution_context(args, db_path=db_path)
         if (
             args.api_command == "execution"
             and args.api_execution_command == "runs"

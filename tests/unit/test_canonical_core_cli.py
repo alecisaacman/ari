@@ -143,6 +143,7 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
 
     execution_root = tmp_path / "execution-root"
     execution_root.mkdir()
+    (execution_root / "README.md").write_text("canonical execution root\n", encoding="utf-8")
     goal_output = StringIO()
     with redirect_stdout(goal_output):
         exit_code = main(
@@ -209,4 +210,22 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     tools = json.loads(tools_output.getvalue())
     assert "write_file" in tools["allowed_actions"]
     assert tools["tools"][0]["action_type"] == "read_file"
+
+    context_output = StringIO()
+    with redirect_stdout(context_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "context",
+                "--execution-root",
+                str(execution_root),
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    context = json.loads(context_output.getvalue())["context"]
+    assert context["repo_root"] == str(execution_root.resolve())
+    assert "proof.txt" in context["files_sample"]
+    assert context["language_summary"]["markdown"] == 1
     assert db_path.exists()

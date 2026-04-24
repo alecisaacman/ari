@@ -217,6 +217,12 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert "run_command" in tools.json()["allowed_actions"]
         assert tools.json()["tools"][0]["action_type"] == "read_file"
 
+        context = client.get("/execution/context")
+        assert context.status_code == 200
+        assert context.json()["context"]["repo_root"] == str(execution_root.resolve())
+        assert "operator-target.js" in context.json()["context"]["files_sample"]
+        assert context.json()["context"]["language_summary"]["javascript"] >= 1
+
         fallback_goal = client.post(
             "/execution/goals",
             json={

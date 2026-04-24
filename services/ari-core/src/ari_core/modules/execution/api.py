@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
-from .controller import run_execution_goal
+from .controller import build_repo_context, run_execution_goal
 from .engine import (
     approve_operator_action,
     create_operator_action,
@@ -83,6 +83,12 @@ def handle_api_execution_goal(args, db_path: Path = DB_PATH) -> int:
 def handle_api_execution_tools(args, db_path: Path = DB_PATH) -> int:
     del args, db_path
     print(json.dumps(get_execution_tool_registry().prompt_payload()))
+    return 0
+
+
+def handle_api_execution_context(args, db_path: Path = DB_PATH) -> int:
+    del db_path
+    print(json.dumps({"context": build_repo_context(args.execution_root).to_dict()}))
     return 0
 
 

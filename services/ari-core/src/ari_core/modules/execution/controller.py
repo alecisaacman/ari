@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ...core.paths import DB_PATH, PROJECT_ROOT
+from ...core.paths import DB_PATH
 from ..coordination.db import put_coordination_entity
 from ..memory.context import build_memory_context
 from .executor import execute_action
@@ -34,7 +34,7 @@ from .tools import get_execution_tool_registry
 
 
 def build_repo_context(repo_root: Path | str | None = None) -> RepoContext:
-    root = Path(repo_root or PROJECT_ROOT).expanduser().resolve()
+    root = ExecutionRoot(repo_root).root
     changed_paths, git_available = _git_changed_paths(root)
     current_branch = _git_current_branch(root) if git_available else None
     files_sample = tuple(_files_sample(root))

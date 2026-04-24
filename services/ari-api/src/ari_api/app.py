@@ -11,7 +11,7 @@ from ari_core.modules.coordination.db import (
     list_coordination_entities,
     put_coordination_entity,
 )
-from ari_core.modules.execution.controller import run_execution_goal
+from ari_core.modules.execution.controller import build_repo_context, run_execution_goal
 from ari_core.modules.execution.engine import (
     approve_operator_action,
     create_operator_action,
@@ -358,6 +358,12 @@ def create_app() -> FastAPI:
     @app.get("/execution/tools")
     def execution_tools() -> dict[str, Any]:
         return get_execution_tool_registry().prompt_payload()
+
+    @app.get("/execution/context")
+    def execution_context(
+        execution_root: str | None = Query(default=None, alias="executionRoot"),
+    ) -> dict[str, Any]:
+        return {"context": build_repo_context(execution_root).to_dict()}
 
     @app.get("/execution/runs")
     def execution_runs(
