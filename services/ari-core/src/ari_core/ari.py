@@ -20,6 +20,8 @@ from .modules.execution.api import (
     handle_api_execution_goal,
     handle_api_execution_patch_file,
     handle_api_execution_plan,
+    handle_api_execution_plans_list,
+    handle_api_execution_plans_show,
     handle_api_execution_read_file,
     handle_api_execution_runs_list,
     handle_api_execution_runs_show,
@@ -804,6 +806,20 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
     )
 
+    plans_parser = execution_subparsers.add_parser(
+        "plans", help="Inspect persisted execution plan previews."
+    )
+    plans_subparsers = plans_parser.add_subparsers(
+        dest="api_execution_plans_command",
+        required=True,
+    )
+    plans_list_parser = plans_subparsers.add_parser(
+        "list", help="List recent execution plan previews."
+    )
+    plans_list_parser.add_argument("--limit", type=int, default=10, help="Maximum previews.")
+    plans_show_parser = plans_subparsers.add_parser("show", help="Show an execution plan preview.")
+    plans_show_parser.add_argument("--id", required=True, help="Execution plan preview id.")
+
     runs_parser = execution_subparsers.add_parser("runs", help="Inspect execution runs.")
     runs_subparsers = runs_parser.add_subparsers(
         dest="api_execution_runs_command",
@@ -1296,6 +1312,18 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_execution_goal(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "plan":
             return handle_api_execution_plan(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "plans"
+            and args.api_execution_plans_command == "list"
+        ):
+            return handle_api_execution_plans_list(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "plans"
+            and args.api_execution_plans_command == "show"
+        ):
+            return handle_api_execution_plans_show(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "tools":
             return handle_api_execution_tools(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "context":

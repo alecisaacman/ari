@@ -116,7 +116,8 @@ class ExecutionController:
         validation_error = (
             None if decision.plan is None else self._validate_plan(decision.plan)
         )
-        return {
+        preview = {
+            "id": f"execution-plan-preview-{uuid4()}",
             "goal": execution_goal.to_dict(),
             "status": _preview_status(decision, validation_error),
             "reason": validation_error or decision.reason,
@@ -128,6 +129,8 @@ class ExecutionController:
             "validation_error": validation_error,
             "created_at": _now_iso(),
         }
+        preview["persisted_preview"] = self._persist_plan_preview(preview)
+        return preview
 
     def run(self, goal: ExecutionGoal | str) -> ExecutionRun:
         execution_goal = goal if isinstance(goal, ExecutionGoal) else ExecutionGoal(objective=goal)
@@ -392,6 +395,28 @@ class ExecutionController:
                 "results_json": json.dumps(list(run.results)),
                 "created_at": run.created_at,
                 "updated_at": run.updated_at,
+            },
+            db_path=self.db_path,
+        )
+        return {key: row[key] for key in row.keys()}
+
+    def _persist_plan_preview(self, preview: dict[str, Any]) -> dict[str, object]:
+        row = put_coordination_entity(
+            "runtime_execution_plan_preview",
+            {
+                "id": preview["id"],
+                "goal_id": preview["goal"]["id"],
+                "objective": preview["goal"]["objective"],
+                "status": preview["status"],
+                "reason": preview["reason"],
+                "repo_root": preview["repo_context"]["repo_root"],
+                "context_json": json.dumps(preview["repo_context"]),
+                "memory_context_json": json.dumps(preview["memory_context"]),
+                "planner_config_json": json.dumps(preview["planner_config"]),
+                "planner_result_json": json.dumps(preview["planner_result"]),
+                "decision_json": json.dumps(preview["decision"]),
+                "validation_error": preview["validation_error"],
+                "created_at": preview["created_at"],
             },
             db_path=self.db_path,
         )

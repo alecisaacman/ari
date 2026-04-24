@@ -184,6 +184,27 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert plan["decision"]["planner_name"] == "rule_based"
     assert not (execution_root / "preview.txt").exists()
 
+    plans_output = StringIO()
+    with redirect_stdout(plans_output):
+        exit_code = main(
+            ["api", "execution", "plans", "list", "--limit", "3"],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    plans = json.loads(plans_output.getvalue())["plans"]
+    assert plans[0]["id"] == plan["id"]
+
+    plan_show_output = StringIO()
+    with redirect_stdout(plan_show_output):
+        exit_code = main(
+            ["api", "execution", "plans", "show", "--id", plan["id"]],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    shown_plan = json.loads(plan_show_output.getvalue())["plan"]
+    assert shown_plan["id"] == plan["id"]
+    assert shown_plan["status"] == "planned"
+
     runs_output = StringIO()
     with redirect_stdout(runs_output):
         exit_code = main(

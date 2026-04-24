@@ -127,6 +127,7 @@ Supporting execution records:
 - `ari_file_mutations`
 - `ari_command_runs`
 - `ari_execution_outcomes`
+- `ari_runtime_execution_plan_previews`
 - `ari_runtime_execution_runs`
 
 Coding actions retain:

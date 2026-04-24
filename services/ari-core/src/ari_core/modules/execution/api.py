@@ -14,7 +14,12 @@ from .engine import (
     run_operator_action,
     write_file,
 )
-from .inspection import get_execution_run, list_execution_runs
+from .inspection import (
+    get_execution_plan_preview,
+    get_execution_run,
+    list_execution_plan_previews,
+    list_execution_runs,
+)
 from .models import ExecutionGoal
 from .tools import get_execution_tool_registry
 
@@ -91,6 +96,20 @@ def handle_api_execution_plan(args, db_path: Path = DB_PATH) -> int:
         planner_mode=args.planner,
     )
     print(json.dumps(result))
+    return 0
+
+
+def handle_api_execution_plans_list(args, db_path: Path = DB_PATH) -> int:
+    print(json.dumps({"plans": list_execution_plan_previews(limit=args.limit, db_path=db_path)}))
+    return 0
+
+
+def handle_api_execution_plans_show(args, db_path: Path = DB_PATH) -> int:
+    preview = get_execution_plan_preview(args.id, db_path=db_path)
+    if preview is None:
+        print(json.dumps({"error": f"Execution plan preview {args.id} not found."}))
+        return 1
+    print(json.dumps({"plan": preview}))
     return 0
 
 

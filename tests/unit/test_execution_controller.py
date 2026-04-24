@@ -14,7 +14,12 @@ from ari_core.modules.execution import (
     plan_execution_goal,
     run_execution_goal,
 )
-from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
+from ari_core.modules.execution.inspection import (
+    get_execution_plan_preview,
+    get_execution_run,
+    list_execution_plan_previews,
+    list_execution_runs,
+)
 from ari_core.modules.memory import create_memory_block
 
 
@@ -59,6 +64,11 @@ def test_plan_execution_goal_previews_without_mutation(tmp_path: Path) -> None:
     assert preview["decision"]["planner_name"] == "rule_based"
     assert preview["validation_error"] is None
     assert not (root / "proof.txt").exists()
+    previews = list_execution_plan_previews(db_path=db_path)
+    stored = get_execution_plan_preview(preview["id"], db_path=db_path)
+    assert previews[0]["id"] == preview["id"]
+    assert stored is not None
+    assert stored["status"] == "planned"
 
 
 def test_execution_controller_executes_multi_action_plan_with_verification(tmp_path: Path) -> None:

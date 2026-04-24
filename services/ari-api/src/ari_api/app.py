@@ -27,7 +27,12 @@ from ari_core.modules.execution.engine import (
     run_operator_action,
     write_file,
 )
-from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
+from ari_core.modules.execution.inspection import (
+    get_execution_plan_preview,
+    get_execution_run,
+    list_execution_plan_previews,
+    list_execution_runs,
+)
 from ari_core.modules.execution.models import ExecutionGoal
 from ari_core.modules.execution.tools import get_execution_tool_registry
 from ari_core.modules.memory.capture import (
@@ -370,6 +375,22 @@ def create_app() -> FastAPI:
                 planner_mode=payload.planner,
             )
         )
+
+    @app.get("/execution/plans")
+    def execution_plans(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"plans": list_execution_plan_previews(limit=limit)}
+
+    @app.get("/execution/plans/{preview_id}")
+    def execution_plan_preview(preview_id: str) -> dict[str, Any]:
+        preview = get_execution_plan_preview(preview_id)
+        if preview is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Execution plan preview {preview_id} not found.",
+            )
+        return {"plan": preview}
 
     @app.get("/execution/tools")
     def execution_tools() -> dict[str, Any]:

@@ -413,3 +413,19 @@ create table if not exists ari_runtime_execution_runs (
     created_at text not null,
     updated_at text not null
 );
+
+create table if not exists ari_runtime_execution_plan_previews (
+    id text primary key,
+    goal_id text not null,
+    objective text not null,
+    status text not null,
+    reason text not null,
+    repo_root text not null,
+    context_json text not null,
+    memory_context_json text not null,
+    planner_config_json text not null,
+    planner_result_json text not null,
+    decision_json text not null,
+    validation_error text,
+    created_at text not null
+);

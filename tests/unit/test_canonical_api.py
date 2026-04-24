@@ -215,6 +215,14 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert plan.json()["decision"]["planner_name"] == "rule_based"
         assert not (execution_root / "preview-proof.txt").exists()
 
+        plans = client.get("/execution/plans")
+        assert plans.status_code == 200
+        assert plans.json()["plans"][0]["id"] == plan.json()["id"]
+
+        shown_plan = client.get(f"/execution/plans/{plan.json()['id']}")
+        assert shown_plan.status_code == 200
+        assert shown_plan.json()["plan"]["status"] == "planned"
+
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
         assert runs.json()["runs"][0]["id"] == goal.json()["id"]

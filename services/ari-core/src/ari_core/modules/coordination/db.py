@@ -1,13 +1,11 @@
-import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ...core.paths import DB_PATH
 from ..networking.db import get_connection, initialize_database
 
-
-ENTITY_CONFIG: Dict[str, Dict[str, Any]] = {
+ENTITY_CONFIG: dict[str, dict[str, Any]] = {
     "project": {
         "table": "ari_projects",
         "primary_key": "id",
@@ -344,26 +342,52 @@ ENTITY_CONFIG: Dict[str, Dict[str, Any]] = {
         ],
         "order_by": "updated_at desc",
     },
+    "runtime_execution_plan_preview": {
+        "table": "ari_runtime_execution_plan_previews",
+        "primary_key": "id",
+        "columns": [
+            "id",
+            "goal_id",
+            "objective",
+            "status",
+            "reason",
+            "repo_root",
+            "context_json",
+            "memory_context_json",
+            "planner_config_json",
+            "planner_result_json",
+            "decision_json",
+            "validation_error",
+            "created_at",
+        ],
+        "order_by": "created_at desc",
+    },
 }
 
 
-def _config_for(entity: str) -> Dict[str, Any]:
+def _config_for(entity: str) -> dict[str, Any]:
     if entity not in ENTITY_CONFIG:
         raise ValueError(f"Unknown coordination entity: {entity}")
     return ENTITY_CONFIG[entity]
 
 
-def put_coordination_entity(entity: str, payload: Dict[str, Any], db_path: Path = DB_PATH) -> sqlite3.Row:
+def put_coordination_entity(
+    entity: str,
+    payload: dict[str, Any],
+    db_path: Path = DB_PATH,
+) -> sqlite3.Row:
     config = _config_for(entity)
     initialize_database(db_path=db_path)
-    columns: List[str] = config["columns"]
+    columns: list[str] = config["columns"]
     primary_key = config["primary_key"]
     if primary_key not in payload:
         raise ValueError(f"Missing primary key for {entity}: {primary_key}")
 
     values = [payload.get(column) for column in columns]
     placeholders = ", ".join("?" for _ in columns)
-    update_assignments = ", ".join(f"{column} = excluded.{column}" for column in columns if column != primary_key)
+    update_assignments = ", ".join(
+        f"{column} = excluded.{column}" for column in columns if column != primary_key
+    )
 
     with get_connection(db_path) as connection:
         connection.execute(
@@ -388,7 +412,11 @@ def put_coordination_entity(entity: str, payload: Dict[str, Any], db_path: Path 
     return row
 
 
-def get_coordination_entity(entity: str, identifier: str, db_path: Path = DB_PATH) -> Optional[sqlite3.Row]:
+def get_coordination_entity(
+    entity: str,
+    identifier: str,
+    db_path: Path = DB_PATH,
+) -> sqlite3.Row | None:
     if not db_path.exists():
         return None
 
@@ -410,7 +438,11 @@ def get_coordination_entity(entity: str, identifier: str, db_path: Path = DB_PAT
         raise
 
 
-def list_coordination_entities(entity: str, limit: int = 50, db_path: Path = DB_PATH) -> List[sqlite3.Row]:
+def list_coordination_entities(
+    entity: str,
+    limit: int = 50,
+    db_path: Path = DB_PATH,
+) -> list[sqlite3.Row]:
     if not db_path.exists():
         return []
 
