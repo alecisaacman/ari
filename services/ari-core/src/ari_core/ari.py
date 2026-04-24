@@ -87,6 +87,72 @@ from .suits.documentation.record import handle_record_plan
 from .suits.documentation.storyboard import handle_storyboard_short_video
 from .suits.documentation.video import handle_video_build
 
+HELP_TOKENS = {"--help", "-h", "help"}
+
+
+def _is_local_help_request(args: list[str]) -> bool:
+    """Return true when the CLI input should be handled locally.
+
+    Help/introspection requests must never route into Codex, OpenAI, or worker loops.
+    """
+    if not args:
+        return False
+
+    return any(arg in HELP_TOKENS for arg in args)
+
+
+def _local_help_text(args: list[str]) -> str:
+    """Return stable local help text for ARI CLI surfaces."""
+    joined = " ".join(args)
+
+    if joined.startswith("execution"):
+        return """ARI CLI — execution help
+
+Local execution inspection commands:
+
+  execution context
+      Inspect repo/context inputs used for planning.
+
+  execution plans
+      List or inspect persisted execution plan previews.
+
+  execution plans show <preview_id>
+      Show one persisted execution plan preview.
+
+Notes:
+  - Help commands are handled locally.
+  - Help commands do not invoke Codex.
+  - Help commands do not invoke OpenAI.
+  - Help commands do not create worker runs.
+  - Natural-language goals are still supported outside help mode.
+"""
+
+    return """ARI CLI — local help
+
+Available command categories:
+
+  execution
+      Inspect execution context and plan previews.
+
+  memory
+      Inspect memory context if available.
+
+  help, --help, -h
+      Show local help without invoking workers.
+
+Examples:
+
+  python -m ari_core.ari --help
+  python -m ari_core.ari execution help
+  python -m ari_core.ari execution context
+  python -m ari_core.ari execution plans
+
+Notes:
+  - ARI also accepts natural-language goals.
+  - Help/introspection commands are local only.
+  - Help does not invoke Codex, OpenAI, or external APIs.
+"""
+
 LEGACY_NETWORKING_TOP_LEVEL = {"today", "contacts", "followups"}
 LEGACY_DOCUMENTATION_TOP_LEVEL = {
     "content",
@@ -1123,6 +1189,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
+    args = list(argv) if argv is not None else sys.argv[1:]
+    if _is_local_help_request(args):
+        print(_local_help_text(args))
+        return 0
+
     natural_language_result = _maybe_handle_natural_language(
         argv if argv is not None else sys.argv[1:], db_path=db_path
     )
