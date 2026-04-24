@@ -79,6 +79,22 @@ def resolve_execution_planner(
             ),
         )
 
+    if requested == "openai":
+        try:
+            return ModelPlanner(build_openai_completion_fn()), PlannerSelection(
+                requested=requested,
+                selected=ModelPlanner.planner_name,
+            )
+        except Exception as error:
+            return RuleBasedPlanner(), PlannerSelection(
+                requested=requested,
+                selected=RuleBasedPlanner.planner_name,
+                fallback_reason=(
+                    "OpenAI planner requested but could not be configured: "
+                    f"{error}; fell back to rule_based."
+                ),
+            )
+
     return RuleBasedPlanner(), PlannerSelection(
         requested=requested,
         selected=RuleBasedPlanner.planner_name,
