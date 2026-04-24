@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
+from .capture import capture_execution_run_memory, capture_recent_execution_run_memories
 from .db import (
     create_memory_block,
     get_ari_memory,
@@ -196,4 +197,24 @@ def handle_api_memory_block_get(args, db_path: Path = DB_PATH) -> int:
         print(json.dumps(payload))
     else:
         print(f"Loaded ARI memory block {payload['id']}: {payload['layer']} {payload['title']}")
+    return 0
+
+
+def handle_api_memory_capture_execution(args, db_path: Path = DB_PATH) -> int:
+    if args.id:
+        payload: dict[str, object] = {
+            "block": capture_execution_run_memory(args.id, db_path=db_path)
+        }
+    else:
+        payload = {
+            "blocks": capture_recent_execution_run_memories(
+                limit=args.limit,
+                db_path=db_path,
+            )
+        }
+    if getattr(args, "as_json", False):
+        print(json.dumps(payload))
+    else:
+        count = len(payload.get("blocks", [])) if "blocks" in payload else 1
+        print(f"Captured {count} execution memory block(s).")
     return 0

@@ -4,6 +4,7 @@ import json
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
+from uuid import uuid4
 
 from ...core.paths import DB_PATH
 from ..networking.db import get_connection, initialize_database
@@ -217,9 +218,12 @@ def create_memory_block(
     tags: Sequence[str] = (),
     subject_ids: Sequence[str] = (),
     evidence: Sequence[dict[str, object]] = (),
+    block_id: str | None = None,
+    replace_existing: bool = False,
     db_path: Path = DB_PATH,
 ) -> sqlite3.Row:
     block = MemoryBlock(
+        id=block_id or f"memory-block-{uuid4()}",
         layer=layer,
         kind=_required_text(kind, "kind"),
         title=_required_text(title, "title"),
@@ -233,9 +237,20 @@ def create_memory_block(
     )
     initialize_database(db_path=db_path)
     with get_connection(db_path) as connection:
+        existing = connection.execute(
+            """
+            select created_at
+            from ari_memory_blocks
+            where id = ?
+            """,
+            (block.id,),
+        ).fetchone()
+        if existing is not None and not replace_existing:
+            raise ValueError(f"Memory block {block.id} already exists.")
+        created_at = existing["created_at"] if existing is not None else block.created_at
         connection.execute(
             """
-            insert into ari_memory_blocks (
+            insert or replace into ari_memory_blocks (
                 id,
                 layer,
                 kind,
@@ -263,7 +278,7 @@ def create_memory_block(
                 json.dumps(list(block.tags)),
                 json.dumps(list(block.subject_ids)),
                 json.dumps(list(block.evidence)),
-                block.created_at,
+                created_at,
                 block.updated_at,
             ),
         )

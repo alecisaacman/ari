@@ -30,6 +30,7 @@ from .modules.memory.api import (
     handle_api_memory_block_get,
     handle_api_memory_block_list,
     handle_api_memory_block_search,
+    handle_api_memory_capture_execution,
     handle_api_memory_get,
     handle_api_memory_list,
     handle_api_memory_remember,
@@ -507,6 +508,24 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     memory_block_get.add_argument("--id", required=True, help="Memory block id.")
     memory_block_get.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    memory_capture_parser = memory_subparsers.add_parser(
+        "capture", help="Capture canonical runtime traces into structured memory."
+    )
+    memory_capture_subparsers = memory_capture_parser.add_subparsers(
+        dest="api_memory_capture_command",
+        required=True,
+    )
+    memory_capture_execution = memory_capture_subparsers.add_parser(
+        "execution", help="Capture execution run traces into session memory blocks."
+    )
+    memory_capture_execution.add_argument("--id", default=None, help="Execution run id.")
+    memory_capture_execution.add_argument(
+        "--limit", type=int, default=10, help="Recent run limit when id is omitted."
+    )
+    memory_capture_execution.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1101,6 +1120,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_memory_blocks_command == "get"
         ):
             return handle_api_memory_block_get(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "capture"
+            and args.api_memory_capture_command == "execution"
+        ):
+            return handle_api_memory_capture_execution(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "put":
             return handle_api_coordination_put(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "get":

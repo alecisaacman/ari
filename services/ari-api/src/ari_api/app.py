@@ -25,6 +25,10 @@ from ari_core.modules.execution.engine import (
 )
 from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
 from ari_core.modules.execution.models import ExecutionGoal
+from ari_core.modules.memory.capture import (
+    capture_execution_run_memory,
+    capture_recent_execution_run_memories,
+)
 from ari_core.modules.memory.db import (
     create_memory_block,
     get_ari_memory,
@@ -64,6 +68,7 @@ from ari_api.schemas import (
     ExecutionReadFileRequest,
     ExecutionWriteFileRequest,
     MemoryBlockCreateRequest,
+    MemoryCaptureExecutionRequest,
     MemoryCreateRequest,
     NoteCreateRequest,
     OrchestrationClassifyRequest,
@@ -190,6 +195,12 @@ def create_app() -> FastAPI:
         if block is None:
             raise HTTPException(status_code=404, detail=f"Memory block {block_id} not found.")
         return memory_block_to_payload(block)
+
+    @app.post("/memory/capture/execution")
+    def capture_execution_memory(payload: MemoryCaptureExecutionRequest) -> dict[str, Any]:
+        if payload.runId:
+            return {"block": capture_execution_run_memory(payload.runId)}
+        return {"blocks": capture_recent_execution_run_memories(limit=payload.limit)}
 
     @app.get("/memory/{memory_id}")
     def get_memory(memory_id: int) -> dict[str, Any]:

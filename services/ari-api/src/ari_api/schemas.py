@@ -39,6 +39,11 @@ class MemoryBlockCreateRequest(APIModel):
     evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class MemoryCaptureExecutionRequest(APIModel):
+    runId: str | None = None
+    limit: int = Field(default=10, ge=1, le=50)
+
+
 class CoordinationUpsertRequest(APIModel):
     payload: dict[str, Any]
 
