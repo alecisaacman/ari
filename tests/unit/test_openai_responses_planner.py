@@ -100,6 +100,40 @@ def test_openai_strict_output_rejects_invented_command_target() -> None:
         validate_openai_planner_output(raw, _payload())
 
 
+def test_openai_strict_output_accepts_safe_verification_command() -> None:
+    command = ".venv312/bin/python -m pytest tests/unit -q"
+    raw = _strict_output(
+        verification=[
+            {
+                "type": "run_test",
+                "command": command,
+            }
+        ]
+    )
+    payload = {**_payload(), "allowed_commands": [command]}
+
+    normalized = json.loads(validate_openai_planner_output(raw, payload))
+
+    assert normalized["verification"][0]["command"] == command
+    assert normalized["verification"][0]["type"] == "action_success"
+
+
+def test_openai_strict_output_rejects_unsafe_verification_command() -> None:
+    command = "rm -rf ."
+    raw = _strict_output(
+        verification=[
+            {
+                "type": "run_test",
+                "command": command,
+            }
+        ]
+    )
+    payload = {**_payload(), "allowed_commands": [command]}
+
+    with pytest.raises(RuntimeError, match="verification command failed policy"):
+        validate_openai_planner_output(raw, payload)
+
+
 def test_openai_planner_missing_api_key_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

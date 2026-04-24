@@ -10,7 +10,10 @@ import json
 import os
 import shlex
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
+
+from .command_policy import validate_command
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 
@@ -167,13 +170,14 @@ def validate_openai_planner_output(raw_output: str, payload: Mapping[str, object
     allowed_actions = _allowed_strings(payload.get("allowed_actions"))
     allowed_files = _allowed_strings(payload.get("allowed_files"))
     allowed_commands = _allowed_strings(payload.get("allowed_commands"))
+    repo_root = _repo_root_from_payload(payload)
 
     actions = [
-        _validate_action(action, allowed_actions, allowed_files, allowed_commands)
+        _validate_action(action, allowed_actions, allowed_files, allowed_commands, repo_root)
         for action in raw_actions
     ]
     verification = [
-        _validate_verification(item, allowed_commands) for item in raw_verification
+        _validate_verification(item, allowed_commands, repo_root) for item in raw_verification
     ]
 
     return json.dumps(
@@ -195,6 +199,7 @@ def _validate_action(
     allowed_actions: set[str],
     allowed_files: set[str],
     allowed_commands: set[str],
+    repo_root: Path | None,
 ) -> dict[str, object]:
     if not isinstance(raw_action, dict):
         raise RuntimeError("Each OpenAI planner action must be an object.")
@@ -226,6 +231,12 @@ def _validate_action(
     elif action_type in COMMAND_ACTION_TYPES:
         if target not in allowed_commands:
             raise RuntimeError(f"OpenAI planner invented command target: {target}")
+        policy_result = validate_command(target, repo_root=repo_root)
+        if not policy_result.allowed:
+            raise RuntimeError(
+                "OpenAI planner command failed verification policy: "
+                f"{policy_result.reason}"
+            )
         normalized["command"] = shlex.split(target)
         if action_type == "run_test":
             normalized["type"] = "run_command"
@@ -237,6 +248,7 @@ def _validate_action(
 def _validate_verification(
     raw_verification: object,
     allowed_commands: set[str],
+    repo_root: Path | None,
 ) -> dict[str, object]:
     if not isinstance(raw_verification, dict):
         raise RuntimeError("Each OpenAI planner verification item must be an object.")
@@ -245,9 +257,16 @@ def _validate_verification(
     command = _require_string(raw_verification["command"], "verification command")
     if command not in allowed_commands:
         raise RuntimeError(f"OpenAI planner invented verification command: {command}")
+    policy_result = validate_command(command, repo_root=repo_root)
+    if not policy_result.allowed:
+        raise RuntimeError(
+            "OpenAI planner verification command failed policy: "
+            f"{policy_result.reason}"
+        )
     return {
         "type": "action_success",
         "target": verification_type,
+        "command": command,
         "reason": f"Planner requested verification command: {command}",
     }
 
@@ -281,3 +300,13 @@ def _allowed_strings(raw: object) -> set[str]:
     if not isinstance(raw, list):
         return set()
     return {item for item in raw if isinstance(item, str)}
+
+
+def _repo_root_from_payload(payload: Mapping[str, object]) -> Path | None:
+    repo_context = payload.get("repo_context")
+    if not isinstance(repo_context, dict):
+        return None
+    repo_root = repo_context.get("repo_root")
+    if not isinstance(repo_root, str) or not repo_root.strip():
+        return None
+    return Path(repo_root)

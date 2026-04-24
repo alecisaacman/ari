@@ -1,5 +1,6 @@
 """Canonical bounded execution module."""
 
+from .command_policy import CommandPolicyResult, validate_command
 from .controller import (
     ExecutionController,
     build_repo_context,
@@ -45,6 +46,7 @@ __all__ = [
     "PlannerResult",
     "RepoContext",
     "RuleBasedPlanner",
+    "CommandPolicyResult",
     "VerificationExpectation",
     "WorkerAction",
     "WorkerDecision",
@@ -56,4 +58,5 @@ __all__ = [
     "plan_execution_goal",
     "run_execution_goal",
     "resolve_execution_planner",
+    "validate_command",
 ]

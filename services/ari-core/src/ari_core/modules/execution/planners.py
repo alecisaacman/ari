@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from ari_core.modules.execution.openai_responses import build_openai_completion_fn
 
+from .command_policy import validate_command
 from .models import (
     ExecutionGoal,
     FailureContext,
@@ -368,6 +369,7 @@ class ModelPlanner:
             decoded.get("verification"),
             allowed_files,
             action_result,
+            repo_context,
         )
         if isinstance(verification_result, str):
             return _reject(self.planner_name, verification_result, confidence, failure_context)
@@ -475,6 +477,7 @@ def _parse_model_verification(
     raw_verification: object,
     allowed_files: set[str],
     actions: list[WorkerAction],
+    repo_context: RepoContext,
 ) -> list[VerificationExpectation] | str:
     if raw_verification is None:
         return _expectations_for_actions(actions)
@@ -490,7 +493,19 @@ def _parse_model_verification(
         )
         if expectation_type not in {"action_success", "file_content", "path_exists"}:
             return f"Planner verification type is not allowed: {expectation_type or '<missing>'}"
+        command = raw_expectation.get("command")
+        if command is not None:
+            if not isinstance(command, str):
+                return "Planner verification command must be a string."
+            policy_result = validate_command(
+                command,
+                repo_root=ExecutionRoot(repo_context.repo_root).root,
+            )
+            if not policy_result.allowed:
+                return f"Planner verification command failed policy: {policy_result.reason}"
         target = str(raw_expectation.get("target") or "")
+        if expectation_type == "action_success" and command is not None:
+            target = command
         if expectation_type in {"file_content", "path_exists"} and target not in allowed_files:
             return (
                 "Planner verification referenced a file outside RepoContext: "

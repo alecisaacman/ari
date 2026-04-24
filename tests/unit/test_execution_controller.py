@@ -261,6 +261,75 @@ def test_model_planner_rejects_unsafe_command(tmp_path: Path) -> None:
     assert (root / "README.md").exists()
 
 
+def test_model_planner_accepts_safe_verification_command_in_preview(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("old\n", encoding="utf-8")
+    command = ".venv312/bin/python -m pytest tests/unit -q"
+    planner = ModelPlanner(
+        lambda payload: json.dumps(
+            {
+                "confidence": 0.9,
+                "reason": "Read README and keep a safe verification command attached.",
+                "actions": [{"type": "read_file", "path": "README.md"}],
+                "verification": [
+                    {
+                        "type": "action_success",
+                        "command": command,
+                        "reason": "Safe unit test command for a future verification loop.",
+                    }
+                ],
+            }
+        )
+    )
+
+    preview = plan_execution_goal(
+        "Preview README inspection",
+        execution_root=root,
+        db_path=db_path,
+        planner=planner,
+    )
+
+    assert preview["status"] == "planned"
+    assert preview["decision"]["plan"]["verification"][0]["target"] == command
+    assert (root / "README.md").read_text(encoding="utf-8") == "old\n"
+
+
+def test_model_planner_rejects_unsafe_verification_command(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("old\n", encoding="utf-8")
+    planner = ModelPlanner(
+        lambda payload: json.dumps(
+            {
+                "confidence": 0.9,
+                "reason": "Read README but attach an unsafe verification command.",
+                "actions": [{"type": "read_file", "path": "README.md"}],
+                "verification": [
+                    {
+                        "type": "action_success",
+                        "command": "rm -rf .",
+                        "reason": "Unsafe command must fail closed.",
+                    }
+                ],
+            }
+        )
+    )
+
+    preview = plan_execution_goal(
+        "Preview README inspection",
+        execution_root=root,
+        db_path=db_path,
+        planner=planner,
+    )
+
+    assert preview["status"] == "rejected"
+    assert "verification command failed policy" in preview["reason"]
+    assert (root / "README.md").read_text(encoding="utf-8") == "old\n"
+
+
 def test_controller_rejects_unregistered_planner_action(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "networking.db"
     root = tmp_path / "repo"
