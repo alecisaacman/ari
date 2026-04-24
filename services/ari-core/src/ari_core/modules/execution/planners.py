@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
+from ari_core.modules.execution.openai_responses import build_openai_completion_fn
+
 from .models import (
     ExecutionGoal,
     FailureContext,
