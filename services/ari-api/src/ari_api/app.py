@@ -26,10 +26,15 @@ from ari_core.modules.execution.engine import (
 from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
 from ari_core.modules.execution.models import ExecutionGoal
 from ari_core.modules.memory.db import (
+    create_memory_block,
     get_ari_memory,
+    get_memory_block,
     list_ari_memories,
+    list_memory_blocks,
+    memory_block_to_payload,
     remember_ari_memory,
     search_ari_memories,
+    search_memory_blocks,
 )
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 from ari_core.modules.policy.engine import (
@@ -58,6 +63,7 @@ from ari_api.schemas import (
     ExecutionPatchFileRequest,
     ExecutionReadFileRequest,
     ExecutionWriteFileRequest,
+    MemoryBlockCreateRequest,
     MemoryCreateRequest,
     NoteCreateRequest,
     OrchestrationClassifyRequest,
@@ -144,6 +150,46 @@ def create_app() -> FastAPI:
         else:
             rows = list_ari_memories(memory_types=types, limit=limit)
         return {"query": query, "memories": [_row_to_memory(row) for row in rows]}
+
+    @app.post("/memory/blocks")
+    def create_memory_block_endpoint(payload: MemoryBlockCreateRequest) -> dict[str, Any]:
+        return memory_block_to_payload(
+            create_memory_block(
+                layer=payload.layer,
+                kind=payload.kind,
+                title=payload.title,
+                body=payload.body,
+                source=payload.source,
+                importance=payload.importance,
+                confidence=payload.confidence,
+                tags=payload.tags,
+                subject_ids=payload.subjectIds,
+                evidence=payload.evidence,
+            )
+        )
+
+    @app.get("/memory/blocks")
+    def list_memory_block_endpoint(
+        layer: str | None = Query(default=None),
+        query: str = Query(default=""),
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        rows = (
+            search_memory_blocks(query, layer=layer, limit=limit)
+            if query.strip()
+            else list_memory_blocks(layer=layer, limit=limit)
+        )
+        return {
+            "query": query,
+            "blocks": [memory_block_to_payload(row) for row in rows],
+        }
+
+    @app.get("/memory/blocks/{block_id}")
+    def get_memory_block_endpoint(block_id: str) -> dict[str, Any]:
+        block = get_memory_block(block_id)
+        if block is None:
+            raise HTTPException(status_code=404, detail=f"Memory block {block_id} not found.")
+        return memory_block_to_payload(block)
 
     @app.get("/memory/{memory_id}")
     def get_memory(memory_id: int) -> dict[str, Any]:

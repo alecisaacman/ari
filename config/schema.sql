@@ -58,6 +58,25 @@ create table if not exists ari_memories (
     unique(type, title)
 );
 
+create table if not exists ari_memory_blocks (
+    id text primary key,
+    layer text not null,
+    kind text not null,
+    title text not null,
+    body text not null,
+    source text not null,
+    importance integer not null default 3,
+    confidence real not null default 1.0,
+    tags_json text not null default '[]',
+    subject_ids_json text not null default '[]',
+    evidence_json text not null default '[]',
+    created_at text not null,
+    updated_at text not null
+);
+
+create index if not exists idx_ari_memory_blocks_layer_updated
+    on ari_memory_blocks (layer, updated_at desc);
+
 create table if not exists ari_projects (
     id text primary key,
     title text not null,

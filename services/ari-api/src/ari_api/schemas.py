@@ -26,6 +26,19 @@ class MemoryCreateRequest(APIModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class MemoryBlockCreateRequest(APIModel):
+    layer: Literal["session", "daily", "weekly", "open_loop", "long_term", "self_model"]
+    kind: str
+    title: str
+    body: str
+    source: str = "manual"
+    importance: int = Field(default=3, ge=1, le=5)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    tags: list[str] = Field(default_factory=list)
+    subjectIds: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class CoordinationUpsertRequest(APIModel):
     payload: dict[str, Any]
 

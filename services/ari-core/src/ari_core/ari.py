@@ -26,6 +26,10 @@ from .modules.execution.api import (
 )
 from .modules.execution.executor import execute_action
 from .modules.memory.api import (
+    handle_api_memory_block_create,
+    handle_api_memory_block_get,
+    handle_api_memory_block_list,
+    handle_api_memory_block_search,
     handle_api_memory_get,
     handle_api_memory_list,
     handle_api_memory_remember,
@@ -441,6 +445,68 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     memory_get_parser.add_argument("--id", required=True, help="Memory id.")
     memory_get_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    memory_blocks_parser = memory_subparsers.add_parser(
+        "blocks", help="Structured layered memory block commands."
+    )
+    memory_blocks_subparsers = memory_blocks_parser.add_subparsers(
+        dest="api_memory_blocks_command",
+        required=True,
+    )
+    memory_block_create = memory_blocks_subparsers.add_parser(
+        "create", help="Create a structured ARI memory block."
+    )
+    memory_block_create.add_argument(
+        "--layer",
+        required=True,
+        choices=["session", "daily", "weekly", "open_loop", "long_term", "self_model"],
+        help="Memory layer.",
+    )
+    memory_block_create.add_argument("--kind", required=True, help="Memory kind.")
+    memory_block_create.add_argument("--title", required=True, help="Memory block title.")
+    memory_block_create.add_argument("--body", required=True, help="Memory block body.")
+    memory_block_create.add_argument("--source", default="manual", help="Memory source.")
+    memory_block_create.add_argument("--importance", type=int, default=3, help="1-5 importance.")
+    memory_block_create.add_argument(
+        "--confidence", type=float, default=1.0, help="0-1 confidence."
+    )
+    memory_block_create.add_argument("--tags-json", default="[]", help="JSON array of tags.")
+    memory_block_create.add_argument(
+        "--subject-ids-json", default="[]", help="JSON array of linked subject ids."
+    )
+    memory_block_create.add_argument(
+        "--evidence-json", default="[]", help="JSON array of evidence objects."
+    )
+    memory_block_create.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    memory_block_list = memory_blocks_subparsers.add_parser(
+        "list", help="List structured ARI memory blocks."
+    )
+    memory_block_list.add_argument("--layer", default=None, help="Optional layer filter.")
+    memory_block_list.add_argument("--limit", type=int, default=20, help="Maximum blocks.")
+    memory_block_list.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    memory_block_search = memory_blocks_subparsers.add_parser(
+        "search", help="Search structured ARI memory blocks."
+    )
+    memory_block_search.add_argument("--query", default="", help="Query text.")
+    memory_block_search.add_argument("--layer", default=None, help="Optional layer filter.")
+    memory_block_search.add_argument("--limit", type=int, default=20, help="Maximum blocks.")
+    memory_block_search.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    memory_block_get = memory_blocks_subparsers.add_parser(
+        "get", help="Get a structured ARI memory block by id."
+    )
+    memory_block_get.add_argument("--id", required=True, help="Memory block id.")
+    memory_block_get.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1011,6 +1077,30 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_memory_search(args, db_path=db_path)
         if args.api_command == "memory" and args.api_memory_command == "get":
             return handle_api_memory_get(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "blocks"
+            and args.api_memory_blocks_command == "create"
+        ):
+            return handle_api_memory_block_create(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "blocks"
+            and args.api_memory_blocks_command == "list"
+        ):
+            return handle_api_memory_block_list(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "blocks"
+            and args.api_memory_blocks_command == "search"
+        ):
+            return handle_api_memory_block_search(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "blocks"
+            and args.api_memory_blocks_command == "get"
+        ):
+            return handle_api_memory_block_get(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "put":
             return handle_api_coordination_put(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "get":
