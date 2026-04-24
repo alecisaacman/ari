@@ -31,6 +31,7 @@ from .modules.memory.api import (
     handle_api_memory_block_list,
     handle_api_memory_block_search,
     handle_api_memory_capture_execution,
+    handle_api_memory_explain_execution,
     handle_api_memory_get,
     handle_api_memory_list,
     handle_api_memory_remember,
@@ -526,6 +527,21 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--limit", type=int, default=10, help="Recent run limit when id is omitted."
     )
     memory_capture_execution.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    memory_explain_parser = memory_subparsers.add_parser(
+        "explain", help="Explain canonical ARI memory and runtime traces."
+    )
+    memory_explain_subparsers = memory_explain_parser.add_subparsers(
+        dest="api_memory_explain_command",
+        required=True,
+    )
+    memory_explain_execution = memory_explain_subparsers.add_parser(
+        "execution", help="Explain an execution run from trace and memory."
+    )
+    memory_explain_execution.add_argument("--id", required=True, help="Execution run id.")
+    memory_explain_execution.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1126,6 +1142,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_memory_capture_command == "execution"
         ):
             return handle_api_memory_capture_execution(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "explain"
+            and args.api_memory_explain_command == "execution"
+        ):
+            return handle_api_memory_explain_execution(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "put":
             return handle_api_coordination_put(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "get":

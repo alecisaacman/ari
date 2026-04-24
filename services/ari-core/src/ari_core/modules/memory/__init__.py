@@ -8,6 +8,7 @@ from .db import (
     memory_block_to_payload,
     search_memory_blocks,
 )
+from .explain import explain_execution_run
 from .models import MemoryBlock, MemoryBlockLayer
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "capture_execution_run_memory",
     "capture_recent_execution_run_memories",
     "create_memory_block",
+    "explain_execution_run",
     "get_memory_block",
     "list_memory_blocks",
     "memory_block_to_payload",

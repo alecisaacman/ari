@@ -16,6 +16,7 @@ from .db import (
     search_ari_memories,
     search_memory_blocks,
 )
+from .explain import explain_execution_run
 
 
 def _parse_types(raw_types: list[str] | None) -> list[str]:
@@ -217,4 +218,13 @@ def handle_api_memory_capture_execution(args, db_path: Path = DB_PATH) -> int:
     else:
         count = len(payload.get("blocks", [])) if "blocks" in payload else 1
         print(f"Captured {count} execution memory block(s).")
+    return 0
+
+
+def handle_api_memory_explain_execution(args, db_path: Path = DB_PATH) -> int:
+    payload = explain_execution_run(args.id, db_path=db_path)
+    if getattr(args, "as_json", False):
+        print(json.dumps(payload))
+    else:
+        print(payload["summary"])
     return 0

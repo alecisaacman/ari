@@ -153,6 +153,7 @@ def test_capture_execution_run_memory_is_idempotent(tmp_path: Path) -> None:
     from ari_core.modules.execution import ExecutionGoal, run_execution_goal
     from ari_core.modules.memory.capture import capture_execution_run_memory
     from ari_core.modules.memory.db import list_memory_blocks, memory_block_to_payload
+    from ari_core.modules.memory.explain import explain_execution_run
 
     db_path = tmp_path / "state" / "networking.db"
     root = tmp_path / "repo"
@@ -175,6 +176,11 @@ def test_capture_execution_run_memory_is_idempotent(tmp_path: Path) -> None:
     assert "Objective: write file proof.txt with remembered" in str(first["body"])
     assert first["subject_ids"][0] == run.id
     assert len(blocks) == 1
+
+    explanation = explain_execution_run(run.id, db_path=db_path)
+    assert explanation["status"] == "completed"
+    assert explanation["memory_blocks"][0]["id"] == first["id"]
+    assert any("Final status reason" in reason for reason in explanation["why"])
 
 
 def test_memory_capture_execution_cli(tmp_path: Path, monkeypatch) -> None:
@@ -219,6 +225,17 @@ def test_memory_capture_execution_cli(tmp_path: Path, monkeypatch) -> None:
     assert block["layer"] == "session"
     assert block["tags"][0] == "execution"
 
+    explain_output = StringIO()
+    with redirect_stdout(explain_output):
+        exit_code = main(
+            ["api", "memory", "explain", "execution", "--id", run_id, "--json"],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    explanation = json.loads(explain_output.getvalue())
+    assert explanation["subject"]["id"] == run_id
+    assert explanation["memory_blocks"][0]["source"] == run_id
+
 
 def test_memory_capture_execution_api(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
@@ -244,3 +261,8 @@ def test_memory_capture_execution_api(tmp_path: Path, monkeypatch) -> None:
         listed = client.get("/memory/blocks", params={"query": "api-proof"})
         assert listed.status_code == 200
         assert listed.json()["blocks"][0]["source"] == run_id
+
+        explained = client.get(f"/explain/execution/{run_id}")
+        assert explained.status_code == 200
+        assert explained.json()["subject"]["id"] == run_id
+        assert explained.json()["memory_blocks"][0]["source"] == run_id
