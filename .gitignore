@@ -21,3 +21,4 @@ README.backup.pre_v1_docs.md
 
 # Runtime artifacts
 services/ari-hub/runtime/
+.env
