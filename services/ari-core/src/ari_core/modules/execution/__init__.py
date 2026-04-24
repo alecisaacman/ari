@@ -4,6 +4,7 @@ from .controller import (
     ExecutionController,
     build_repo_context,
     decide_worker_action,
+    plan_execution_goal,
     run_execution_goal,
 )
 from .executor import execute_action
@@ -52,6 +53,7 @@ __all__ = [
     "decide_worker_action",
     "execute_action",
     "get_execution_tool_registry",
+    "plan_execution_goal",
     "run_execution_goal",
     "resolve_execution_planner",
 ]

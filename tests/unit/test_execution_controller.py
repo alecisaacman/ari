@@ -11,6 +11,7 @@ from ari_core.modules.execution import (
     WorkerAction,
     WorkerPlan,
     build_repo_context,
+    plan_execution_goal,
     run_execution_goal,
 )
 from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
@@ -41,6 +42,23 @@ def test_execution_controller_completes_bounded_write_and_persists_trace(tmp_pat
     assert rows[0]["status"] == "completed"
     assert json.loads(rows[0]["decisions_json"])[0]["status"] == "act"
     assert json.loads(rows[0]["results_json"])[0]["verified"] is True
+
+
+def test_plan_execution_goal_previews_without_mutation(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    preview = plan_execution_goal(
+        "write file proof.txt with preview only",
+        execution_root=root,
+        db_path=db_path,
+    )
+
+    assert preview["status"] == "planned"
+    assert preview["decision"]["planner_name"] == "rule_based"
+    assert preview["validation_error"] is None
+    assert not (root / "proof.txt").exists()
 
 
 def test_execution_controller_executes_multi_action_plan_with_verification(tmp_path: Path) -> None:

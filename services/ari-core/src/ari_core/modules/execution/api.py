@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
-from .controller import build_repo_context, run_execution_goal
+from .controller import build_repo_context, plan_execution_goal, run_execution_goal
 from .engine import (
     approve_operator_action,
     create_operator_action,
@@ -77,6 +77,20 @@ def handle_api_execution_goal(args, db_path: Path = DB_PATH) -> int:
         planner_mode=args.planner,
     )
     print(json.dumps(result.to_dict()))
+    return 0
+
+
+def handle_api_execution_plan(args, db_path: Path = DB_PATH) -> int:
+    result = plan_execution_goal(
+        ExecutionGoal(
+            objective=args.goal,
+            max_cycles=args.max_cycles,
+        ),
+        execution_root=args.execution_root,
+        db_path=db_path,
+        planner_mode=args.planner,
+    )
+    print(json.dumps(result))
     return 0
 
 

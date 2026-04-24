@@ -164,6 +164,26 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert goal_result["decisions"][0]["planner_name"] == "rule_based"
     assert (execution_root / "proof.txt").read_text(encoding="utf-8") == "execution core ready"
 
+    plan_output = StringIO()
+    with redirect_stdout(plan_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "plan",
+                "--goal",
+                "write file preview.txt with not yet",
+                "--execution-root",
+                str(execution_root),
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    plan = json.loads(plan_output.getvalue())
+    assert plan["status"] == "planned"
+    assert plan["decision"]["planner_name"] == "rule_based"
+    assert not (execution_root / "preview.txt").exists()
+
     runs_output = StringIO()
     with redirect_stdout(runs_output):
         exit_code = main(

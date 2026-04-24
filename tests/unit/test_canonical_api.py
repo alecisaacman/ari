@@ -203,6 +203,18 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             encoding="utf-8"
         ) == "canonical goal execution"
 
+        plan = client.post(
+            "/execution/plans",
+            json={
+                "goal": "write file preview-proof.txt with not yet",
+                "maxCycles": 1,
+            },
+        )
+        assert plan.status_code == 200
+        assert plan.json()["status"] == "planned"
+        assert plan.json()["decision"]["planner_name"] == "rule_based"
+        assert not (execution_root / "preview-proof.txt").exists()
+
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
         assert runs.json()["runs"][0]["id"] == goal.json()["id"]

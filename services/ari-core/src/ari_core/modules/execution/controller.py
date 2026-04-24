@@ -99,6 +99,36 @@ class ExecutionController:
             completion_fn=planner_completion_fn,
         )
 
+    def plan(self, goal: ExecutionGoal | str) -> dict[str, Any]:
+        execution_goal = goal if isinstance(goal, ExecutionGoal) else ExecutionGoal(objective=goal)
+        if execution_goal.max_cycles < 1:
+            raise ValueError("max_cycles must be at least 1")
+
+        context = build_repo_context(self.execution_root.root)
+        memory_context = self._build_memory_context(execution_goal)
+        planner_result = self.planner.plan(
+            execution_goal,
+            context,
+            failure_context=None,
+            memory_context=memory_context,
+        )
+        decision = _decision_from_planner_result(planner_result, cycle_index=1)
+        validation_error = (
+            None if decision.plan is None else self._validate_plan(decision.plan)
+        )
+        return {
+            "goal": execution_goal.to_dict(),
+            "status": _preview_status(decision, validation_error),
+            "reason": validation_error or decision.reason,
+            "repo_context": context.to_dict(),
+            "memory_context": memory_context,
+            "planner_config": self.planner_selection.to_dict(),
+            "planner_result": planner_result.to_dict(),
+            "decision": decision.to_dict(),
+            "validation_error": validation_error,
+            "created_at": _now_iso(),
+        }
+
     def run(self, goal: ExecutionGoal | str) -> ExecutionRun:
         execution_goal = goal if isinstance(goal, ExecutionGoal) else ExecutionGoal(objective=goal)
         if execution_goal.max_cycles < 1:
@@ -390,6 +420,28 @@ def run_execution_goal(
     ).run(goal)
 
 
+def plan_execution_goal(
+    goal: ExecutionGoal | str,
+    *,
+    execution_root: Path | str | None = None,
+    db_path: Path = DB_PATH,
+    planner: ExecutionPlanner | None = None,
+    planner_mode: str | None = None,
+    planner_completion_fn: Callable[[dict[str, object]], str] | None = None,
+    memory_context_layers: list[str] | None = None,
+    memory_context_limit: int = 5,
+) -> dict[str, Any]:
+    return ExecutionController(
+        execution_root=execution_root,
+        db_path=db_path,
+        planner=planner,
+        planner_mode=planner_mode,
+        planner_completion_fn=planner_completion_fn,
+        memory_context_layers=memory_context_layers,
+        memory_context_limit=memory_context_limit,
+    ).plan(goal)
+
+
 def _decision_from_planner_result(
     planner_result: PlannerResult,
     cycle_index: int,
@@ -429,6 +481,16 @@ def _rejected_result(
         "planner_config": planner_config,
         "memory_context": memory_context,
     }
+
+
+def _preview_status(decision: WorkerDecision, validation_error: str | None) -> str:
+    if validation_error is not None:
+        return "invalid"
+    if decision.status == "act":
+        return "planned"
+    if decision.status == "stop":
+        return "stopped"
+    return "rejected"
 
 
 def _git_changed_paths(repo_root: Path) -> tuple[list[str], bool]:

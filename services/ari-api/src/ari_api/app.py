@@ -11,7 +11,11 @@ from ari_core.modules.coordination.db import (
     list_coordination_entities,
     put_coordination_entity,
 )
-from ari_core.modules.execution.controller import build_repo_context, run_execution_goal
+from ari_core.modules.execution.controller import (
+    build_repo_context,
+    plan_execution_goal,
+    run_execution_goal,
+)
 from ari_core.modules.execution.engine import (
     approve_operator_action,
     create_operator_action,
@@ -353,6 +357,18 @@ def create_app() -> FastAPI:
                 ),
                 planner_mode=payload.planner,
             ).to_dict()
+        )
+
+    @app.post("/execution/plans")
+    def execution_plan(payload: ExecutionGoalRequest) -> dict[str, Any]:
+        return guard(
+            lambda: plan_execution_goal(
+                ExecutionGoal(
+                    objective=payload.goal,
+                    max_cycles=payload.maxCycles,
+                ),
+                planner_mode=payload.planner,
+            )
         )
 
     @app.get("/execution/tools")

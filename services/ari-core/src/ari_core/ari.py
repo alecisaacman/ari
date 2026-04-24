@@ -19,6 +19,7 @@ from .modules.execution.api import (
     handle_api_execution_context,
     handle_api_execution_goal,
     handle_api_execution_patch_file,
+    handle_api_execution_plan,
     handle_api_execution_read_file,
     handle_api_execution_runs_list,
     handle_api_execution_runs_show,
@@ -786,6 +787,23 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
     )
 
+    plan_parser = execution_subparsers.add_parser(
+        "plan", help="Preview a bounded execution plan without running actions."
+    )
+    plan_parser.add_argument("--goal", required=True, help="Goal for the execution planner.")
+    plan_parser.add_argument("--max-cycles", type=int, default=1, help="Maximum planner cycles.")
+    plan_parser.add_argument(
+        "--planner",
+        choices=["rule_based", "model"],
+        default="rule_based",
+        help="Planner mode. Model mode falls back unless a completion function is configured.",
+    )
+    plan_parser.add_argument(
+        "--execution-root",
+        default=None,
+        help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
+    )
+
     runs_parser = execution_subparsers.add_parser("runs", help="Inspect execution runs.")
     runs_subparsers = runs_parser.add_subparsers(
         dest="api_execution_runs_command",
@@ -1276,6 +1294,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_execution_patch_file(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "goal":
             return handle_api_execution_goal(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "plan":
+            return handle_api_execution_plan(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "tools":
             return handle_api_execution_tools(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "context":
