@@ -167,6 +167,42 @@ def test_self_model_memory_is_idempotent(tmp_path: Path) -> None:
     assert all(block["layer"] == "self_model" for block in loaded)
 
 
+def test_memory_context_ranks_and_filters_blocks(tmp_path: Path) -> None:
+    from ari_core.modules.memory import build_memory_context, create_memory_block
+
+    db_path = tmp_path / "state" / "networking.db"
+    create_memory_block(
+        layer="long_term",
+        kind="architecture",
+        title="Low importance context",
+        body="ARI remembers broad architecture context.",
+        source="test",
+        importance=2,
+        tags=["architecture"],
+        db_path=db_path,
+    )
+    create_memory_block(
+        layer="self_model",
+        kind="authority",
+        title="High importance context",
+        body="ARI is the single brain for architecture decisions.",
+        source="test",
+        importance=5,
+        tags=["architecture"],
+        db_path=db_path,
+    )
+
+    context = build_memory_context(
+        "architecture",
+        layers=["self_model", "long_term"],
+        db_path=db_path,
+    )
+
+    assert context["blocks"][0]["title"] == "High importance context"
+    assert context["layers"] == ["self_model", "long_term"]
+    assert "Loaded 2 memory block" in str(context["summary"])
+
+
 def test_self_model_cli_and_api(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
@@ -206,6 +242,31 @@ def test_self_model_cli_and_api(tmp_path: Path, monkeypatch) -> None:
         assert any(
             block["title"] == "ARI is the single brain" for block in api_show.json()["blocks"]
         )
+
+        context = client.get(
+            "/memory/context",
+            params={"query": "single brain", "layers": "self_model"},
+        )
+        assert context.status_code == 200
+        assert context.json()["blocks"][0]["layer"] == "self_model"
+
+    context_output = StringIO()
+    with redirect_stdout(context_output):
+        exit_code = main(
+            [
+                "api",
+                "memory",
+                "context",
+                "--query",
+                "single brain",
+                "--layer",
+                "self_model",
+                "--json",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    assert json.loads(context_output.getvalue())["blocks"][0]["layer"] == "self_model"
 
 
 def test_capture_execution_run_memory_is_idempotent(tmp_path: Path) -> None:

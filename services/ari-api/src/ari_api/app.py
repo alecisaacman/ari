@@ -29,6 +29,7 @@ from ari_core.modules.memory.capture import (
     capture_execution_run_memory,
     capture_recent_execution_run_memories,
 )
+from ari_core.modules.memory.context import build_memory_context
 from ari_core.modules.memory.db import (
     create_memory_block,
     get_ari_memory,
@@ -197,6 +198,14 @@ def create_app() -> FastAPI:
         if block is None:
             raise HTTPException(status_code=404, detail=f"Memory block {block_id} not found.")
         return memory_block_to_payload(block)
+
+    @app.get("/memory/context")
+    def memory_context(
+        query: str = Query(default=""),
+        layers: list[str] = MEMORY_TYPES_QUERY,
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return build_memory_context(query, layers=layers, limit=limit)
 
     @app.post("/memory/capture/execution")
     def capture_execution_memory(payload: MemoryCaptureExecutionRequest) -> dict[str, Any]:

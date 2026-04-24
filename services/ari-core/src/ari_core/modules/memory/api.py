@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ...core.paths import DB_PATH
 from .capture import capture_execution_run_memory, capture_recent_execution_run_memories
+from .context import build_memory_context
 from .db import (
     create_memory_block,
     get_ari_memory,
@@ -224,6 +225,20 @@ def handle_api_memory_capture_execution(args, db_path: Path = DB_PATH) -> int:
 
 def handle_api_memory_explain_execution(args, db_path: Path = DB_PATH) -> int:
     payload = explain_execution_run(args.id, db_path=db_path)
+    if getattr(args, "as_json", False):
+        print(json.dumps(payload))
+    else:
+        print(payload["summary"])
+    return 0
+
+
+def handle_api_memory_context(args, db_path: Path = DB_PATH) -> int:
+    payload = build_memory_context(
+        args.query,
+        layers=args.layer,
+        limit=args.limit,
+        db_path=db_path,
+    )
     if getattr(args, "as_json", False):
         print(json.dumps(payload))
     else:

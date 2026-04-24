@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from ...core.paths import DB_PATH
+from .db import list_memory_blocks, memory_block_to_payload, search_memory_blocks
+
+
+def build_memory_context(
+    query: str = "",
+    *,
+    layers: list[str] | None = None,
+    limit: int = 10,
+    db_path: Path = DB_PATH,
+) -> dict[str, object]:
+    selected_layers = [layer for layer in layers or [] if layer]
+    blocks = _load_blocks(query, selected_layers, limit=limit, db_path=db_path)
+    return {
+        "query": query,
+        "layers": selected_layers,
+        "limit": limit,
+        "blocks": blocks[:limit],
+        "summary": _summary(query, selected_layers, blocks[:limit]),
+    }
+
+
+def _load_blocks(
+    query: str,
+    layers: list[str],
+    *,
+    limit: int,
+    db_path: Path,
+) -> list[dict[str, object]]:
+    loaded: list[dict[str, object]] = []
+    if layers:
+        for layer in layers:
+            rows = (
+                search_memory_blocks(query, layer=layer, limit=limit, db_path=db_path)
+                if query.strip()
+                else list_memory_blocks(layer=layer, limit=limit, db_path=db_path)
+            )
+            loaded.extend(memory_block_to_payload(row) for row in rows)
+    else:
+        rows = (
+            search_memory_blocks(query, limit=limit, db_path=db_path)
+            if query.strip()
+            else list_memory_blocks(limit=limit, db_path=db_path)
+        )
+        loaded.extend(memory_block_to_payload(row) for row in rows)
+
+    deduped = {str(block["id"]): block for block in loaded}
+    return sorted(
+        deduped.values(),
+        key=lambda block: (int(block.get("importance", 0)), str(block.get("updated_at", ""))),
+        reverse=True,
+    )
+
+
+def _summary(query: str, layers: list[str], blocks: list[dict[str, object]]) -> str:
+    layer_text = ", ".join(layers) if layers else "all layers"
+    query_text = query.strip() or "latest memory"
+    return f"Loaded {len(blocks)} memory block(s) for {query_text} across {layer_text}."

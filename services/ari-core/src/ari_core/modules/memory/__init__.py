@@ -1,6 +1,7 @@
 """Canonical ARI memory module."""
 
 from .capture import capture_execution_run_memory, capture_recent_execution_run_memories
+from .context import build_memory_context
 from .db import (
     create_memory_block,
     get_memory_block,
@@ -17,6 +18,7 @@ __all__ = [
     "MemoryBlockLayer",
     "capture_execution_run_memory",
     "capture_recent_execution_run_memories",
+    "build_memory_context",
     "create_memory_block",
     "explain_execution_run",
     "ensure_self_model_memory",

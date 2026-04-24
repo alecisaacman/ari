@@ -31,6 +31,7 @@ from .modules.memory.api import (
     handle_api_memory_block_list,
     handle_api_memory_block_search,
     handle_api_memory_capture_execution,
+    handle_api_memory_context,
     handle_api_memory_explain_execution,
     handle_api_memory_get,
     handle_api_memory_list,
@@ -449,6 +450,18 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     memory_get_parser.add_argument("--id", required=True, help="Memory id.")
     memory_get_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    memory_context_parser = memory_subparsers.add_parser(
+        "context", help="Build structured memory context for a query."
+    )
+    memory_context_parser.add_argument("--query", default="", help="Query text.")
+    memory_context_parser.add_argument(
+        "--layer", action="append", default=[], help="Memory layer filter. Repeatable."
+    )
+    memory_context_parser.add_argument("--limit", type=int, default=10, help="Maximum blocks.")
+    memory_context_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1128,6 +1141,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_memory_search(args, db_path=db_path)
         if args.api_command == "memory" and args.api_memory_command == "get":
             return handle_api_memory_get(args, db_path=db_path)
+        if args.api_command == "memory" and args.api_memory_command == "context":
+            return handle_api_memory_context(args, db_path=db_path)
         if (
             args.api_command == "memory"
             and args.api_memory_command == "blocks"
