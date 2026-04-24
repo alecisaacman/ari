@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from ...core.paths import DB_PATH, PROJECT_ROOT
 from ..coordination.db import put_coordination_entity
+from ..memory.context import build_memory_context
 from .executor import execute_action
 from .models import (
     ExecutionGoal,
@@ -73,9 +74,17 @@ class ExecutionController:
         planner: ExecutionPlanner | None = None,
         planner_mode: str | None = None,
         planner_completion_fn: Callable[[dict[str, object]], str] | None = None,
+        memory_context_layers: list[str] | None = None,
+        memory_context_limit: int = 5,
     ) -> None:
         self.execution_root = ExecutionRoot(execution_root)
         self.db_path = db_path
+        self.memory_context_layers = memory_context_layers or [
+            "self_model",
+            "long_term",
+            "session",
+        ]
+        self.memory_context_limit = memory_context_limit
         self.planner, self.planner_selection = resolve_execution_planner(
             planner=planner,
             planner_mode=planner_mode,
@@ -99,11 +108,13 @@ class ExecutionController:
 
         for cycle_index in range(1, execution_goal.max_cycles + 1):
             context = build_repo_context(self.execution_root.root)
+            memory_context = self._build_memory_context(execution_goal)
             contexts.append(context)
             planner_result = self.planner.plan(
                 execution_goal,
                 context,
                 failure_context=failure_context,
+                memory_context=memory_context,
             )
             decision = _decision_from_planner_result(planner_result, cycle_index)
             decisions.append(decision)
@@ -119,6 +130,7 @@ class ExecutionController:
                         planner_result,
                         decision.reason,
                         planner_config=planner_config,
+                        memory_context=memory_context,
                     )
                 )
                 status = "rejected"
@@ -140,6 +152,7 @@ class ExecutionController:
                         None if failure_context is None else failure_context.to_dict()
                     ),
                     "planner_config": planner_config,
+                    "memory_context": memory_context,
                 }
                 results.append(result)
                 status = "rejected"
@@ -153,6 +166,7 @@ class ExecutionController:
                 None if failure_context is None else failure_context.to_dict()
             )
             result["planner_config"] = planner_config
+            result["memory_context"] = memory_context
             results.append(result)
 
             if result["verified"]:
@@ -222,6 +236,14 @@ class ExecutionController:
         except (KeyError, TypeError, ValueError) as error:
             return str(error)
         return None
+
+    def _build_memory_context(self, goal: ExecutionGoal) -> dict[str, object]:
+        return build_memory_context(
+            goal.objective,
+            layers=self.memory_context_layers,
+            limit=self.memory_context_limit,
+            db_path=self.db_path,
+        )
 
     def _validate_plan(self, plan: WorkerPlan) -> str | None:
         if not plan.actions:
@@ -351,6 +373,8 @@ def run_execution_goal(
     planner: ExecutionPlanner | None = None,
     planner_mode: str | None = None,
     planner_completion_fn: Callable[[dict[str, object]], str] | None = None,
+    memory_context_layers: list[str] | None = None,
+    memory_context_limit: int = 5,
 ) -> ExecutionRun:
     return ExecutionController(
         execution_root=execution_root,
@@ -358,6 +382,8 @@ def run_execution_goal(
         planner=planner,
         planner_mode=planner_mode,
         planner_completion_fn=planner_completion_fn,
+        memory_context_layers=memory_context_layers,
+        memory_context_limit=memory_context_limit,
     ).run(goal)
 
 
@@ -383,6 +409,7 @@ def _rejected_result(
     reason: str,
     *,
     planner_config: dict[str, Any],
+    memory_context: dict[str, object],
 ) -> dict[str, Any]:
     return {
         "success": False,
@@ -397,6 +424,7 @@ def _rejected_result(
             else planner_result.failure_context.to_dict()
         ),
         "planner_config": planner_config,
+        "memory_context": memory_context,
     }
 
 

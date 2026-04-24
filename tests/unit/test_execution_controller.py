@@ -11,6 +11,7 @@ from ari_core.modules.execution import (
     run_execution_goal,
 )
 from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
+from ari_core.modules.memory import create_memory_block
 
 
 def test_execution_controller_completes_bounded_write_and_persists_trace(tmp_path: Path) -> None:
@@ -107,6 +108,46 @@ def test_model_planner_valid_json_becomes_worker_plan(tmp_path: Path) -> None:
     assert planner.last_prompt_payload is not None
     assert "tools" in planner.last_prompt_payload
     assert "write_file" in planner.last_prompt_payload["allowed_actions"]
+
+
+def test_model_planner_receives_relevant_memory_context(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("remembered\n", encoding="utf-8")
+    create_memory_block(
+        layer="self_model",
+        kind="architecture",
+        title="Single brain",
+        body="ARI keeps decision logic in the canonical brain.",
+        source="test",
+        importance=5,
+        tags=["single-brain"],
+        db_path=db_path,
+    )
+    planner = ModelPlanner(
+        lambda payload: json.dumps(
+            {
+                "confidence": 0.91,
+                "reason": "Read the README with memory context available.",
+                "actions": [{"type": "read_file", "path": "README.md"}],
+            }
+        )
+    )
+
+    result = run_execution_goal(
+        "Use single brain memory to inspect README",
+        execution_root=root,
+        db_path=db_path,
+        planner=planner,
+    )
+
+    assert result.status == "completed"
+    assert planner.last_prompt_payload is not None
+    memory_context = planner.last_prompt_payload["memory_context"]
+    assert isinstance(memory_context, dict)
+    assert memory_context["blocks"][0]["title"] == "Single brain"
+    assert result.results[0]["memory_context"]["blocks"][0]["title"] == "Single brain"
 
 
 def test_model_planner_invalid_json_fails_closed(tmp_path: Path) -> None:

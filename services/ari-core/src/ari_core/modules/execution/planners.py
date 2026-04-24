@@ -41,6 +41,7 @@ class ExecutionPlanner(Protocol):
         goal: ExecutionGoal,
         repo_context: RepoContext,
         failure_context: FailureContext | None = None,
+        memory_context: dict[str, object] | None = None,
     ) -> PlannerResult: ...
 
 
@@ -94,8 +95,9 @@ class RuleBasedPlanner:
         goal: ExecutionGoal,
         repo_context: RepoContext,
         failure_context: FailureContext | None = None,
+        memory_context: dict[str, object] | None = None,
     ) -> PlannerResult:
-        del failure_context
+        del failure_context, memory_context
         objective = goal.objective.strip()
         normalized = objective.lower()
         if not objective:
@@ -220,8 +222,14 @@ class ModelPlanner:
         goal: ExecutionGoal,
         repo_context: RepoContext,
         failure_context: FailureContext | None = None,
+        memory_context: dict[str, object] | None = None,
     ) -> PlannerResult:
-        payload = self._build_prompt_payload(goal, repo_context, failure_context)
+        payload = self._build_prompt_payload(
+            goal,
+            repo_context,
+            failure_context,
+            memory_context,
+        )
         self.last_prompt_payload = payload
         try:
             raw_response = self.completion_fn(payload)
@@ -239,6 +247,7 @@ class ModelPlanner:
         goal: ExecutionGoal,
         repo_context: RepoContext,
         failure_context: FailureContext | None,
+        memory_context: dict[str, object] | None,
     ) -> dict[str, object]:
         return {
             "instruction": "Return only strict JSON for one bounded WorkerPlan.",
@@ -271,6 +280,7 @@ class ModelPlanner:
             "max_plan_actions": self.max_plan_actions,
             "confidence_threshold": self.confidence_threshold,
             "failure_context": None if failure_context is None else failure_context.to_dict(),
+            "memory_context": memory_context or {},
         }
 
     def _parse_response(
