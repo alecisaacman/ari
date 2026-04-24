@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from ari_core.modules.execution.openai_responses import build_openai_completion_fn
+from dotenv import load_dotenv
+
+load_dotenv()
 
 candidate_files = [
     "services/ari-core/src/ari_core/modules/execution/openai_responses.py",
@@ -11,6 +13,12 @@ candidate_files = [
     "tests/unit/test_execution_controller.py",
     "scripts/dev/smoke_openai_planner.py",
 ]
+
+ruff_command = (
+    ".venv312/bin/python -m ruff check "
+    "services/ari-core/src/ari_core/modules/execution/openai_responses.py "
+    "services/ari-core/src/ari_core/modules/execution/planners.py"
+)
 
 payload: dict[str, object] = {
     "goal": (
@@ -23,7 +31,7 @@ payload: dict[str, object] = {
     "allowed_commands": [
         ".venv312/bin/python -m pytest tests/unit/test_execution_controller.py -q",
         ".venv312/bin/python -m pytest tests/unit -q",
-        ".venv312/bin/python -m ruff check services/ari-core/src/ari_core/modules/execution/openai_responses.py services/ari-core/src/ari_core/modules/execution/planners.py",
+        ruff_command,
     ],
     "required_output_shape": {
         "confidence": "number between 0 and 1",
