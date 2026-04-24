@@ -496,12 +496,22 @@ def test_execution_controller_completes_read_only_repo_context_loop(tmp_path: Pa
     root = tmp_path / "repo"
     root.mkdir()
     (root / "README.md").write_text("hello\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname = 'sample'\n", encoding="utf-8")
+    (root / "tests").mkdir()
+    (root / "tests" / "test_sample.py").write_text(
+        "def test_sample():\n    pass\n",
+        encoding="utf-8",
+    )
 
     context = build_repo_context(root)
     result = run_execution_goal("inspect repo status", execution_root=root, db_path=db_path)
 
     assert context.repo_root == str(root.resolve())
     assert "README.md" in context.files_sample
+    assert "tests" in context.directories_sample
+    assert "pyproject.toml" in context.package_manifests
+    assert ("pytest",) in context.test_commands
+    assert context.language_summary["python"] == 1
     assert result.status == "completed"
     assert result.results[0]["success"] is True
     assert result.results[0]["verified"] is True

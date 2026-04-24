@@ -42,6 +42,10 @@ class RepoContext:
     changed_paths: tuple[str, ...] = ()
     current_branch: str | None = None
     files_sample: tuple[str, ...] = ()
+    directories_sample: tuple[str, ...] = ()
+    package_manifests: tuple[str, ...] = ()
+    test_commands: tuple[tuple[str, ...], ...] = ()
+    language_summary: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

@@ -37,13 +37,19 @@ def build_repo_context(repo_root: Path | str | None = None) -> RepoContext:
     root = Path(repo_root or PROJECT_ROOT).expanduser().resolve()
     changed_paths, git_available = _git_changed_paths(root)
     current_branch = _git_current_branch(root) if git_available else None
+    files_sample = tuple(_files_sample(root))
+    package_manifests = tuple(_package_manifests(files_sample))
     return RepoContext(
         repo_root=str(root),
         git_available=git_available,
         git_dirty=bool(changed_paths),
         changed_paths=tuple(changed_paths),
         current_branch=current_branch,
-        files_sample=tuple(_files_sample(root)),
+        files_sample=files_sample,
+        directories_sample=tuple(_directories_sample(root)),
+        package_manifests=package_manifests,
+        test_commands=tuple(_test_commands(package_manifests, files_sample)),
+        language_summary=_language_summary(files_sample),
     )
 
 
@@ -460,14 +466,109 @@ def _git_current_branch(repo_root: Path) -> str | None:
     return branch or None
 
 
-def _files_sample(repo_root: Path, limit: int = 25) -> list[str]:
-    files: list[str] = []
-    for path in repo_root.rglob("*"):
-        if len(files) >= limit:
+SKIPPED_REPO_DIRS = {
+    ".git",
+    ".mypy_cache",
+    ".next",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "runtime",
+    "venv",
+}
+
+PACKAGE_MANIFEST_NAMES = {
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.cfg",
+    "setup.py",
+    "uv.lock",
+}
+
+LANGUAGE_EXTENSIONS = {
+    ".css": "css",
+    ".html": "html",
+    ".js": "javascript",
+    ".json": "json",
+    ".md": "markdown",
+    ".py": "python",
+    ".sh": "shell",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+}
+
+
+def _files_sample(repo_root: Path, limit: int = 50) -> list[str]:
+    return [
+        path.relative_to(repo_root).as_posix()
+        for path in _iter_repo_files(repo_root)
+        if path.name != ".DS_Store"
+    ][:limit]
+
+
+def _directories_sample(repo_root: Path, limit: int = 25) -> list[str]:
+    directories: list[str] = []
+    for path in _iter_repo_paths(repo_root):
+        if not path.is_dir() or path == repo_root:
+            continue
+        relative = path.relative_to(repo_root).as_posix()
+        if any(part in SKIPPED_REPO_DIRS for part in path.relative_to(repo_root).parts):
+            continue
+        directories.append(relative)
+        if len(directories) >= limit:
             break
-        if path.is_file() and ".git" not in path.parts:
-            files.append(path.relative_to(repo_root).as_posix())
-    return files
+    return directories
+
+
+def _package_manifests(files_sample: tuple[str, ...]) -> list[str]:
+    return [path for path in files_sample if Path(path).name in PACKAGE_MANIFEST_NAMES]
+
+
+def _test_commands(
+    package_manifests: tuple[str, ...],
+    files_sample: tuple[str, ...],
+) -> list[tuple[str, ...]]:
+    commands: list[tuple[str, ...]] = []
+    manifest_names = {Path(path).name for path in package_manifests}
+    if "pyproject.toml" in manifest_names or any(path.endswith(".py") for path in files_sample):
+        commands.append(("pytest",))
+    if "package.json" in manifest_names:
+        commands.append(("npm", "test"))
+    return [command for command in commands if command[0] in ExecutionRoot.ALLOWED_COMMANDS]
+
+
+def _language_summary(files_sample: tuple[str, ...]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for file_path in files_sample:
+        language = LANGUAGE_EXTENSIONS.get(Path(file_path).suffix.lower())
+        if language is None:
+            continue
+        summary[language] = summary.get(language, 0) + 1
+    return dict(sorted(summary.items()))
+
+
+def _iter_repo_files(repo_root: Path) -> list[Path]:
+    return [path for path in _iter_repo_paths(repo_root) if path.is_file()]
+
+
+def _iter_repo_paths(repo_root: Path) -> list[Path]:
+    return sorted(
+        (
+            path
+            for path in repo_root.rglob("*")
+            if not _path_has_skipped_part(path.relative_to(repo_root))
+        ),
+        key=lambda path: path.relative_to(repo_root).as_posix(),
+    )
+
+
+def _path_has_skipped_part(relative_path: Path) -> bool:
+    return any(part in SKIPPED_REPO_DIRS for part in relative_path.parts)
 
 
 def _last_result_succeeded(results: Sequence[dict[str, Any]]) -> bool:
