@@ -30,6 +30,7 @@ from .planners import (
     resolve_execution_planner,
 )
 from .sandbox import ExecutionRoot
+from .tools import get_execution_tool_registry
 
 
 def build_repo_context(repo_root: Path | str | None = None) -> RepoContext:
@@ -85,6 +86,7 @@ class ExecutionController:
             "session",
         ]
         self.memory_context_limit = memory_context_limit
+        self.tool_registry = get_execution_tool_registry()
         self.planner, self.planner_selection = resolve_execution_planner(
             planner=planner,
             planner_mode=planner_mode,
@@ -227,15 +229,10 @@ class ExecutionController:
     def _validate_action(self, action: WorkerAction) -> str | None:
         if action.requires_approval:
             return "Action requires approval and cannot run automatically."
-        try:
-            payload = action.to_execution_action()
-            if action.action_type in {"read_file", "write_file", "patch_file"}:
-                self.execution_root.resolve_path(str(payload["path"]))
-            if action.action_type == "run_command":
-                self.execution_root._validate_command(list(payload["command"]))
-        except (KeyError, TypeError, ValueError) as error:
-            return str(error)
-        return None
+        return self.tool_registry.validate_execution_action(
+            action.to_execution_action(),
+            execution_root=self.execution_root,
+        )
 
     def _build_memory_context(self, goal: ExecutionGoal) -> dict[str, object]:
         return build_memory_context(

@@ -7,6 +7,9 @@ from ari_core.modules.coordination.db import list_coordination_entities
 from ari_core.modules.execution import (
     ExecutionGoal,
     ModelPlanner,
+    PlannerResult,
+    WorkerAction,
+    WorkerPlan,
     build_repo_context,
     run_execution_goal,
 )
@@ -228,6 +231,47 @@ def test_model_planner_rejects_unsafe_command(tmp_path: Path) -> None:
     assert result.status == "rejected"
     assert "allowlisted" in result.reason
     assert (root / "README.md").exists()
+
+
+def test_controller_rejects_unregistered_planner_action(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("old\n", encoding="utf-8")
+
+    class UnknownActionPlanner:
+        planner_name = "unknown_action_test"
+
+        def plan(self, *args: object, **kwargs: object) -> PlannerResult:
+            del args, kwargs
+            return PlannerResult(
+                status="act",
+                reason="Propose an action outside the canonical tool registry.",
+                confidence=0.9,
+                planner_name=self.planner_name,
+                plan=WorkerPlan(
+                    actions=(
+                        WorkerAction(
+                            action_type="delete_file",  # type: ignore[arg-type]
+                            payload={"path": "README.md"},
+                            reason="This must never execute.",
+                        ),
+                    ),
+                    verification=(),
+                    reason="Invalid registry action.",
+                ),
+            )
+
+    result = run_execution_goal(
+        "delete README",
+        execution_root=root,
+        db_path=db_path,
+        planner=UnknownActionPlanner(),
+    )
+
+    assert result.status == "rejected"
+    assert "not allowed" in result.reason
+    assert (root / "README.md").read_text(encoding="utf-8") == "old\n"
 
 
 def test_model_planner_rejects_low_confidence_plan(tmp_path: Path) -> None:

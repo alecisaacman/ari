@@ -20,7 +20,6 @@ from .tools import get_execution_tool_registry
 
 MAX_PLAN_ACTIONS = 5
 MODEL_CONFIDENCE_THRESHOLD = 0.70
-ALLOWED_ACTION_TYPES = get_execution_tool_registry().allowed_action_types()
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,28 +389,30 @@ def _parse_model_actions(
     repo_context: RepoContext,
 ) -> list[WorkerAction] | str:
     actions: list[WorkerAction] = []
+    execution_root = ExecutionRoot(repo_context.repo_root)
+    tool_registry = get_execution_tool_registry()
     for raw_action in raw_actions:
         if not isinstance(raw_action, dict):
             return "Each planner action must be an object."
         action_type = str(raw_action.get("type") or raw_action.get("action_type") or "")
-        if action_type not in ALLOWED_ACTION_TYPES:
-            return f"Planner action type is not allowed: {action_type or '<missing>'}"
 
         if action_type in {"read_file", "write_file", "patch_file"}:
             path = str(raw_action.get("path") or "")
-            if path not in allowed_files:
-                return f"Planner referenced a file outside RepoContext: {path or '<missing>'}"
             payload: dict[str, Any] = {"path": path}
             if action_type == "write_file":
-                if "content" not in raw_action:
-                    return "write_file actions require content."
-                payload["content"] = str(raw_action["content"])
+                if "content" in raw_action:
+                    payload["content"] = str(raw_action["content"])
             elif action_type == "patch_file":
                 find_text = str(raw_action.get("find") or "")
-                if not find_text:
-                    return "patch_file actions require find text."
                 payload["find"] = find_text
                 payload["replace"] = str(raw_action.get("replace") or "")
+            validation_error = tool_registry.validate_execution_action(
+                {"type": action_type, **payload},
+                execution_root=execution_root,
+                allowed_files=allowed_files,
+            )
+            if validation_error is not None:
+                return validation_error
             actions.append(
                 WorkerAction(
                     action_type=action_type,
@@ -421,20 +422,34 @@ def _parse_model_actions(
             )
             continue
 
-        command = raw_action.get("command")
-        if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
-            return "run_command actions require command as list[str]."
-        try:
-            ExecutionRoot(repo_context.repo_root)._validate_command(command)
-        except ValueError as error:
-            return str(error)
-        actions.append(
-            WorkerAction(
-                action_type="run_command",
-                payload={"command": command},
-                reason=str(raw_action.get("reason") or "Model-planned command action."),
+        if action_type == "run_command":
+            command = raw_action.get("command")
+            action_payload = {"type": "run_command", "command": command}
+            validation_error = tool_registry.validate_execution_action(
+                action_payload,
+                execution_root=execution_root,
+                allowed_files=allowed_files,
             )
+            if validation_error is not None:
+                return validation_error
+            checked_command = list(command) if isinstance(command, list) else []
+            actions.append(
+                WorkerAction(
+                    action_type="run_command",
+                    payload={"command": checked_command},
+                    reason=str(raw_action.get("reason") or "Model-planned command action."),
+                )
+            )
+            continue
+
+        validation_error = tool_registry.validate_execution_action(
+            {"type": action_type},
+            execution_root=execution_root,
+            allowed_files=allowed_files,
         )
+        if validation_error is not None:
+            return validation_error
+        return f"Model planner parser does not support action type: {action_type}"
     return actions
 
 
