@@ -149,6 +149,65 @@ def test_memory_block_api_create_list_get(tmp_path: Path, monkeypatch) -> None:
         assert loaded.json()["importance"] == 5
 
 
+def test_self_model_memory_is_idempotent(tmp_path: Path) -> None:
+    from ari_core.modules.memory.self_model import (
+        ensure_self_model_memory,
+        get_self_model_memory,
+    )
+
+    db_path = tmp_path / "state" / "networking.db"
+
+    first = ensure_self_model_memory(db_path=db_path)
+    second = ensure_self_model_memory(db_path=db_path)
+    loaded = get_self_model_memory(db_path=db_path)
+
+    assert [block["id"] for block in first] == [block["id"] for block in second]
+    assert len(loaded) == 3
+    assert any(block["title"] == "ARI is the single brain" for block in loaded)
+    assert all(block["layer"] == "self_model" for block in loaded)
+
+
+def test_self_model_cli_and_api(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_api import create_app
+    from ari_core.ari import main
+
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+    ensure_output = StringIO()
+    with redirect_stdout(ensure_output):
+        exit_code = main(
+            ["api", "memory", "self-model", "ensure", "--json"],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    ensured = json.loads(ensure_output.getvalue())
+    assert len(ensured["blocks"]) == 3
+
+    show_output = StringIO()
+    with redirect_stdout(show_output):
+        exit_code = main(
+            ["api", "memory", "self-model", "show", "--json"],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    assert len(json.loads(show_output.getvalue())["blocks"]) == 3
+
+    app = create_app()
+    with TestClient(app) as client:
+        api_ensure = client.post("/memory/self-model/ensure")
+        assert api_ensure.status_code == 200
+        assert len(api_ensure.json()["blocks"]) == 3
+
+        api_show = client.get("/memory/self-model")
+        assert api_show.status_code == 200
+        assert any(
+            block["title"] == "ARI is the single brain" for block in api_show.json()["blocks"]
+        )
+
+
 def test_capture_execution_run_memory_is_idempotent(tmp_path: Path) -> None:
     from ari_core.modules.execution import ExecutionGoal, run_execution_goal
     from ari_core.modules.memory.capture import capture_execution_run_memory

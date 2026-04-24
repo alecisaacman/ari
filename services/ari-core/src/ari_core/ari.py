@@ -36,6 +36,8 @@ from .modules.memory.api import (
     handle_api_memory_list,
     handle_api_memory_remember,
     handle_api_memory_search,
+    handle_api_memory_self_model_ensure,
+    handle_api_memory_self_model_show,
 )
 from .modules.networking.cli import (
     handle_add_contact,
@@ -544,6 +546,20 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     memory_explain_execution.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
+
+    memory_self_model_parser = memory_subparsers.add_parser(
+        "self-model", help="Manage ARI self-model memory."
+    )
+    memory_self_model_subparsers = memory_self_model_parser.add_subparsers(
+        dest="api_memory_self_model_command",
+        required=True,
+    )
+    memory_self_model_subparsers.add_parser(
+        "ensure", help="Ensure canonical ARI self-model blocks exist."
+    ).add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
+    memory_self_model_subparsers.add_parser(
+        "show", help="Show canonical ARI self-model blocks."
+    ).add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
 
     coordination_parser = api_subparsers.add_parser(
         "coordination", help="Canonical ARI coordination runtime commands."
@@ -1148,6 +1164,18 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_memory_explain_command == "execution"
         ):
             return handle_api_memory_explain_execution(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "self-model"
+            and args.api_memory_self_model_command == "ensure"
+        ):
+            return handle_api_memory_self_model_ensure(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "self-model"
+            and args.api_memory_self_model_command == "show"
+        ):
+            return handle_api_memory_self_model_show(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "put":
             return handle_api_coordination_put(args, db_path=db_path)
         if args.api_command == "coordination" and args.api_coordination_command == "get":

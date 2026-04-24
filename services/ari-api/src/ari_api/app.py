@@ -41,6 +41,7 @@ from ari_core.modules.memory.db import (
     search_memory_blocks,
 )
 from ari_core.modules.memory.explain import explain_execution_run
+from ari_core.modules.memory.self_model import ensure_self_model_memory, get_self_model_memory
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 from ari_core.modules.policy.engine import (
     build_project_draft,
@@ -206,6 +207,14 @@ def create_app() -> FastAPI:
     @app.get("/explain/execution/{run_id}")
     def explain_execution(run_id: str) -> dict[str, Any]:
         return explain_execution_run(run_id)
+
+    @app.post("/memory/self-model/ensure")
+    def ensure_self_model() -> dict[str, Any]:
+        return {"blocks": ensure_self_model_memory()}
+
+    @app.get("/memory/self-model")
+    def get_self_model() -> dict[str, Any]:
+        return {"blocks": get_self_model_memory()}
 
     @app.get("/memory/{memory_id}")
     def get_memory(memory_id: int) -> dict[str, Any]:

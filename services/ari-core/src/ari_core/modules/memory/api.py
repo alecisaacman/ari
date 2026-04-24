@@ -17,6 +17,7 @@ from .db import (
     search_memory_blocks,
 )
 from .explain import explain_execution_run
+from .self_model import ensure_self_model_memory, get_self_model_memory
 
 
 def _parse_types(raw_types: list[str] | None) -> list[str]:
@@ -227,4 +228,24 @@ def handle_api_memory_explain_execution(args, db_path: Path = DB_PATH) -> int:
         print(json.dumps(payload))
     else:
         print(payload["summary"])
+    return 0
+
+
+def handle_api_memory_self_model_ensure(args, db_path: Path = DB_PATH) -> int:
+    blocks = ensure_self_model_memory(db_path=db_path)
+    payload = {"blocks": blocks}
+    if getattr(args, "as_json", False):
+        print(json.dumps(payload))
+    else:
+        print(f"Ensured {len(blocks)} ARI self-model memory block(s).")
+    return 0
+
+
+def handle_api_memory_self_model_show(args, db_path: Path = DB_PATH) -> int:
+    blocks = get_self_model_memory(db_path=db_path)
+    payload = {"blocks": blocks}
+    if getattr(args, "as_json", False):
+        print(json.dumps(payload))
+    else:
+        print(f"Loaded {len(blocks)} ARI self-model memory block(s).")
     return 0

@@ -10,6 +10,7 @@ from .db import (
 )
 from .explain import explain_execution_run
 from .models import MemoryBlock, MemoryBlockLayer
+from .self_model import ensure_self_model_memory, get_self_model_memory
 
 __all__ = [
     "MemoryBlock",
@@ -18,6 +19,8 @@ __all__ = [
     "capture_recent_execution_run_memories",
     "create_memory_block",
     "explain_execution_run",
+    "ensure_self_model_memory",
+    "get_self_model_memory",
     "get_memory_block",
     "list_memory_blocks",
     "memory_block_to_payload",
