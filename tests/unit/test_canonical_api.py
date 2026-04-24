@@ -212,6 +212,11 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert run.json()["run"]["status"] == "completed"
         assert run.json()["run"]["results"][0]["verified"] is True
 
+        tools = client.get("/execution/tools")
+        assert tools.status_code == 200
+        assert "run_command" in tools.json()["allowed_actions"]
+        assert tools.json()["tools"][0]["action_type"] == "read_file"
+
         fallback_goal = client.post(
             "/execution/goals",
             json={

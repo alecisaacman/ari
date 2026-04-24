@@ -53,7 +53,9 @@ def test_bounded_execution_can_write_patch_and_run_cat(tmp_path: Path, monkeypat
     }
 
 
-def test_bounded_execution_prefers_explicit_root_over_environment(tmp_path: Path, monkeypatch) -> None:
+def test_bounded_execution_prefers_explicit_root_over_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
     env_root = tmp_path / "env-root"
     explicit_root = tmp_path / "explicit-root"
     env_root.mkdir(parents=True, exist_ok=True)
@@ -75,3 +77,19 @@ def test_bounded_execution_prefers_explicit_root_over_environment(tmp_path: Path
     assert result["success"] is True
     assert (explicit_root / "sample.txt").read_text(encoding="utf-8") == "explicit wins\n"
     assert not (env_root / "sample.txt").exists()
+
+
+def test_execution_tool_registry_lists_canonical_bounded_tools() -> None:
+    from ari_core.modules.execution import get_execution_tool_registry
+
+    registry = get_execution_tool_registry()
+    payload = registry.prompt_payload()
+
+    assert payload["allowed_actions"] == [
+        "patch_file",
+        "read_file",
+        "run_command",
+        "write_file",
+    ]
+    assert "cat" in payload["allowed_commands"]
+    assert {tool["action_type"] for tool in payload["tools"]} == set(payload["allowed_actions"])

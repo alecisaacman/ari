@@ -104,6 +104,9 @@ def test_model_planner_valid_json_becomes_worker_plan(tmp_path: Path) -> None:
     assert (root / "README.md").read_text(encoding="utf-8") == "new\n"
     assert result.decisions[0].planner_name == "model"
     assert result.decisions[0].plan is not None
+    assert planner.last_prompt_payload is not None
+    assert "tools" in planner.last_prompt_payload
+    assert "write_file" in planner.last_prompt_payload["allowed_actions"]
 
 
 def test_model_planner_invalid_json_fails_closed(tmp_path: Path) -> None:

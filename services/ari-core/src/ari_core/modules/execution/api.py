@@ -16,6 +16,7 @@ from .engine import (
 )
 from .inspection import get_execution_run, list_execution_runs
 from .models import ExecutionGoal
+from .tools import get_execution_tool_registry
 
 
 def handle_api_execution_command(args, db_path: Path = DB_PATH) -> int:
@@ -76,6 +77,12 @@ def handle_api_execution_goal(args, db_path: Path = DB_PATH) -> int:
         planner_mode=args.planner,
     )
     print(json.dumps(result.to_dict()))
+    return 0
+
+
+def handle_api_execution_tools(args, db_path: Path = DB_PATH) -> int:
+    del args, db_path
+    print(json.dumps(get_execution_tool_registry().prompt_payload()))
     return 0
 
 

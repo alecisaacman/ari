@@ -253,8 +253,7 @@ class ExecutionController:
                 break
 
         expectation_results = [
-            self._verify_expectation(expectation)
-            for expectation in plan.verification
+            self._verify_expectation(expectation) for expectation in plan.verification
         ]
         success = all(bool(item.get("success")) for item in action_results)
         verified = (

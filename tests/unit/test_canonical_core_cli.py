@@ -198,4 +198,15 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     shown = json.loads(run_output.getvalue())["run"]
     assert shown["id"] == goal_result["id"]
     assert shown["results"][0]["verified"] is True
+
+    tools_output = StringIO()
+    with redirect_stdout(tools_output):
+        exit_code = main(
+            ["api", "execution", "tools"],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    tools = json.loads(tools_output.getvalue())
+    assert "write_file" in tools["allowed_actions"]
+    assert tools["tools"][0]["action_type"] == "read_file"
     assert db_path.exists()

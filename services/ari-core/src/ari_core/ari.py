@@ -22,6 +22,7 @@ from .modules.execution.api import (
     handle_api_execution_runs_list,
     handle_api_execution_runs_show,
     handle_api_execution_snapshot,
+    handle_api_execution_tools,
     handle_api_execution_write_file,
 )
 from .modules.execution.executor import execute_action
@@ -794,6 +795,8 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     runs_show_parser = runs_subparsers.add_parser("show", help="Show an execution run.")
     runs_show_parser.add_argument("--id", required=True, help="Execution run id.")
 
+    execution_subparsers.add_parser("tools", help="List canonical execution tools.")
+
     action_parser = execution_subparsers.add_parser(
         "actions", help="Canonical coding action lifecycle commands."
     )
@@ -1263,6 +1266,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_execution_patch_file(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "goal":
             return handle_api_execution_goal(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "tools":
+            return handle_api_execution_tools(args, db_path=db_path)
         if (
             args.api_command == "execution"
             and args.api_execution_command == "runs"

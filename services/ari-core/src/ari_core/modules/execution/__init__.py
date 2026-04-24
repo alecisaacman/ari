@@ -27,6 +27,7 @@ from .planners import (
     resolve_execution_planner,
 )
 from .sandbox import ExecutionRoot
+from .tools import ExecutionTool, ExecutionToolRegistry, get_execution_tool_registry
 
 __all__ = [
     "ExecutionController",
@@ -35,6 +36,8 @@ __all__ = [
     "ExecutionRoot",
     "ExecutionResult",
     "ExecutionRun",
+    "ExecutionTool",
+    "ExecutionToolRegistry",
     "FailureContext",
     "ModelPlanner",
     "PlannerSelection",
@@ -48,6 +51,7 @@ __all__ = [
     "build_repo_context",
     "decide_worker_action",
     "execute_action",
+    "get_execution_tool_registry",
     "run_execution_goal",
     "resolve_execution_planner",
 ]

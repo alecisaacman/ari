@@ -124,9 +124,7 @@ def _record_mutation(
             "success": success,
             "details": details,
             "previous_sha256": (
-                _sha256_for_content(previous_content)
-                if previous_content is not None
-                else None
+                _sha256_for_content(previous_content) if previous_content is not None else None
             ),
             "new_sha256": _sha256_for_content(new_content) if new_content is not None else None,
             "created_at": _timestamp(),
@@ -635,12 +633,10 @@ def get_execution_snapshot(limit: int = 6, db_path: Path = DB_PATH) -> dict[str,
         for row in list_coding_actions(limit=limit, db_path=db_path)
     ]
     command_runs = [
-        row_to_command_run_payload(row)
-        for row in list_command_runs(limit=1, db_path=db_path)
+        row_to_command_run_payload(row) for row in list_command_runs(limit=1, db_path=db_path)
     ]
     mutations = [
-        row_to_file_mutation_payload(row)
-        for row in list_file_mutations(limit=1, db_path=db_path)
+        row_to_file_mutation_payload(row) for row in list_file_mutations(limit=1, db_path=db_path)
     ]
     current_action = next(
         (item for item in actions if item["status"] != "verified"),

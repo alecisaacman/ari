@@ -25,6 +25,7 @@ from ari_core.modules.execution.engine import (
 )
 from ari_core.modules.execution.inspection import get_execution_run, list_execution_runs
 from ari_core.modules.execution.models import ExecutionGoal
+from ari_core.modules.execution.tools import get_execution_tool_registry
 from ari_core.modules.memory.capture import (
     capture_execution_run_memory,
     capture_recent_execution_run_memories,
@@ -353,6 +354,10 @@ def create_app() -> FastAPI:
                 planner_mode=payload.planner,
             ).to_dict()
         )
+
+    @app.get("/execution/tools")
+    def execution_tools() -> dict[str, Any]:
+        return get_execution_tool_registry().prompt_payload()
 
     @app.get("/execution/runs")
     def execution_runs(

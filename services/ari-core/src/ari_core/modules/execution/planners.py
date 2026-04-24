@@ -16,10 +16,11 @@ from .models import (
     WorkerPlan,
 )
 from .sandbox import ExecutionRoot
+from .tools import get_execution_tool_registry
 
 MAX_PLAN_ACTIONS = 5
 MODEL_CONFIDENCE_THRESHOLD = 0.70
-ALLOWED_ACTION_TYPES = {"read_file", "write_file", "patch_file", "run_command"}
+ALLOWED_ACTION_TYPES = get_execution_tool_registry().allowed_action_types()
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,8 +41,7 @@ class ExecutionPlanner(Protocol):
         goal: ExecutionGoal,
         repo_context: RepoContext,
         failure_context: FailureContext | None = None,
-    ) -> PlannerResult:
-        ...
+    ) -> PlannerResult: ...
 
 
 def resolve_execution_planner(
@@ -82,9 +82,7 @@ def resolve_execution_planner(
     return RuleBasedPlanner(), PlannerSelection(
         requested=requested,
         selected=RuleBasedPlanner.planner_name,
-        fallback_reason=(
-            f"Unknown execution planner mode '{requested}'; fell back to rule_based."
-        ),
+        fallback_reason=(f"Unknown execution planner mode '{requested}'; fell back to rule_based."),
     )
 
 
@@ -269,8 +267,7 @@ class ModelPlanner:
             "goal": goal.to_dict(),
             "repo_context": repo_context.to_dict(),
             "allowed_files": list(repo_context.files_sample),
-            "allowed_actions": sorted(ALLOWED_ACTION_TYPES),
-            "allowed_commands": sorted(ExecutionRoot.ALLOWED_COMMANDS),
+            **get_execution_tool_registry().prompt_payload(),
             "max_plan_actions": self.max_plan_actions,
             "confidence_threshold": self.confidence_threshold,
             "failure_context": None if failure_context is None else failure_context.to_dict(),
@@ -446,9 +443,7 @@ def _parse_model_verification(
         if not isinstance(raw_expectation, dict):
             return "Each planner verification expectation must be an object."
         expectation_type = str(
-            raw_expectation.get("type")
-            or raw_expectation.get("expectation_type")
-            or ""
+            raw_expectation.get("type") or raw_expectation.get("expectation_type") or ""
         )
         if expectation_type not in {"action_success", "file_content", "path_exists"}:
             return f"Planner verification type is not allowed: {expectation_type or '<missing>'}"
