@@ -9,6 +9,7 @@ WorkerActionType = Literal["read_file", "write_file", "patch_file", "run_command
 WorkerDecisionStatus = Literal["act", "reject", "retry", "stop"]
 ExecutionRunStatus = Literal["completed", "failed", "rejected", "exhausted"]
 VerificationExpectationType = Literal["action_success", "file_content", "path_exists"]
+ApprovalStatus = Literal["pending", "approved", "rejected", "not_required"]
 
 
 @dataclass(slots=True)
@@ -74,6 +75,98 @@ class VerificationExpectation:
     target: str
     expected: str | None = None
     reason: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalRequirement:
+    approval_required: bool = True
+    status: ApprovalStatus = "pending"
+    reason: str = "Approval is required before verification or execution."
+    authority_note: str = ""
+    approved_by: str | None = None
+    approved_at: str | None = None
+    rejected_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.approval_required and self.status != "not_required":
+            raise ValueError("approval_required=false requires status='not_required'.")
+        if self.approval_required and self.status == "not_required":
+            raise ValueError("status='not_required' requires approval_required=false.")
+        if self.status == "approved" and not self.approved_by:
+            raise ValueError("approved approval state requires approved_by.")
+        if self.status == "rejected" and not self.rejected_reason:
+            raise ValueError("rejected approval state requires rejected_reason.")
+        if self.status == "pending" and (
+            self.approved_by is not None
+            or self.approved_at is not None
+            or self.rejected_reason is not None
+        ):
+            raise ValueError("pending approval state cannot include terminal approval fields.")
+
+    @classmethod
+    def pending(
+        cls,
+        *,
+        reason: str = "Approval is required before verification or execution.",
+        authority_note: str = "",
+    ) -> ApprovalRequirement:
+        return cls(
+            approval_required=True,
+            status="pending",
+            reason=reason,
+            authority_note=authority_note,
+        )
+
+    @classmethod
+    def not_required(
+        cls,
+        *,
+        reason: str = "Approval is not required.",
+        authority_note: str = "",
+    ) -> ApprovalRequirement:
+        return cls(
+            approval_required=False,
+            status="not_required",
+            reason=reason,
+            authority_note=authority_note,
+        )
+
+    @classmethod
+    def approved(
+        cls,
+        *,
+        approved_by: str,
+        approved_at: str | None = None,
+        reason: str = "Approval granted.",
+        authority_note: str = "",
+    ) -> ApprovalRequirement:
+        return cls(
+            approval_required=True,
+            status="approved",
+            reason=reason,
+            authority_note=authority_note,
+            approved_by=approved_by,
+            approved_at=approved_at or _now_iso(),
+        )
+
+    @classmethod
+    def rejected(
+        cls,
+        *,
+        rejected_reason: str,
+        reason: str = "Approval rejected.",
+        authority_note: str = "",
+    ) -> ApprovalRequirement:
+        return cls(
+            approval_required=True,
+            status="rejected",
+            reason=reason,
+            authority_note=authority_note,
+            rejected_reason=rejected_reason,
+        )
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
