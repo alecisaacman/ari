@@ -73,6 +73,8 @@ def inspect_coding_loop_result(
     payload = result if isinstance(result, dict) else result.to_dict()
     retry_proposal = payload.get("retry_proposal")
     retry_payload = retry_proposal if isinstance(retry_proposal, dict) else None
+    retry_approval = payload.get("retry_approval")
+    retry_approval_payload = retry_approval if isinstance(retry_approval, dict) else None
     execution_run_id = _string_or_none(payload.get("execution_run_id"))
     return {
         "id": payload.get("id"),
@@ -83,6 +85,15 @@ def inspect_coding_loop_result(
         "execution_occurred": execution_run_id is not None,
         "approval_required_reason": payload.get("approval_required_reason"),
         "retry_proposal": retry_payload,
+        "retry_approval": retry_approval_payload,
+        "retry_approval_id": (
+            None if retry_approval_payload is None else retry_approval_payload.get("approval_id")
+        ),
+        "retry_approval_status": (
+            None
+            if retry_approval_payload is None
+            else retry_approval_payload.get("approval_status")
+        ),
         "suggested_next_goal": (
             None if retry_payload is None else retry_payload.get("suggested_next_goal")
         ),

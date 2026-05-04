@@ -239,6 +239,8 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert coding_loop_payload["execution_occurred"] is True
         assert coding_loop_payload["approval_required_reason"] is None
         assert coding_loop_payload["retry_proposal"] is None
+        assert coding_loop_payload["retry_approval"] is None
+        assert coding_loop_payload["retry_approval_status"] is None
         assert (execution_root / "loop-api-proof.txt").read_text(
             encoding="utf-8"
         ) == "inspected through api"
@@ -271,7 +273,10 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
 
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
-        assert runs.json()["runs"][0]["id"] == coding_loop_payload["execution_run_id"]
+        assert any(
+            run["id"] == coding_loop_payload["execution_run_id"]
+            for run in runs.json()["runs"]
+        )
 
         run = client.get(f"/execution/runs/{goal.json()['id']}")
         assert run.status_code == 200

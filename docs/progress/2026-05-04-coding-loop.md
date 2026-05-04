@@ -25,6 +25,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   inspection family. The normalized inspection payload shows status, reason,
   preview id, execution-run id, whether execution occurred, approval reason,
   retry proposal, suggested retry goal/action, and retry approval requirement.
+- Retry proposals now produce a pending retry-approval artifact. The artifact
+  preserves the source coding-loop result, preview id, failed execution-run id,
+  original goal, proposed retry goal/action, failed verification summary, and a
+  pending `ApprovalRequirement`.
 
 ## Boundary
 
@@ -36,6 +40,9 @@ Coding-loop results are not persisted in a new store. If execution occurs, the
 existing `ExecutionRun` lifecycle trace remains the durable inspection record.
 If execution does not occur, the returned coding-loop inspection payload is the
 authority explanation for why ARI stopped, asked, or rejected.
+
+Retry-approval artifacts are boundary records only. They do not grant approval,
+execute the retry, or create approve/reject commands.
 
 ## Next Recommended Slice
 

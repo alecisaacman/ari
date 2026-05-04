@@ -293,6 +293,8 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert coding_loop["execution_occurred"] is True
     assert coding_loop["approval_required_reason"] is None
     assert coding_loop["retry_proposal"] is None
+    assert coding_loop["retry_approval"] is None
+    assert coding_loop["retry_approval_status"] is None
     assert (execution_root / "loop-proof.txt").read_text(encoding="utf-8") == "inspected"
 
     unsafe_loop_output = StringIO()

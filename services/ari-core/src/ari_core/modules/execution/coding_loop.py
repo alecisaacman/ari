@@ -8,6 +8,7 @@ from uuid import uuid4
 from ...core.paths import DB_PATH
 from .controller import plan_execution_goal, run_execution_goal
 from .models import (
+    ApprovalRequirement,
     ExecutionGoal,
     FailureContext,
     PlannerResult,
@@ -54,6 +55,7 @@ class CodingLoopResult:
     execution_run: dict[str, Any] | None
     approval_required_reason: str | None
     retry_proposal: dict[str, Any] | None
+    retry_approval: CodingLoopRetryApproval | None
     created_at: str
     updated_at: str
 
@@ -69,8 +71,49 @@ class CodingLoopResult:
             "execution_run": self.execution_run,
             "approval_required_reason": self.approval_required_reason,
             "retry_proposal": self.retry_proposal,
+            "retry_approval": (
+                None if self.retry_approval is None else self.retry_approval.to_dict()
+            ),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CodingLoopRetryApproval:
+    approval_id: str
+    source_coding_loop_result_id: str
+    source_preview_id: str | None
+    source_execution_run_id: str | None
+    original_goal: str
+    proposed_retry_goal: str
+    proposed_retry_action: dict[str, Any] | None
+    proposed_retry_action_description: str
+    reason: str
+    failed_verification_summary: str
+    approval: ApprovalRequirement
+    approval_status: str
+    retry_execution_requires_approval: bool
+    proposed_action_requires_approval: bool
+    created_at: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "approval_id": self.approval_id,
+            "source_coding_loop_result_id": self.source_coding_loop_result_id,
+            "source_preview_id": self.source_preview_id,
+            "source_execution_run_id": self.source_execution_run_id,
+            "original_goal": self.original_goal,
+            "proposed_retry_goal": self.proposed_retry_goal,
+            "proposed_retry_action": self.proposed_retry_action,
+            "proposed_retry_action_description": self.proposed_retry_action_description,
+            "reason": self.reason,
+            "failed_verification_summary": self.failed_verification_summary,
+            "approval": self.approval.to_dict(),
+            "approval_status": self.approval_status,
+            "retry_execution_requires_approval": self.retry_execution_requires_approval,
+            "proposed_action_requires_approval": self.proposed_action_requires_approval,
+            "created_at": self.created_at,
         }
 
 
@@ -510,8 +553,21 @@ def _result(
     retry_proposal: dict[str, Any] | None = None,
     created_at: str,
 ) -> CodingLoopResult:
+    result_id = f"coding-loop-result-{uuid4()}"
+    retry_approval = (
+        None
+        if retry_proposal is None
+        else _retry_approval_artifact(
+            request,
+            result_id,
+            preview_id=preview_id,
+            execution_run_id=execution_run_id,
+            retry_proposal=retry_proposal,
+            created_at=_now_iso(),
+        )
+    )
     return CodingLoopResult(
-        id=f"coding-loop-result-{uuid4()}",
+        id=result_id,
         request=request,
         status=status,
         reason=reason,
@@ -521,9 +577,62 @@ def _result(
         execution_run=execution_run,
         approval_required_reason=approval_required_reason,
         retry_proposal=retry_proposal,
+        retry_approval=retry_approval,
         created_at=created_at,
         updated_at=_now_iso(),
     )
+
+
+def _retry_approval_artifact(
+    request: CodingLoopRequest,
+    result_id: str,
+    *,
+    preview_id: str | None,
+    execution_run_id: str | None,
+    retry_proposal: dict[str, Any],
+    created_at: str,
+) -> CodingLoopRetryApproval:
+    proposed_action = retry_proposal.get("suggested_next_action")
+    proposed_retry_action = proposed_action if isinstance(proposed_action, dict) else None
+    proposed_action_requires_approval = bool(retry_proposal.get("approval_required"))
+    approval = ApprovalRequirement.pending(
+        reason="Approval is required before executing a coding-loop retry proposal.",
+        authority_note=(
+            "ARI produced this retry proposal after verification failed; "
+            "the retry has not been executed."
+        ),
+    )
+    return CodingLoopRetryApproval(
+        approval_id=f"coding-loop-retry-approval-{result_id.removeprefix('coding-loop-result-')}",
+        source_coding_loop_result_id=result_id,
+        source_preview_id=preview_id,
+        source_execution_run_id=execution_run_id,
+        original_goal=request.goal,
+        proposed_retry_goal=str(retry_proposal.get("suggested_next_goal") or ""),
+        proposed_retry_action=proposed_retry_action,
+        proposed_retry_action_description=_describe_retry_action(proposed_retry_action),
+        reason=str(retry_proposal.get("reason") or "Retry proposal requires approval."),
+        failed_verification_summary=str(
+            retry_proposal.get("failed_verification_summary") or ""
+        ),
+        approval=approval,
+        approval_status=approval.status,
+        retry_execution_requires_approval=True,
+        proposed_action_requires_approval=proposed_action_requires_approval,
+        created_at=created_at,
+    )
+
+
+def _describe_retry_action(action: dict[str, Any] | None) -> str:
+    if action is None:
+        return "No concrete retry action was proposed."
+    action_type = str(action.get("type") or "<unknown>")
+    if action_type in {"read_file", "write_file", "patch_file"}:
+        return f"{action_type} {action.get('path', '<unknown>')}"
+    if action_type == "run_command":
+        command = action.get("command")
+        return f"run_command {command}" if command is not None else "run_command <unknown>"
+    return action_type
 
 
 def _string_or_none(raw: object) -> str | None:

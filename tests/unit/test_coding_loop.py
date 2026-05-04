@@ -61,6 +61,7 @@ def test_one_step_coding_loop_completes_safe_grounded_action(tmp_path: Path) -> 
     assert result.execution_run_id is not None
     assert result.preview_id is not None
     assert result.retry_proposal is None
+    assert result.retry_approval is None
     assert result.approval_required_reason is None
     assert (root / "proof.txt").read_text(encoding="utf-8") == "ready"
 
@@ -86,6 +87,8 @@ def test_one_step_coding_loop_returns_requires_approval_without_execution(
     assert result.approval_required_reason is not None
     assert "Approval required" in result.approval_required_reason
     assert result.to_dict()["approval_required_reason"] == result.approval_required_reason
+    assert result.retry_proposal is None
+    assert result.retry_approval is None
     assert not (root / "approval.txt").exists()
 
     inspected = inspect_coding_loop_result(result)
@@ -178,6 +181,7 @@ def test_one_step_coding_loop_verification_failure_proposes_retry(tmp_path: Path
     assert result.execution_run_id is not None
     assert result.execution_run["results"][0]["verified"] is False
     assert result.retry_proposal is not None
+    assert result.retry_approval is not None
     assert result.retry_proposal["approval_required"] is False
     assert "proof.txt" in str(result.retry_proposal["failed_verification_summary"])
     assert result.retry_proposal["suggested_next_action"] == {
@@ -187,6 +191,27 @@ def test_one_step_coding_loop_verification_failure_proposes_retry(tmp_path: Path
     }
     assert result.retry_proposal["suggested_next_goal"] == "write file proof.txt with right\n"
     assert result.to_dict()["retry_proposal"] == result.retry_proposal
+    retry_approval = result.retry_approval.to_dict()
+    assert retry_approval["approval_id"].startswith("coding-loop-retry-approval-")
+    assert retry_approval["source_coding_loop_result_id"] == result.id
+    assert retry_approval["source_preview_id"] == result.preview_id
+    assert retry_approval["source_execution_run_id"] == result.execution_run_id
+    assert retry_approval["original_goal"] == "Create a proof file"
+    assert retry_approval["proposed_retry_goal"] == "write file proof.txt with right\n"
+    assert retry_approval["proposed_retry_action"] == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+    assert retry_approval["proposed_retry_action_description"] == "write_file proof.txt"
+    assert "proof.txt" in str(retry_approval["failed_verification_summary"])
+    assert retry_approval["approval_status"] == "pending"
+    assert retry_approval["approval"]["status"] == "pending"
+    assert retry_approval["approval"]["approved_by"] is None
+    assert retry_approval["approval"]["approved_at"] is None
+    assert retry_approval["approval"]["rejected_reason"] is None
+    assert retry_approval["retry_execution_requires_approval"] is True
+    assert retry_approval["proposed_action_requires_approval"] is False
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
 
     inspected = inspect_coding_loop_result(result)
@@ -194,6 +219,9 @@ def test_one_step_coding_loop_verification_failure_proposes_retry(tmp_path: Path
     assert inspected["execution_occurred"] is True
     assert inspected["execution_run_id"] == result.execution_run_id
     assert inspected["retry_proposal"] == result.retry_proposal
+    assert inspected["retry_approval"] == retry_approval
+    assert inspected["retry_approval_id"] == retry_approval["approval_id"]
+    assert inspected["retry_approval_status"] == "pending"
     assert inspected["suggested_next_goal"] == "write file proof.txt with right\n"
     assert inspected["retry_requires_approval"] is False
 
@@ -237,6 +265,8 @@ def test_one_step_coding_loop_retry_proposal_does_not_execute(tmp_path: Path) ->
 
     assert result.status == "retryable_failure"
     assert result.retry_proposal is not None
+    assert result.retry_approval is not None
+    assert result.retry_approval.approval.status == "pending"
     assert len(calls) == 1
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
 
