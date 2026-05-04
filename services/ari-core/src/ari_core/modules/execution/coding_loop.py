@@ -21,7 +21,14 @@ from .models import (
 )
 from .planners import ExecutionPlanner
 
-CodingLoopStatus = Literal["success", "retryable_failure", "blocked", "unsafe", "ask_user"]
+CodingLoopStatus = Literal[
+    "success",
+    "retryable_failure",
+    "blocked",
+    "unsafe",
+    "ask_user",
+    "requires_approval",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +52,8 @@ class CodingLoopResult:
     execution_run_id: str | None
     preview: dict[str, Any] | None
     execution_run: dict[str, Any] | None
+    approval_required_reason: str | None
+    retry_proposal: dict[str, Any] | None
     created_at: str
     updated_at: str
 
@@ -58,6 +67,8 @@ class CodingLoopResult:
             "execution_run_id": self.execution_run_id,
             "preview": self.preview,
             "execution_run": self.execution_run,
+            "approval_required_reason": self.approval_required_reason,
+            "retry_proposal": self.retry_proposal,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -86,6 +97,18 @@ def run_one_step_coding_loop(
         planner_completion_fn=planner_completion_fn,
     )
     preview_id = _string_or_none(preview.get("id"))
+    approval_required_reason = _approval_required_reason(preview)
+    if approval_required_reason is not None:
+        return _result(
+            loop_request,
+            "requires_approval",
+            approval_required_reason,
+            preview_id=preview_id,
+            preview=preview,
+            approval_required_reason=approval_required_reason,
+            created_at=created_at,
+        )
+
     preview_block = _preview_block_reason(preview)
     if preview_block is not None:
         return _result(
@@ -116,6 +139,11 @@ def run_one_step_coding_loop(
     )
     execution_run_payload = execution_run.to_dict()
     status, reason = _classify_execution_run(execution_run_payload)
+    retry_proposal = (
+        _retry_proposal(execution_run_payload)
+        if status == "retryable_failure"
+        else None
+    )
     return _result(
         loop_request,
         status,
@@ -124,6 +152,7 @@ def run_one_step_coding_loop(
         execution_run_id=execution_run.id,
         preview=preview,
         execution_run=execution_run_payload,
+        retry_proposal=retry_proposal,
         created_at=created_at,
     )
 
@@ -185,6 +214,35 @@ def _preview_block_reason(preview: dict[str, Any]) -> str | None:
     if len(actions) != 1:
         return "One-step coding loop requires exactly one candidate action."
     return None
+
+
+def _approval_required_reason(preview: dict[str, Any]) -> str | None:
+    action = _single_preview_action(preview)
+    if action is None:
+        return None
+    if not bool(action.get("requires_approval")):
+        return None
+    reason = str(
+        action.get("reason")
+        or preview.get("validation_error")
+        or preview.get("reason")
+        or "Action requires approval before execution."
+    )
+    return f"Approval required before one-step execution: {reason}"
+
+
+def _single_preview_action(preview: dict[str, Any]) -> dict[str, Any] | None:
+    decision = preview.get("decision")
+    if not isinstance(decision, dict):
+        return None
+    plan = decision.get("plan")
+    if not isinstance(plan, dict):
+        return None
+    actions = plan.get("actions")
+    if not isinstance(actions, list) or len(actions) != 1:
+        return None
+    action = actions[0]
+    return action if isinstance(action, dict) else None
 
 
 def _plan_from_preview(preview: dict[str, Any]) -> WorkerPlan | str:
@@ -269,10 +327,149 @@ def _classify_execution_run(run: dict[str, Any]) -> tuple[CodingLoopStatus, str]
         return "retryable_failure", str(
             first_result.get("error") or run.get("reason") or "Retryable execution failure."
         )
+    if _verification_failed(run):
+        return "retryable_failure", str(
+            run.get("reason") or "Action executed but verification failed."
+        )
     reason = str(run.get("reason") or "One-step coding loop was blocked.")
     if status == "rejected" and _looks_unsafe(reason):
         return "unsafe", reason
     return "blocked", reason
+
+
+def _verification_failed(run: dict[str, Any]) -> bool:
+    results = run.get("results")
+    if not isinstance(results, list) or not results:
+        return False
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        action_results = result.get("action_results")
+        if isinstance(action_results, list) and any(
+            isinstance(item, dict) and not bool(item.get("verified", True))
+            for item in action_results
+        ):
+            return True
+        verification_results = result.get("verification_results")
+        if isinstance(verification_results, list) and any(
+            isinstance(item, dict) and not bool(item.get("verified", True))
+            for item in verification_results
+        ):
+            return True
+        if bool(result.get("success")) and not bool(result.get("verified")):
+            return True
+    return False
+
+
+def _retry_proposal(run: dict[str, Any]) -> dict[str, Any] | None:
+    results = run.get("results")
+    first_result = results[0] if isinstance(results, list) and results else None
+    if not isinstance(first_result, dict):
+        return None
+
+    failed_summary = _failed_verification_summary(first_result)
+    suggested_next_action = _suggested_next_action(first_result)
+    suggested_next_goal = _suggested_next_goal(first_result, failed_summary)
+    approval_required = bool(_action_requires_approval(first_result))
+    return {
+        "reason": "Verification failed after one controlled action; propose one refined retry.",
+        "failed_verification_summary": failed_summary,
+        "suggested_next_goal": suggested_next_goal,
+        "suggested_next_action": suggested_next_action,
+        "approval_required": approval_required,
+    }
+
+
+def _suggested_next_action(result: dict[str, Any]) -> dict[str, Any] | None:
+    action = _first_action(result)
+    if action is None:
+        return None
+    suggested = dict(action)
+    if str(suggested.get("type") or "") == "write_file":
+        expected = _first_failed_expected(result)
+        if expected is not None:
+            suggested["content"] = expected
+    return suggested
+
+
+def _failed_verification_summary(result: dict[str, Any]) -> str:
+    verification_results = result.get("verification_results")
+    if isinstance(verification_results, list):
+        for item in verification_results:
+            if isinstance(item, dict) and not bool(item.get("verified", True)):
+                expectation = item.get("expectation")
+                if isinstance(expectation, dict):
+                    target = str(expectation.get("target") or "<unknown>")
+                    expected = expectation.get("expected")
+                    if expected is not None:
+                        return f"Verification failed for {target}; expected {expected!r}."
+                    return f"Verification failed for {target}."
+                return str(item.get("reason") or "Verification expectation failed.")
+
+    action_results = result.get("action_results")
+    if isinstance(action_results, list):
+        for item in action_results:
+            if isinstance(item, dict) and not bool(item.get("verified", True)):
+                action = item.get("action")
+                if isinstance(action, dict):
+                    return f"Action verification failed for {action.get('type', '<unknown>')}."
+                return str(item.get("error") or "Action verification failed.")
+
+    return str(result.get("error") or "Verification failed.")
+
+
+def _suggested_next_goal(result: dict[str, Any], failed_summary: str) -> str:
+    action = _first_action(result)
+    if action is None:
+        return f"Propose one corrected action that addresses: {failed_summary}"
+    action_type = str(action.get("type") or "<unknown>")
+    if action_type == "write_file":
+        path = str(action.get("path") or "<unknown>")
+        expected = _first_failed_expected(result)
+        if expected is not None:
+            return f"write file {path} with {expected}"
+        return f"Propose one corrected write_file action for {path}."
+    return f"Propose one corrected {action_type} action that addresses: {failed_summary}"
+
+
+def _first_failed_expected(result: dict[str, Any]) -> str | None:
+    verification_results = result.get("verification_results")
+    if not isinstance(verification_results, list):
+        return None
+    for item in verification_results:
+        if not isinstance(item, dict) or bool(item.get("verified", True)):
+            continue
+        expectation = item.get("expectation")
+        if isinstance(expectation, dict) and expectation.get("expected") is not None:
+            return str(expectation["expected"])
+    return None
+
+
+def _first_action(result: dict[str, Any]) -> dict[str, Any] | None:
+    action = result.get("action")
+    if isinstance(action, dict):
+        return action
+    action_results = result.get("action_results")
+    if not isinstance(action_results, list):
+        return None
+    for item in action_results:
+        if not isinstance(item, dict):
+            continue
+        action = item.get("action")
+        if isinstance(action, dict):
+            return action
+    return None
+
+
+def _action_requires_approval(result: dict[str, Any]) -> bool:
+    plan = result.get("plan")
+    if not isinstance(plan, dict):
+        return False
+    actions = plan.get("actions")
+    if not isinstance(actions, list) or not actions:
+        return False
+    action = actions[0]
+    return isinstance(action, dict) and bool(action.get("requires_approval"))
 
 
 def _classify_block(reason: str) -> CodingLoopStatus:
@@ -309,6 +506,8 @@ def _result(
     execution_run_id: str | None = None,
     preview: dict[str, Any] | None = None,
     execution_run: dict[str, Any] | None = None,
+    approval_required_reason: str | None = None,
+    retry_proposal: dict[str, Any] | None = None,
     created_at: str,
 ) -> CodingLoopResult:
     return CodingLoopResult(
@@ -320,6 +519,8 @@ def _result(
         execution_run_id=execution_run_id,
         preview=preview,
         execution_run=execution_run,
+        approval_required_reason=approval_required_reason,
+        retry_proposal=retry_proposal,
         created_at=created_at,
         updated_at=_now_iso(),
     )
