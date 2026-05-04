@@ -8,7 +8,7 @@ from ...core.paths import DB_PATH
 from ..coordination.db import get_coordination_entity, list_coordination_entities
 
 if TYPE_CHECKING:
-    from .coding_loop import CodingLoopResult
+    from .coding_loop import CodingLoopResult, CodingLoopRetryApproval
 
 
 def list_execution_runs(
@@ -107,6 +107,36 @@ def inspect_coding_loop_result(
         "execution_run": payload.get("execution_run"),
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
+    }
+
+
+def inspect_coding_loop_retry_approval(
+    approval: CodingLoopRetryApproval | dict[str, Any],
+) -> dict[str, Any]:
+    payload = approval if isinstance(approval, dict) else approval.to_dict()
+    return {
+        "approval_id": payload.get("approval_id"),
+        "source_coding_loop_result_id": payload.get("source_coding_loop_result_id"),
+        "source_preview_id": payload.get("source_preview_id"),
+        "source_execution_run_id": payload.get("source_execution_run_id"),
+        "original_goal": payload.get("original_goal"),
+        "proposed_retry_goal": payload.get("proposed_retry_goal"),
+        "proposed_retry_action": payload.get("proposed_retry_action"),
+        "proposed_retry_action_description": payload.get(
+            "proposed_retry_action_description"
+        ),
+        "reason": payload.get("reason"),
+        "failed_verification_summary": payload.get("failed_verification_summary"),
+        "approval_status": payload.get("approval_status"),
+        "approval": payload.get("approval"),
+        "retry_execution_requires_approval": payload.get(
+            "retry_execution_requires_approval"
+        ),
+        "proposed_action_requires_approval": payload.get("proposed_action_requires_approval"),
+        "created_at": payload.get("created_at"),
+        "updated_at": payload.get("updated_at"),
+        "rejected_by": payload.get("rejected_by"),
+        "rejected_at": payload.get("rejected_at"),
     }
 
 

@@ -5,8 +5,13 @@ from .coding_loop import (
     CodingLoopResult,
     CodingLoopRetryApproval,
     approve_coding_loop_retry_approval,
+    approve_stored_coding_loop_retry_approval,
+    get_coding_loop_retry_approval,
+    list_coding_loop_retry_approvals,
     reject_coding_loop_retry_approval,
+    reject_stored_coding_loop_retry_approval,
     run_one_step_coding_loop,
+    store_coding_loop_retry_approval,
 )
 from .command_policy import CommandPolicyResult, validate_command
 from .controller import (
@@ -67,10 +72,15 @@ __all__ = [
     "execute_action",
     "get_execution_tool_registry",
     "approve_coding_loop_retry_approval",
+    "approve_stored_coding_loop_retry_approval",
+    "get_coding_loop_retry_approval",
+    "list_coding_loop_retry_approvals",
     "plan_execution_goal",
     "reject_coding_loop_retry_approval",
+    "reject_stored_coding_loop_retry_approval",
     "run_execution_goal",
     "run_one_step_coding_loop",
     "resolve_execution_planner",
+    "store_coding_loop_retry_approval",
     "validate_command",
 ]

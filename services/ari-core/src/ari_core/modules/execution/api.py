@@ -2,7 +2,13 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
-from .coding_loop import run_one_step_coding_loop
+from .coding_loop import (
+    approve_stored_coding_loop_retry_approval,
+    get_coding_loop_retry_approval,
+    list_coding_loop_retry_approvals,
+    reject_stored_coding_loop_retry_approval,
+    run_one_step_coding_loop,
+)
 from .controller import build_repo_context, plan_execution_goal, run_execution_goal
 from .engine import (
     approve_operator_action,
@@ -19,6 +25,7 @@ from .inspection import (
     get_execution_plan_preview,
     get_execution_run,
     inspect_coding_loop_result,
+    inspect_coding_loop_retry_approval,
     list_execution_plan_previews,
     list_execution_runs,
 )
@@ -109,6 +116,53 @@ def handle_api_execution_coding_loop(args, db_path: Path = DB_PATH) -> int:
         planner_mode=args.planner,
     )
     print(json.dumps({"coding_loop": inspect_coding_loop_result(result)}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_list(args, db_path: Path = DB_PATH) -> int:
+    approvals = [
+        inspect_coding_loop_retry_approval(approval)
+        for approval in list_coding_loop_retry_approvals(limit=args.limit, db_path=db_path)
+    ]
+    print(json.dumps({"retry_approvals": approvals}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_show(args, db_path: Path = DB_PATH) -> int:
+    approval = get_coding_loop_retry_approval(args.id, db_path=db_path)
+    if approval is None:
+        print(json.dumps({"error": f"Coding-loop retry approval {args.id} not found."}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_approve(args, db_path: Path = DB_PATH) -> int:
+    try:
+        approval = approve_stored_coding_loop_retry_approval(
+            args.id,
+            approved_by=args.approved_by,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_reject(args, db_path: Path = DB_PATH) -> int:
+    try:
+        approval = reject_stored_coding_loop_retry_approval(
+            args.id,
+            rejected_reason=args.reason,
+            rejected_by=args.rejected_by,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
     return 0
 
 

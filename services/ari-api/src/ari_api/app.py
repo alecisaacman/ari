@@ -11,7 +11,13 @@ from ari_core.modules.coordination.db import (
     list_coordination_entities,
     put_coordination_entity,
 )
-from ari_core.modules.execution.coding_loop import run_one_step_coding_loop
+from ari_core.modules.execution.coding_loop import (
+    approve_stored_coding_loop_retry_approval,
+    get_coding_loop_retry_approval,
+    list_coding_loop_retry_approvals,
+    reject_stored_coding_loop_retry_approval,
+    run_one_step_coding_loop,
+)
 from ari_core.modules.execution.controller import (
     build_repo_context,
     plan_execution_goal,
@@ -32,6 +38,7 @@ from ari_core.modules.execution.inspection import (
     get_execution_plan_preview,
     get_execution_run,
     inspect_coding_loop_result,
+    inspect_coding_loop_retry_approval,
     list_execution_plan_previews,
     list_execution_runs,
 )
@@ -90,6 +97,8 @@ from ari_api.schemas import (
     OrchestrationClassifyRequest,
     PolicyPayloadRequest,
     ProjectDraftRequest,
+    RetryApprovalApproveRequest,
+    RetryApprovalRejectRequest,
     TaskCreateRequest,
 )
 
@@ -388,6 +397,60 @@ def create_app() -> FastAPI:
                         payload.goal,
                         execution_root=payload.executionRoot,
                         planner_mode=payload.planner,
+                    )
+                )
+            }
+        )
+
+    @app.get("/execution/coding-loop/retry-approvals")
+    def execution_retry_approvals(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {
+            "retry_approvals": [
+                inspect_coding_loop_retry_approval(approval)
+                for approval in list_coding_loop_retry_approvals(limit=limit)
+            ]
+        }
+
+    @app.get("/execution/coding-loop/retry-approvals/{approval_id}")
+    def execution_retry_approval(approval_id: str) -> dict[str, Any]:
+        approval = get_coding_loop_retry_approval(approval_id)
+        if approval is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Coding-loop retry approval {approval_id} not found.",
+            )
+        return {"retry_approval": inspect_coding_loop_retry_approval(approval)}
+
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/approve")
+    def execution_approve_retry_approval(
+        approval_id: str,
+        payload: RetryApprovalApproveRequest,
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "retry_approval": inspect_coding_loop_retry_approval(
+                    approve_stored_coding_loop_retry_approval(
+                        approval_id,
+                        approved_by=payload.approvedBy,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/reject")
+    def execution_reject_retry_approval(
+        approval_id: str,
+        payload: RetryApprovalRejectRequest,
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "retry_approval": inspect_coding_loop_retry_approval(
+                    reject_stored_coding_loop_retry_approval(
+                        approval_id,
+                        rejected_reason=payload.reason,
+                        rejected_by=payload.rejectedBy,
                     )
                 )
             }

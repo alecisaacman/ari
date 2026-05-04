@@ -8,10 +8,18 @@ import pytest
 from ari_core.modules.execution import (
     ModelPlanner,
     approve_coding_loop_retry_approval,
+    approve_stored_coding_loop_retry_approval,
+    get_coding_loop_retry_approval,
+    list_coding_loop_retry_approvals,
     reject_coding_loop_retry_approval,
+    reject_stored_coding_loop_retry_approval,
     run_one_step_coding_loop,
 )
-from ari_core.modules.execution.inspection import get_execution_run, inspect_coding_loop_result
+from ari_core.modules.execution.inspection import (
+    get_execution_run,
+    inspect_coding_loop_result,
+    inspect_coding_loop_retry_approval,
+)
 from ari_core.modules.execution.models import (
     ExecutionGoal,
     PlannerResult,
@@ -50,6 +58,43 @@ class _ApprovalPlanner:
                 reason="Approval-gated one-step plan.",
             ),
         )
+
+
+def _retry_failure_result(tmp_path: Path):
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "proof.txt").write_text("old\n", encoding="utf-8")
+    planner = ModelPlanner(
+        lambda payload: json.dumps(
+            {
+                "confidence": 0.9,
+                "reason": "Write content that will fail explicit verification.",
+                "actions": [
+                    {
+                        "type": "write_file",
+                        "path": "proof.txt",
+                        "content": "wrong\n",
+                    }
+                ],
+                "verification": [
+                    {
+                        "type": "file_content",
+                        "target": "proof.txt",
+                        "expected": "right\n",
+                    }
+                ],
+            }
+        )
+    )
+    result = run_one_step_coding_loop(
+        "Create a proof file",
+        execution_root=root,
+        db_path=db_path,
+        planner=planner,
+    )
+    assert result.retry_approval is not None
+    return result, root, db_path
 
 
 def test_one_step_coding_loop_completes_safe_grounded_action(tmp_path: Path) -> None:
@@ -472,6 +517,117 @@ def test_coding_loop_retry_approval_fails_safely_for_unknown_or_terminal_id(
             approved_by="alec",
         )
 
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_coding_loop_retry_approval_is_stored_and_retrievable(tmp_path: Path) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    stored = get_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        db_path=db_path,
+    )
+
+    assert stored is not None
+    assert stored.approval_id == result.retry_approval.approval_id
+    assert stored.approval_status == "pending"
+    assert stored.source_coding_loop_result_id == result.id
+    assert stored.source_preview_id == result.preview_id
+    assert stored.source_execution_run_id == result.execution_run_id
+    assert stored.original_goal == "Create a proof file"
+    assert stored.proposed_retry_goal == "write file proof.txt with right\n"
+    assert stored.proposed_retry_action == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+    assert stored.failed_verification_summary == result.retry_approval.failed_verification_summary
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    listed = list_coding_loop_retry_approvals(db_path=db_path)
+    assert [approval.approval_id for approval in listed] == [stored.approval_id]
+    inspected = inspect_coding_loop_retry_approval(stored)
+    assert inspected["approval_id"] == stored.approval_id
+    assert inspected["approval_status"] == "pending"
+
+
+def test_stored_coding_loop_retry_approval_can_be_approved_durably(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        approved_at="2026-05-04T13:00:00Z",
+        db_path=db_path,
+    )
+    fetched = get_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+
+    assert fetched is not None
+    assert fetched.approval_status == "approved"
+    assert fetched.approval.status == "approved"
+    assert fetched.approval.approved_by == "alec"
+    assert fetched.approval.approved_at == "2026-05-04T13:00:00Z"
+    assert fetched.source_execution_run_id == result.execution_run_id
+    assert fetched.proposed_retry_goal == "write file proof.txt with right\n"
+    assert fetched.proposed_retry_action == result.retry_approval.proposed_retry_action
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_stored_coding_loop_retry_approval_can_be_rejected_durably(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    rejected = reject_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        rejected_reason="Do not retry this edit.",
+        rejected_by="alec",
+        rejected_at="2026-05-04T13:05:00Z",
+        db_path=db_path,
+    )
+    fetched = get_coding_loop_retry_approval(rejected.approval_id, db_path=db_path)
+
+    assert fetched is not None
+    assert fetched.approval_status == "rejected"
+    assert fetched.approval.status == "rejected"
+    assert fetched.approval.rejected_reason == "Do not retry this edit."
+    assert fetched.rejected_by == "alec"
+    assert fetched.rejected_at == "2026-05-04T13:05:00Z"
+    assert fetched.source_execution_run_id == result.execution_run_id
+    assert fetched.proposed_retry_goal == "write file proof.txt with right\n"
+    assert fetched.proposed_retry_action == result.retry_approval.proposed_retry_action
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_stored_coding_loop_retry_approval_fails_safely(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    with pytest.raises(ValueError, match="not found"):
+        approve_stored_coding_loop_retry_approval(
+            "coding-loop-retry-approval-missing",
+            approved_by="alec",
+            db_path=db_path,
+        )
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    with pytest.raises(ValueError, match="already terminal"):
+        reject_stored_coding_loop_retry_approval(
+            approved.approval_id,
+            rejected_reason="Too late.",
+            db_path=db_path,
+        )
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
 
 

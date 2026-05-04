@@ -24,6 +24,10 @@ from .modules.execution.api import (
     handle_api_execution_plans_list,
     handle_api_execution_plans_show,
     handle_api_execution_read_file,
+    handle_api_execution_retry_approvals_approve,
+    handle_api_execution_retry_approvals_list,
+    handle_api_execution_retry_approvals_reject,
+    handle_api_execution_retry_approvals_show,
     handle_api_execution_runs_list,
     handle_api_execution_runs_show,
     handle_api_execution_snapshot,
@@ -122,6 +126,9 @@ Local execution inspection commands:
 
   execution coding-loop
       Run one approval-aware coding-loop step and inspect the result.
+
+  execution retry-approvals
+      Inspect or mutate durable coding-loop retry approval artifacts.
 
 Notes:
   - Help commands are handled locally.
@@ -917,6 +924,55 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     runs_show_parser = runs_subparsers.add_parser("show", help="Show an execution run.")
     runs_show_parser.add_argument("--id", required=True, help="Execution run id.")
 
+    retry_approvals_parser = execution_subparsers.add_parser(
+        "retry-approvals",
+        help="Inspect or mutate coding-loop retry approval artifacts.",
+    )
+    retry_approvals_subparsers = retry_approvals_parser.add_subparsers(
+        dest="api_execution_retry_approvals_command",
+        required=True,
+    )
+    retry_approvals_list_parser = retry_approvals_subparsers.add_parser(
+        "list",
+        help="List recent coding-loop retry approvals.",
+    )
+    retry_approvals_list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum retry approvals to return.",
+    )
+    retry_approvals_show_parser = retry_approvals_subparsers.add_parser(
+        "show",
+        help="Show a coding-loop retry approval.",
+    )
+    retry_approvals_show_parser.add_argument("--id", required=True, help="Approval id.")
+    retry_approvals_approve_parser = retry_approvals_subparsers.add_parser(
+        "approve",
+        help="Approve a coding-loop retry approval without executing it.",
+    )
+    retry_approvals_approve_parser.add_argument("--id", required=True, help="Approval id.")
+    retry_approvals_approve_parser.add_argument(
+        "--approved-by",
+        required=True,
+        help="Authority label for the approver.",
+    )
+    retry_approvals_reject_parser = retry_approvals_subparsers.add_parser(
+        "reject",
+        help="Reject a coding-loop retry approval without executing it.",
+    )
+    retry_approvals_reject_parser.add_argument("--id", required=True, help="Approval id.")
+    retry_approvals_reject_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Reason for rejection.",
+    )
+    retry_approvals_reject_parser.add_argument(
+        "--rejected-by",
+        default=None,
+        help="Optional authority label for the rejector.",
+    )
+
     execution_subparsers.add_parser("tools", help="List canonical execution tools.")
 
     context_parser = execution_subparsers.add_parser(
@@ -1434,6 +1490,30 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_execution_runs_command == "show"
         ):
             return handle_api_execution_runs_show(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "retry-approvals"
+            and args.api_execution_retry_approvals_command == "list"
+        ):
+            return handle_api_execution_retry_approvals_list(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "retry-approvals"
+            and args.api_execution_retry_approvals_command == "show"
+        ):
+            return handle_api_execution_retry_approvals_show(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "retry-approvals"
+            and args.api_execution_retry_approvals_command == "approve"
+        ):
+            return handle_api_execution_retry_approvals_approve(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "retry-approvals"
+            and args.api_execution_retry_approvals_command == "reject"
+        ):
+            return handle_api_execution_retry_approvals_reject(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "snapshot":
             return handle_api_execution_snapshot(args, db_path=db_path)
         if (

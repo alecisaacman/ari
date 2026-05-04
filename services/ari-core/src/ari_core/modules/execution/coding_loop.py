@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
 from ...core.paths import DB_PATH
+from ..coordination.db import (
+    get_coordination_entity,
+    list_coordination_entities,
+    put_coordination_entity,
+)
 from .controller import plan_execution_goal, run_execution_goal
 from .models import (
     ApprovalRequirement,
@@ -203,6 +209,7 @@ def run_one_step_coding_loop(
         execution_run=execution_run_payload,
         retry_proposal=retry_proposal,
         created_at=created_at,
+        db_path=db_path,
     )
 
 
@@ -270,6 +277,146 @@ def _validate_retry_approval_mutation(
             "Coding-loop retry approval is already terminal: "
             f"{retry_approval.approval.status}."
         )
+
+
+def store_coding_loop_retry_approval(
+    retry_approval: CodingLoopRetryApproval,
+    *,
+    db_path: Path = DB_PATH,
+) -> CodingLoopRetryApproval:
+    row = put_coordination_entity(
+        "runtime_coding_loop_retry_approval",
+        _retry_approval_record(retry_approval),
+        db_path=db_path,
+    )
+    return _retry_approval_from_row(row)
+
+
+def get_coding_loop_retry_approval(
+    approval_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> CodingLoopRetryApproval | None:
+    row = get_coordination_entity(
+        "runtime_coding_loop_retry_approval",
+        approval_id,
+        db_path=db_path,
+    )
+    if row is None:
+        return None
+    return _retry_approval_from_row(row)
+
+
+def list_coding_loop_retry_approvals(
+    *,
+    limit: int = 10,
+    db_path: Path = DB_PATH,
+) -> list[CodingLoopRetryApproval]:
+    rows = list_coordination_entities(
+        "runtime_coding_loop_retry_approval",
+        limit=limit,
+        db_path=db_path,
+    )
+    return [_retry_approval_from_row(row) for row in rows]
+
+
+def approve_stored_coding_loop_retry_approval(
+    approval_id: str,
+    *,
+    approved_by: str,
+    approved_at: str | None = None,
+    db_path: Path = DB_PATH,
+) -> CodingLoopRetryApproval:
+    current = get_coding_loop_retry_approval(approval_id, db_path=db_path)
+    if current is None:
+        raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
+    approved = approve_coding_loop_retry_approval(
+        current,
+        approval_id=approval_id,
+        approved_by=approved_by,
+        approved_at=approved_at,
+    )
+    return store_coding_loop_retry_approval(approved, db_path=db_path)
+
+
+def reject_stored_coding_loop_retry_approval(
+    approval_id: str,
+    *,
+    rejected_reason: str,
+    rejected_by: str | None = None,
+    rejected_at: str | None = None,
+    db_path: Path = DB_PATH,
+) -> CodingLoopRetryApproval:
+    current = get_coding_loop_retry_approval(approval_id, db_path=db_path)
+    if current is None:
+        raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
+    rejected = reject_coding_loop_retry_approval(
+        current,
+        approval_id=approval_id,
+        rejected_reason=rejected_reason,
+        rejected_by=rejected_by,
+        rejected_at=rejected_at,
+    )
+    return store_coding_loop_retry_approval(rejected, db_path=db_path)
+
+
+def _retry_approval_record(approval: CodingLoopRetryApproval) -> dict[str, object]:
+    return {
+        "approval_id": approval.approval_id,
+        "source_coding_loop_result_id": approval.source_coding_loop_result_id,
+        "source_preview_id": approval.source_preview_id,
+        "source_execution_run_id": approval.source_execution_run_id,
+        "original_goal": approval.original_goal,
+        "proposed_retry_goal": approval.proposed_retry_goal,
+        "proposed_retry_action_json": json.dumps(approval.proposed_retry_action),
+        "proposed_retry_action_description": approval.proposed_retry_action_description,
+        "reason": approval.reason,
+        "failed_verification_summary": approval.failed_verification_summary,
+        "approval_status": approval.approval_status,
+        "approval_json": json.dumps(approval.approval.to_dict()),
+        "retry_execution_requires_approval": int(approval.retry_execution_requires_approval),
+        "proposed_action_requires_approval": int(approval.proposed_action_requires_approval),
+        "created_at": approval.created_at,
+        "updated_at": approval.updated_at,
+        "rejected_by": approval.rejected_by,
+        "rejected_at": approval.rejected_at,
+    }
+
+
+def _retry_approval_from_row(row: Any) -> CodingLoopRetryApproval:
+    approval_payload = _json_object(row["approval_json"])
+    proposed_action = _json_value(row["proposed_retry_action_json"])
+    return CodingLoopRetryApproval(
+        approval_id=str(row["approval_id"]),
+        source_coding_loop_result_id=str(row["source_coding_loop_result_id"]),
+        source_preview_id=_string_or_none(row["source_preview_id"]),
+        source_execution_run_id=_string_or_none(row["source_execution_run_id"]),
+        original_goal=str(row["original_goal"]),
+        proposed_retry_goal=str(row["proposed_retry_goal"]),
+        proposed_retry_action=proposed_action if isinstance(proposed_action, dict) else None,
+        proposed_retry_action_description=str(row["proposed_retry_action_description"]),
+        reason=str(row["reason"]),
+        failed_verification_summary=str(row["failed_verification_summary"]),
+        approval=ApprovalRequirement(**approval_payload),
+        approval_status=str(row["approval_status"]),
+        retry_execution_requires_approval=bool(row["retry_execution_requires_approval"]),
+        proposed_action_requires_approval=bool(row["proposed_action_requires_approval"]),
+        created_at=str(row["created_at"]),
+        updated_at=_string_or_none(row["updated_at"]),
+        rejected_by=_string_or_none(row["rejected_by"]),
+        rejected_at=_string_or_none(row["rejected_at"]),
+    )
+
+
+def _json_value(raw: object) -> object:
+    if not isinstance(raw, str):
+        return None
+    return json.loads(raw or "null")
+
+
+def _json_object(raw: object) -> dict[str, Any]:
+    decoded = _json_value(raw)
+    return decoded if isinstance(decoded, dict) else {}
 
 
 class _FrozenPlanPlanner:
@@ -624,6 +771,7 @@ def _result(
     approval_required_reason: str | None = None,
     retry_proposal: dict[str, Any] | None = None,
     created_at: str,
+    db_path: Path | None = None,
 ) -> CodingLoopResult:
     result_id = f"coding-loop-result-{uuid4()}"
     retry_approval = (
@@ -638,7 +786,7 @@ def _result(
             created_at=_now_iso(),
         )
     )
-    return CodingLoopResult(
+    result = CodingLoopResult(
         id=result_id,
         request=request,
         status=status,
@@ -653,6 +801,9 @@ def _result(
         created_at=created_at,
         updated_at=_now_iso(),
     )
+    if retry_approval is not None and db_path is not None:
+        store_coding_loop_retry_approval(retry_approval, db_path=db_path)
+    return result
 
 
 def _retry_approval_artifact(

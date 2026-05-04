@@ -98,6 +98,15 @@ class CodingLoopGoalRequest(APIModel):
     executionRoot: str | None = None
 
 
+class RetryApprovalApproveRequest(APIModel):
+    approvedBy: str
+
+
+class RetryApprovalRejectRequest(APIModel):
+    reason: str
+    rejectedBy: str | None = None
+
+
 class CodingOperation(APIModel):
     type: Literal["write", "patch"]
     path: str

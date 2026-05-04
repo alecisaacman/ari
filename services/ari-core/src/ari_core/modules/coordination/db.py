@@ -362,6 +362,31 @@ ENTITY_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "order_by": "created_at desc",
     },
+    "runtime_coding_loop_retry_approval": {
+        "table": "ari_runtime_coding_loop_retry_approvals",
+        "primary_key": "approval_id",
+        "columns": [
+            "approval_id",
+            "source_coding_loop_result_id",
+            "source_preview_id",
+            "source_execution_run_id",
+            "original_goal",
+            "proposed_retry_goal",
+            "proposed_retry_action_json",
+            "proposed_retry_action_description",
+            "reason",
+            "failed_verification_summary",
+            "approval_status",
+            "approval_json",
+            "retry_execution_requires_approval",
+            "proposed_action_requires_approval",
+            "created_at",
+            "updated_at",
+            "rejected_by",
+            "rejected_at",
+        ],
+        "order_by": "coalesce(updated_at, created_at) desc",
+    },
 }
 
 

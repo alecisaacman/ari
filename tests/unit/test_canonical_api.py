@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -50,6 +51,8 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
     _purge_modules()
 
     from ari_api import create_app
+    from ari_core.core.paths import DB_PATH
+    from ari_core.modules.execution import ModelPlanner, run_one_step_coding_loop
 
     app = create_app()
     with TestClient(app) as client:
@@ -270,6 +273,63 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert ask_user_loop_payload["status"] == "ask_user"
         assert ask_user_loop_payload["execution_run_id"] is None
         assert ask_user_loop_payload["execution_occurred"] is False
+
+        retry_result = run_one_step_coding_loop(
+            "Create a proof file",
+            execution_root=execution_root,
+            db_path=DB_PATH,
+            planner=ModelPlanner(
+                lambda payload: json.dumps(
+                    {
+                        "confidence": 0.9,
+                        "reason": "Write content that will fail explicit verification.",
+                        "actions": [
+                            {
+                                "type": "write_file",
+                                "path": "loop-api-proof.txt",
+                                "content": "wrong",
+                            }
+                        ],
+                        "verification": [
+                            {
+                                "type": "file_content",
+                                "target": "loop-api-proof.txt",
+                                "expected": "inspected through api",
+                            }
+                        ],
+                    }
+                )
+            ),
+        )
+        assert retry_result.retry_approval is not None
+        retry_approval_id = retry_result.retry_approval.approval_id
+
+        retry_approvals = client.get("/execution/coding-loop/retry-approvals")
+        assert retry_approvals.status_code == 200
+        assert retry_approvals.json()["retry_approvals"][0]["approval_id"] == retry_approval_id
+        assert retry_approvals.json()["retry_approvals"][0]["approval_status"] == "pending"
+
+        retry_approval = client.get(
+            f"/execution/coding-loop/retry-approvals/{retry_approval_id}"
+        )
+        assert retry_approval.status_code == 200
+        assert (
+            retry_approval.json()["retry_approval"]["source_execution_run_id"]
+            == retry_result.execution_run_id
+        )
+        assert (
+            retry_approval.json()["retry_approval"]["proposed_retry_goal"]
+            == "write file loop-api-proof.txt with inspected through api"
+        )
+
+        approved_retry = client.post(
+            f"/execution/coding-loop/retry-approvals/{retry_approval_id}/approve",
+            json={"approvedBy": "alec"},
+        )
+        assert approved_retry.status_code == 200
+        assert approved_retry.json()["retry_approval"]["approval_status"] == "approved"
+        assert approved_retry.json()["retry_approval"]["approval"]["approved_by"] == "alec"
+        assert (execution_root / "loop-api-proof.txt").read_text(encoding="utf-8") == "wrong"
 
         runs = client.get("/execution/runs")
         assert runs.status_code == 200

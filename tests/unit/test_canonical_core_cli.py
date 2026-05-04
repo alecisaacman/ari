@@ -22,6 +22,7 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     _purge_modules()
 
     from ari_core.ari import main
+    from ari_core.modules.execution import ModelPlanner, run_one_step_coding_loop
 
     db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
 
@@ -336,6 +337,81 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert ask_user_loop["status"] == "ask_user"
     assert ask_user_loop["execution_run_id"] is None
     assert ask_user_loop["execution_occurred"] is False
+
+    retry_result = run_one_step_coding_loop(
+        "Create a proof file",
+        execution_root=execution_root,
+        db_path=db_path,
+        planner=ModelPlanner(
+            lambda payload: json.dumps(
+                {
+                    "confidence": 0.9,
+                    "reason": "Write content that will fail explicit verification.",
+                    "actions": [
+                        {
+                            "type": "write_file",
+                            "path": "loop-proof.txt",
+                            "content": "wrong",
+                        }
+                    ],
+                    "verification": [
+                        {
+                            "type": "file_content",
+                            "target": "loop-proof.txt",
+                            "expected": "inspected",
+                        }
+                    ],
+                }
+            )
+        ),
+    )
+    assert retry_result.retry_approval is not None
+    retry_approval_id = retry_result.retry_approval.approval_id
+
+    retry_approvals_output = StringIO()
+    with redirect_stdout(retry_approvals_output):
+        exit_code = main(
+            ["api", "execution", "retry-approvals", "list", "--limit", "3"],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    retry_approvals = json.loads(retry_approvals_output.getvalue())["retry_approvals"]
+    assert retry_approvals[0]["approval_id"] == retry_approval_id
+    assert retry_approvals[0]["approval_status"] == "pending"
+
+    retry_approval_show_output = StringIO()
+    with redirect_stdout(retry_approval_show_output):
+        exit_code = main(
+            ["api", "execution", "retry-approvals", "show", "--id", retry_approval_id],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    shown_retry_approval = json.loads(retry_approval_show_output.getvalue())["retry_approval"]
+    assert shown_retry_approval["source_execution_run_id"] == retry_result.execution_run_id
+    assert shown_retry_approval["proposed_retry_goal"] == "write file loop-proof.txt with inspected"
+
+    retry_approval_approve_output = StringIO()
+    with redirect_stdout(retry_approval_approve_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "retry-approvals",
+                "approve",
+                "--id",
+                retry_approval_id,
+                "--approved-by",
+                "alec",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    approved_retry_approval = json.loads(
+        retry_approval_approve_output.getvalue()
+    )["retry_approval"]
+    assert approved_retry_approval["approval_status"] == "approved"
+    assert approved_retry_approval["approval"]["approved_by"] == "alec"
+    assert (execution_root / "loop-proof.txt").read_text(encoding="utf-8") == "wrong"
     assert db_path.exists()
 
 
