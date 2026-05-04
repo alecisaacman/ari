@@ -269,4 +269,86 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert context["repo_root"] == str(execution_root.resolve())
     assert "proof.txt" in context["files_sample"]
     assert context["language_summary"]["markdown"] == 1
+
+    coding_loop_output = StringIO()
+    with redirect_stdout(coding_loop_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "coding-loop",
+                "--goal",
+                "write file loop-proof.txt with inspected",
+                "--execution-root",
+                str(execution_root),
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    coding_loop = json.loads(coding_loop_output.getvalue())["coding_loop"]
+    assert coding_loop["status"] == "success"
+    assert coding_loop["reason"]
+    assert coding_loop["preview_id"]
+    assert coding_loop["execution_run_id"]
+    assert coding_loop["execution_occurred"] is True
+    assert coding_loop["approval_required_reason"] is None
+    assert coding_loop["retry_proposal"] is None
+    assert (execution_root / "loop-proof.txt").read_text(encoding="utf-8") == "inspected"
+
+    unsafe_loop_output = StringIO()
+    with redirect_stdout(unsafe_loop_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "coding-loop",
+                "--goal",
+                "run rm -rf .",
+                "--execution-root",
+                str(execution_root),
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    unsafe_loop = json.loads(unsafe_loop_output.getvalue())["coding_loop"]
+    assert unsafe_loop["status"] == "unsafe"
+    assert unsafe_loop["execution_run_id"] is None
+    assert unsafe_loop["execution_occurred"] is False
+
+    ask_user_loop_output = StringIO()
+    with redirect_stdout(ask_user_loop_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "coding-loop",
+                "--goal",
+                "Invent a broad product strategy",
+                "--execution-root",
+                str(execution_root),
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    ask_user_loop = json.loads(ask_user_loop_output.getvalue())["coding_loop"]
+    assert ask_user_loop["status"] == "ask_user"
+    assert ask_user_loop["execution_run_id"] is None
+    assert ask_user_loop["execution_occurred"] is False
     assert db_path.exists()
+
+
+def test_canonical_core_cli_execution_help_stays_local(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    help_output = StringIO()
+    with redirect_stdout(help_output):
+        exit_code = main(["execution", "help"])
+
+    assert exit_code == 0
+    rendered = help_output.getvalue()
+    assert "execution coding-loop" in rendered
+    assert "Help commands do not invoke Codex" in rendered
+    assert "Help commands do not invoke OpenAI" in rendered

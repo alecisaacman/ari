@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ari_core.modules.execution import ModelPlanner, run_one_step_coding_loop
-from ari_core.modules.execution.inspection import get_execution_run
+from ari_core.modules.execution.inspection import get_execution_run, inspect_coding_loop_result
 from ari_core.modules.execution.models import (
     ExecutionGoal,
     PlannerResult,
@@ -87,6 +87,12 @@ def test_one_step_coding_loop_returns_requires_approval_without_execution(
     assert "Approval required" in result.approval_required_reason
     assert result.to_dict()["approval_required_reason"] == result.approval_required_reason
     assert not (root / "approval.txt").exists()
+
+    inspected = inspect_coding_loop_result(result)
+    assert inspected["status"] == "requires_approval"
+    assert inspected["execution_occurred"] is False
+    assert inspected["execution_run_id"] is None
+    assert inspected["approval_required_reason"] == result.approval_required_reason
 
 
 def test_one_step_coding_loop_rejects_unsafe_action_before_execution(tmp_path: Path) -> None:
@@ -182,6 +188,14 @@ def test_one_step_coding_loop_verification_failure_proposes_retry(tmp_path: Path
     assert result.retry_proposal["suggested_next_goal"] == "write file proof.txt with right\n"
     assert result.to_dict()["retry_proposal"] == result.retry_proposal
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    inspected = inspect_coding_loop_result(result)
+    assert inspected["status"] == "retryable_failure"
+    assert inspected["execution_occurred"] is True
+    assert inspected["execution_run_id"] == result.execution_run_id
+    assert inspected["retry_proposal"] == result.retry_proposal
+    assert inspected["suggested_next_goal"] == "write file proof.txt with right\n"
+    assert inspected["retry_requires_approval"] is False
 
 
 def test_one_step_coding_loop_retry_proposal_does_not_execute(tmp_path: Path) -> None:

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...core.paths import DB_PATH
 from ..coordination.db import get_coordination_entity, list_coordination_entities
+
+if TYPE_CHECKING:
+    from .coding_loop import CodingLoopResult
 
 
 def list_execution_runs(
@@ -64,6 +67,38 @@ def get_execution_plan_preview(
     return _decode_execution_plan_preview_row(row)
 
 
+def inspect_coding_loop_result(
+    result: CodingLoopResult | dict[str, Any],
+) -> dict[str, Any]:
+    payload = result if isinstance(result, dict) else result.to_dict()
+    retry_proposal = payload.get("retry_proposal")
+    retry_payload = retry_proposal if isinstance(retry_proposal, dict) else None
+    execution_run_id = _string_or_none(payload.get("execution_run_id"))
+    return {
+        "id": payload.get("id"),
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "preview_id": payload.get("preview_id"),
+        "execution_run_id": execution_run_id,
+        "execution_occurred": execution_run_id is not None,
+        "approval_required_reason": payload.get("approval_required_reason"),
+        "retry_proposal": retry_payload,
+        "suggested_next_goal": (
+            None if retry_payload is None else retry_payload.get("suggested_next_goal")
+        ),
+        "suggested_next_action": (
+            None if retry_payload is None else retry_payload.get("suggested_next_action")
+        ),
+        "retry_requires_approval": (
+            None if retry_payload is None else retry_payload.get("approval_required")
+        ),
+        "preview": payload.get("preview"),
+        "execution_run": payload.get("execution_run"),
+        "created_at": payload.get("created_at"),
+        "updated_at": payload.get("updated_at"),
+    }
+
+
 def _decode_execution_run_row(row: Any) -> dict[str, Any]:
     contexts = _json_list(row["contexts_json"])
     decisions = _json_list(row["decisions_json"])
@@ -116,6 +151,10 @@ def _json_object(raw_value: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         return {}
     return decoded
+
+
+def _string_or_none(raw: object) -> str | None:
+    return raw if isinstance(raw, str) else None
 
 
 def _planner_config(

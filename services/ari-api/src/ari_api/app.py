@@ -11,6 +11,7 @@ from ari_core.modules.coordination.db import (
     list_coordination_entities,
     put_coordination_entity,
 )
+from ari_core.modules.execution.coding_loop import run_one_step_coding_loop
 from ari_core.modules.execution.controller import (
     build_repo_context,
     plan_execution_goal,
@@ -30,6 +31,7 @@ from ari_core.modules.execution.engine import (
 from ari_core.modules.execution.inspection import (
     get_execution_plan_preview,
     get_execution_run,
+    inspect_coding_loop_result,
     list_execution_plan_previews,
     list_execution_runs,
 )
@@ -74,6 +76,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from ari_api.schemas import (
     CodingActionCreateRequest,
+    CodingLoopGoalRequest,
     CoordinationUpsertRequest,
     ExecutionCommandRequest,
     ExecutionGoalRequest,
@@ -374,6 +377,20 @@ def create_app() -> FastAPI:
                 ),
                 planner_mode=payload.planner,
             )
+        )
+
+    @app.post("/execution/coding-loop")
+    def execution_coding_loop(payload: CodingLoopGoalRequest) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "coding_loop": inspect_coding_loop_result(
+                    run_one_step_coding_loop(
+                        payload.goal,
+                        execution_root=payload.executionRoot,
+                        planner_mode=payload.planner,
+                    )
+                )
+            }
         )
 
     @app.get("/execution/plans")

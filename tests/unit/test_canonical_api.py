@@ -223,9 +223,55 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert shown_plan.status_code == 200
         assert shown_plan.json()["plan"]["status"] == "planned"
 
+        coding_loop = client.post(
+            "/execution/coding-loop",
+            json={
+                "goal": "write file loop-api-proof.txt with inspected through api",
+                "executionRoot": str(execution_root),
+            },
+        )
+        assert coding_loop.status_code == 200
+        coding_loop_payload = coding_loop.json()["coding_loop"]
+        assert coding_loop_payload["status"] == "success"
+        assert coding_loop_payload["reason"]
+        assert coding_loop_payload["preview_id"]
+        assert coding_loop_payload["execution_run_id"]
+        assert coding_loop_payload["execution_occurred"] is True
+        assert coding_loop_payload["approval_required_reason"] is None
+        assert coding_loop_payload["retry_proposal"] is None
+        assert (execution_root / "loop-api-proof.txt").read_text(
+            encoding="utf-8"
+        ) == "inspected through api"
+
+        unsafe_loop = client.post(
+            "/execution/coding-loop",
+            json={
+                "goal": "run rm -rf .",
+                "executionRoot": str(execution_root),
+            },
+        )
+        assert unsafe_loop.status_code == 200
+        unsafe_loop_payload = unsafe_loop.json()["coding_loop"]
+        assert unsafe_loop_payload["status"] == "unsafe"
+        assert unsafe_loop_payload["execution_run_id"] is None
+        assert unsafe_loop_payload["execution_occurred"] is False
+
+        ask_user_loop = client.post(
+            "/execution/coding-loop",
+            json={
+                "goal": "Invent a broad product strategy",
+                "executionRoot": str(execution_root),
+            },
+        )
+        assert ask_user_loop.status_code == 200
+        ask_user_loop_payload = ask_user_loop.json()["coding_loop"]
+        assert ask_user_loop_payload["status"] == "ask_user"
+        assert ask_user_loop_payload["execution_run_id"] is None
+        assert ask_user_loop_payload["execution_occurred"] is False
+
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
-        assert runs.json()["runs"][0]["id"] == goal.json()["id"]
+        assert runs.json()["runs"][0]["id"] == coding_loop_payload["execution_run_id"]
 
         run = client.get(f"/execution/runs/{goal.json()['id']}")
         assert run.status_code == 200

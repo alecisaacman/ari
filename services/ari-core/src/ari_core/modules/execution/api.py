@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
+from .coding_loop import run_one_step_coding_loop
 from .controller import build_repo_context, plan_execution_goal, run_execution_goal
 from .engine import (
     approve_operator_action,
@@ -17,6 +18,7 @@ from .engine import (
 from .inspection import (
     get_execution_plan_preview,
     get_execution_run,
+    inspect_coding_loop_result,
     list_execution_plan_previews,
     list_execution_runs,
 )
@@ -96,6 +98,17 @@ def handle_api_execution_plan(args, db_path: Path = DB_PATH) -> int:
         planner_mode=args.planner,
     )
     print(json.dumps(result))
+    return 0
+
+
+def handle_api_execution_coding_loop(args, db_path: Path = DB_PATH) -> int:
+    result = run_one_step_coding_loop(
+        args.goal,
+        execution_root=args.execution_root,
+        db_path=db_path,
+        planner_mode=args.planner,
+    )
+    print(json.dumps({"coding_loop": inspect_coding_loop_result(result)}))
     return 0
 
 

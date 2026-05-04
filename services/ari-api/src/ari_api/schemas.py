@@ -92,6 +92,12 @@ class ExecutionGoalRequest(APIModel):
     planner: Literal["rule_based", "model"] = "rule_based"
 
 
+class CodingLoopGoalRequest(APIModel):
+    goal: str
+    planner: Literal["rule_based", "model"] = "rule_based"
+    executionRoot: str | None = None
+
+
 class CodingOperation(APIModel):
     type: Literal["write", "patch"]
     path: str

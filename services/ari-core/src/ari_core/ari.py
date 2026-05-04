@@ -15,6 +15,7 @@ from .modules.execution.api import (
     handle_api_execution_action_get,
     handle_api_execution_action_list,
     handle_api_execution_action_run,
+    handle_api_execution_coding_loop,
     handle_api_execution_command,
     handle_api_execution_context,
     handle_api_execution_goal,
@@ -118,6 +119,9 @@ Local execution inspection commands:
 
   execution plans show <preview_id>
       Show one persisted execution plan preview.
+
+  execution coding-loop
+      Run one approval-aware coding-loop step and inspect the result.
 
 Notes:
   - Help commands are handled locally.
@@ -872,6 +876,23 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
     )
 
+    coding_loop_parser = execution_subparsers.add_parser(
+        "coding-loop",
+        help="Run one approval-aware coding-loop step and inspect the result.",
+    )
+    coding_loop_parser.add_argument("--goal", required=True, help="Coding goal for one loop step.")
+    coding_loop_parser.add_argument(
+        "--planner",
+        choices=["rule_based", "model"],
+        default="rule_based",
+        help="Planner mode. Model mode falls back unless a completion function is configured.",
+    )
+    coding_loop_parser.add_argument(
+        "--execution-root",
+        default=None,
+        help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
+    )
+
     plans_parser = execution_subparsers.add_parser(
         "plans", help="Inspect persisted execution plan previews."
     )
@@ -1383,6 +1404,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_execution_goal(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "plan":
             return handle_api_execution_plan(args, db_path=db_path)
+        if args.api_command == "execution" and args.api_execution_command == "coding-loop":
+            return handle_api_execution_coding_loop(args, db_path=db_path)
         if (
             args.api_command == "execution"
             and args.api_execution_command == "plans"
