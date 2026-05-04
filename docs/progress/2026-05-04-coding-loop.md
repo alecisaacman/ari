@@ -29,6 +29,9 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   preserves the source coding-loop result, preview id, failed execution-run id,
   original goal, proposed retry goal/action, failed verification summary, and a
   pending `ApprovalRequirement`.
+- Pending retry-approval artifacts can be marked approved or rejected through a
+  typed in-memory mutation seam. Mutation preserves the original proposal and
+  source references and records terminal approval state.
 
 ## Boundary
 
@@ -43,6 +46,11 @@ authority explanation for why ARI stopped, asked, or rejected.
 
 Retry-approval artifacts are boundary records only. They do not grant approval,
 execute the retry, or create approve/reject commands.
+
+Retry-approval mutation is in-memory only in this slice. ARI does not yet expose
+durable lookup, approve, or reject commands for retry approvals because these
+artifacts are returned with the coding-loop result rather than persisted in a
+dedicated approval registry.
 
 ## Next Recommended Slice
 

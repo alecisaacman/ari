@@ -1,6 +1,13 @@
 """Canonical bounded execution module."""
 
-from .coding_loop import CodingLoopRequest, CodingLoopResult, run_one_step_coding_loop
+from .coding_loop import (
+    CodingLoopRequest,
+    CodingLoopResult,
+    CodingLoopRetryApproval,
+    approve_coding_loop_retry_approval,
+    reject_coding_loop_retry_approval,
+    run_one_step_coding_loop,
+)
 from .command_policy import CommandPolicyResult, validate_command
 from .controller import (
     ExecutionController,
@@ -44,6 +51,7 @@ __all__ = [
     "FailureContext",
     "CodingLoopRequest",
     "CodingLoopResult",
+    "CodingLoopRetryApproval",
     "ModelPlanner",
     "PlannerSelection",
     "PlannerResult",
@@ -58,7 +66,9 @@ __all__ = [
     "decide_worker_action",
     "execute_action",
     "get_execution_tool_registry",
+    "approve_coding_loop_retry_approval",
     "plan_execution_goal",
+    "reject_coding_loop_retry_approval",
     "run_execution_goal",
     "run_one_step_coding_loop",
     "resolve_execution_planner",

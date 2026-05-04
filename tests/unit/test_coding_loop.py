@@ -4,7 +4,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ari_core.modules.execution import ModelPlanner, run_one_step_coding_loop
+import pytest
+from ari_core.modules.execution import (
+    ModelPlanner,
+    approve_coding_loop_retry_approval,
+    reject_coding_loop_retry_approval,
+    run_one_step_coding_loop,
+)
 from ari_core.modules.execution.inspection import get_execution_run, inspect_coding_loop_result
 from ari_core.modules.execution.models import (
     ExecutionGoal,
@@ -268,6 +274,204 @@ def test_one_step_coding_loop_retry_proposal_does_not_execute(tmp_path: Path) ->
     assert result.retry_approval is not None
     assert result.retry_approval.approval.status == "pending"
     assert len(calls) == 1
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_coding_loop_retry_approval_can_be_approved_without_execution(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "proof.txt").write_text("old\n", encoding="utf-8")
+    planner = ModelPlanner(
+        lambda payload: json.dumps(
+            {
+                "confidence": 0.9,
+                "reason": "Write content that will fail explicit verification.",
+                "actions": [
+                    {
+                        "type": "write_file",
+                        "path": "proof.txt",
+                        "content": "wrong\n",
+                    }
+                ],
+                "verification": [
+                    {
+                        "type": "file_content",
+                        "target": "proof.txt",
+                        "expected": "right\n",
+                    }
+                ],
+            }
+        )
+    )
+
+    result = run_one_step_coding_loop(
+        "Create a proof file",
+        execution_root=root,
+        db_path=db_path,
+        planner=planner,
+    )
+
+    assert result.retry_approval is not None
+    approved = approve_coding_loop_retry_approval(
+        result.retry_approval,
+        approval_id=result.retry_approval.approval_id,
+        approved_by="alec",
+        approved_at="2026-05-04T12:00:00Z",
+    )
+
+    assert approved.approval_status == "approved"
+    assert approved.approval.status == "approved"
+    assert approved.approval.approved_by == "alec"
+    assert approved.approval.approved_at == "2026-05-04T12:00:00Z"
+    assert approved.updated_at == "2026-05-04T12:00:00Z"
+    assert approved.source_execution_run_id == result.execution_run_id
+    assert approved.proposed_retry_goal == "write file proof.txt with right\n"
+    assert approved.proposed_retry_action == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+    assert approved.failed_verification_summary == result.retry_approval.failed_verification_summary
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    inspected = inspect_coding_loop_result({"retry_approval": approved.to_dict()})
+    assert inspected["retry_approval_status"] == "approved"
+    assert inspected["retry_approval_id"] == approved.approval_id
+
+
+def test_coding_loop_retry_approval_can_be_rejected_without_execution(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "proof.txt").write_text("old\n", encoding="utf-8")
+    planner = ModelPlanner(
+        lambda payload: json.dumps(
+            {
+                "confidence": 0.9,
+                "reason": "Write content that will fail explicit verification.",
+                "actions": [
+                    {
+                        "type": "write_file",
+                        "path": "proof.txt",
+                        "content": "wrong\n",
+                    }
+                ],
+                "verification": [
+                    {
+                        "type": "file_content",
+                        "target": "proof.txt",
+                        "expected": "right\n",
+                    }
+                ],
+            }
+        )
+    )
+
+    result = run_one_step_coding_loop(
+        "Create a proof file",
+        execution_root=root,
+        db_path=db_path,
+        planner=planner,
+    )
+
+    assert result.retry_approval is not None
+    rejected = reject_coding_loop_retry_approval(
+        result.retry_approval,
+        approval_id=result.retry_approval.approval_id,
+        rejected_reason="Prefer a different fix.",
+        rejected_by="alec",
+        rejected_at="2026-05-04T12:05:00Z",
+    )
+
+    assert rejected.approval_status == "rejected"
+    assert rejected.approval.status == "rejected"
+    assert rejected.approval.rejected_reason == "Prefer a different fix."
+    assert rejected.rejected_by == "alec"
+    assert rejected.rejected_at == "2026-05-04T12:05:00Z"
+    assert rejected.updated_at == "2026-05-04T12:05:00Z"
+    assert rejected.source_execution_run_id == result.execution_run_id
+    assert rejected.proposed_retry_goal == "write file proof.txt with right\n"
+    assert rejected.proposed_retry_action == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+    assert rejected.failed_verification_summary == result.retry_approval.failed_verification_summary
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    inspected = inspect_coding_loop_result({"retry_approval": rejected.to_dict()})
+    assert inspected["retry_approval_status"] == "rejected"
+    assert inspected["retry_approval_id"] == rejected.approval_id
+
+
+def test_coding_loop_retry_approval_fails_safely_for_unknown_or_terminal_id(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "proof.txt").write_text("old\n", encoding="utf-8")
+    planner = ModelPlanner(
+        lambda payload: json.dumps(
+            {
+                "confidence": 0.9,
+                "reason": "Write content that will fail explicit verification.",
+                "actions": [
+                    {
+                        "type": "write_file",
+                        "path": "proof.txt",
+                        "content": "wrong\n",
+                    }
+                ],
+                "verification": [
+                    {
+                        "type": "file_content",
+                        "target": "proof.txt",
+                        "expected": "right\n",
+                    }
+                ],
+            }
+        )
+    )
+
+    result = run_one_step_coding_loop(
+        "Create a proof file",
+        execution_root=root,
+        db_path=db_path,
+        planner=planner,
+    )
+
+    assert result.retry_approval is not None
+    with pytest.raises(ValueError, match="not found"):
+        approve_coding_loop_retry_approval(
+            result.retry_approval,
+            approval_id="coding-loop-retry-approval-missing",
+            approved_by="alec",
+        )
+
+    approved = approve_coding_loop_retry_approval(
+        result.retry_approval,
+        approval_id=result.retry_approval.approval_id,
+        approved_by="alec",
+    )
+    with pytest.raises(ValueError, match="already terminal"):
+        reject_coding_loop_retry_approval(
+            approved,
+            approval_id=approved.approval_id,
+            rejected_reason="Too late.",
+        )
+    with pytest.raises(ValueError, match="already terminal"):
+        approve_coding_loop_retry_approval(
+            approved,
+            approval_id=approved.approval_id,
+            approved_by="alec",
+        )
+
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -96,6 +96,9 @@ class CodingLoopRetryApproval:
     retry_execution_requires_approval: bool
     proposed_action_requires_approval: bool
     created_at: str
+    updated_at: str | None = None
+    rejected_by: str | None = None
+    rejected_at: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -114,6 +117,9 @@ class CodingLoopRetryApproval:
             "retry_execution_requires_approval": self.retry_execution_requires_approval,
             "proposed_action_requires_approval": self.proposed_action_requires_approval,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "rejected_by": self.rejected_by,
+            "rejected_at": self.rejected_at,
         }
 
 
@@ -198,6 +204,72 @@ def run_one_step_coding_loop(
         retry_proposal=retry_proposal,
         created_at=created_at,
     )
+
+
+def approve_coding_loop_retry_approval(
+    retry_approval: CodingLoopRetryApproval,
+    *,
+    approval_id: str,
+    approved_by: str,
+    approved_at: str | None = None,
+) -> CodingLoopRetryApproval:
+    _validate_retry_approval_mutation(retry_approval, approval_id)
+    approval = ApprovalRequirement.approved(
+        approved_by=approved_by,
+        approved_at=approved_at,
+        reason="Coding-loop retry proposal approved.",
+        authority_note=(
+            "Approval records authority only; it does not execute the retry proposal."
+        ),
+    )
+    return replace(
+        retry_approval,
+        approval=approval,
+        approval_status=approval.status,
+        updated_at=approval.approved_at,
+    )
+
+
+def reject_coding_loop_retry_approval(
+    retry_approval: CodingLoopRetryApproval,
+    *,
+    approval_id: str,
+    rejected_reason: str,
+    rejected_by: str | None = None,
+    rejected_at: str | None = None,
+) -> CodingLoopRetryApproval:
+    _validate_retry_approval_mutation(retry_approval, approval_id)
+    if not rejected_reason.strip():
+        raise ValueError("rejected_reason is required.")
+    rejection_time = rejected_at or _now_iso()
+    approval = ApprovalRequirement.rejected(
+        rejected_reason=rejected_reason,
+        reason="Coding-loop retry proposal rejected.",
+        authority_note=(
+            "Rejection records authority only; it does not execute the retry proposal."
+        ),
+    )
+    return replace(
+        retry_approval,
+        approval=approval,
+        approval_status=approval.status,
+        updated_at=rejection_time,
+        rejected_by=rejected_by,
+        rejected_at=rejection_time,
+    )
+
+
+def _validate_retry_approval_mutation(
+    retry_approval: CodingLoopRetryApproval,
+    approval_id: str,
+) -> None:
+    if retry_approval.approval_id != approval_id:
+        raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
+    if retry_approval.approval.status != "pending":
+        raise ValueError(
+            "Coding-loop retry approval is already terminal: "
+            f"{retry_approval.approval.status}."
+        )
 
 
 class _FrozenPlanPlanner:
@@ -620,6 +692,9 @@ def _retry_approval_artifact(
         retry_execution_requires_approval=True,
         proposed_action_requires_approval=proposed_action_requires_approval,
         created_at=created_at,
+        updated_at=None,
+        rejected_by=None,
+        rejected_at=None,
     )
 
 
