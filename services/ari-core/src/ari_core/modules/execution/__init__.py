@@ -1,5 +1,6 @@
 """Canonical bounded execution module."""
 
+from .coding_loop import CodingLoopRequest, CodingLoopResult, run_one_step_coding_loop
 from .command_policy import CommandPolicyResult, validate_command
 from .controller import (
     ExecutionController,
@@ -41,6 +42,8 @@ __all__ = [
     "ExecutionTool",
     "ExecutionToolRegistry",
     "FailureContext",
+    "CodingLoopRequest",
+    "CodingLoopResult",
     "ModelPlanner",
     "PlannerSelection",
     "PlannerResult",
@@ -57,6 +60,7 @@ __all__ = [
     "get_execution_tool_registry",
     "plan_execution_goal",
     "run_execution_goal",
+    "run_one_step_coding_loop",
     "resolve_execution_planner",
     "validate_command",
 ]
