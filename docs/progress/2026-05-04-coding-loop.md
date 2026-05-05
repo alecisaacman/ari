@@ -76,6 +76,11 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   approval from the root coding-loop result id. The chain-level proposal command
   resolves the eligible reviewed approval and delegates to the existing
   next-approval creation boundary.
+- Coding-loop retry chains can now be captured into compact session memory
+  blocks. The lifecycle summary stores the root result id, terminal status,
+  depth, approval counts, retry execution counts, final review/continuation
+  state, key failure/success summaries, and durable takeaway while preserving
+  references instead of duplicating full execution traces.
 
 ## Boundary
 
@@ -140,7 +145,12 @@ execute, or advance. They create exactly one pending approval only when the
 latest reviewed retry is eligible for `propose_retry`, and refuse duplicate or
 non-eligible chains.
 
+Coding-loop chain lifecycle memory is explanatory only. It does not execute,
+approve, reject, advance, or propose follow-up approvals. It summarizes existing
+chain state into an idempotent session memory block so ARI can learn from
+bounded outcomes without copying full `ExecutionRun` payloads.
+
 ## Next Recommended Slice
 
-Add a compact chain lifecycle summary for memory capture so ARI can learn from
-bounded coding-loop outcomes without duplicating full execution traces.
+Draft an ARI Native Skill Contract v0 so the proven coding-loop spine can guide
+future skills without turning the coding loop into the whole architecture.

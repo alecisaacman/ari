@@ -16,6 +16,7 @@
 - coordination state
 - policy / derivation
 - execution layer for bounded coding actions
+- compact lifecycle memory for bounded coding-loop chains
 
 ## Still evolving
 - autonomous coding loop

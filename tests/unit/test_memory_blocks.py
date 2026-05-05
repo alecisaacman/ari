@@ -400,6 +400,66 @@ def test_capture_coding_loop_retry_approval_memory_is_explainable(
     assert any("Retry execution run" in reason for reason in explanation["why"])
 
 
+def test_capture_coding_loop_chain_lifecycle_memory_is_compact_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    from ari_core.modules.execution import list_coding_loop_retry_approvals
+    from ari_core.modules.execution.inspection import list_execution_runs
+    from ari_core.modules.memory.capture import (
+        capture_coding_loop_chain_lifecycle_memory,
+    )
+    from ari_core.modules.memory.db import list_memory_blocks, memory_block_to_payload
+    from ari_core.modules.memory.explain import explain_coding_loop_chain_lifecycle
+
+    approval, execution_run, _root, db_path = _executed_retry_approval(tmp_path)
+    result_id = approval.source_coding_loop_result_id
+    approval_count_before = len(list_coding_loop_retry_approvals(db_path=db_path))
+    run_count_before = len(list_execution_runs(limit=20, db_path=db_path))
+
+    first = capture_coding_loop_chain_lifecycle_memory(result_id, db_path=db_path)
+    second = capture_coding_loop_chain_lifecycle_memory(result_id, db_path=db_path)
+    blocks = [
+        memory_block_to_payload(row) for row in list_memory_blocks(layer="session", db_path=db_path)
+    ]
+
+    assert first["id"] == second["id"]
+    assert first["kind"] == "coding_loop_chain_lifecycle_summary"
+    assert first["source"] == result_id
+    assert result_id in first["subject_ids"]
+    assert approval.approval_id in first["subject_ids"]
+    assert execution_run["id"] in first["subject_ids"]
+    assert "Original goal: Create a proof file" in str(first["body"])
+    assert "Terminal status: stopped" in str(first["body"])
+    assert "Chain depth: 1" in str(first["body"])
+    assert "Approvals: 1 total, 1 approved, 0 rejected, 0 pending" in str(first["body"])
+    assert "Retry executions: 1" in str(first["body"])
+    assert "Final review status: stop" in str(first["body"])
+    assert "Lesson:" in str(first["body"])
+    assert len(blocks) == 1
+
+    evidence = first["evidence"][0]
+    assert evidence["terminal_status"] == "stopped"
+    assert evidence["chain_depth"] == 1
+    assert evidence["approval_count"] == 1
+    assert evidence["approved_count"] == 1
+    assert evidence["retry_execution_count"] == 1
+    assert evidence["final_execution_status"] == "completed"
+    assert evidence["final_post_run_review_status"] == "stop"
+    assert "contexts" not in evidence
+    assert "decisions" not in evidence
+    assert "results" not in evidence
+
+    explanation = explain_coding_loop_chain_lifecycle(result_id, db_path=db_path)
+    assert explanation["subject"]["id"] == result_id
+    assert explanation["terminal_status"] == "stopped"
+    assert explanation["chain_depth"] == 1
+    assert explanation["memory_blocks"][0]["id"] == first["id"]
+    assert any("Latest review status: stop" in reason for reason in explanation["why"])
+
+    assert len(list_coding_loop_retry_approvals(db_path=db_path)) == approval_count_before
+    assert len(list_execution_runs(limit=20, db_path=db_path)) == run_count_before
+
+
 def test_memory_capture_execution_cli(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
@@ -508,6 +568,61 @@ def test_memory_capture_retry_approval_cli(tmp_path: Path, monkeypatch) -> None:
     assert explanation["memory_blocks"][0]["source"] == approval.approval_id
 
 
+def test_memory_capture_coding_loop_chain_cli(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+    approval, _execution_run, _root, _state_path = _executed_retry_approval(
+        tmp_path,
+        db_path=db_path,
+    )
+    result_id = approval.source_coding_loop_result_id
+
+    capture_output = StringIO()
+    with redirect_stdout(capture_output):
+        exit_code = main(
+            [
+                "api",
+                "memory",
+                "capture",
+                "coding-loop-chain",
+                "--id",
+                result_id,
+                "--json",
+            ],
+            db_path=db_path,
+        )
+
+    assert exit_code == 0
+    block = json.loads(capture_output.getvalue())["block"]
+    assert block["source"] == result_id
+    assert block["kind"] == "coding_loop_chain_lifecycle_summary"
+
+    explain_output = StringIO()
+    with redirect_stdout(explain_output):
+        exit_code = main(
+            [
+                "api",
+                "memory",
+                "explain",
+                "coding-loop-chain",
+                "--id",
+                result_id,
+                "--json",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    explanation = json.loads(explain_output.getvalue())
+    assert explanation["subject"]["id"] == result_id
+    assert explanation["terminal_status"] == "stopped"
+    assert explanation["memory_blocks"][0]["source"] == result_id
+
+
 def test_memory_capture_execution_api(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
     monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "repo"))
@@ -568,3 +683,31 @@ def test_memory_capture_retry_approval_api(tmp_path: Path, monkeypatch) -> None:
         assert explained.json()["retry_execution_status"] == "completed"
         assert explained.json()["evidence"]["retry_execution_run"]["id"] == execution_run["id"]
         assert explained.json()["memory_blocks"][0]["source"] == approval.approval_id
+
+
+def test_memory_capture_coding_loop_chain_api(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
+    _purge_modules()
+
+    from ari_api import create_app
+    from ari_core.core.paths import DB_PATH
+
+    approval, _execution_run, _root, _db_path = _executed_retry_approval(
+        tmp_path,
+        db_path=DB_PATH,
+    )
+    result_id = approval.source_coding_loop_result_id
+
+    app = create_app()
+    with TestClient(app) as client:
+        captured = client.post(f"/memory/capture/coding-loop-chains/{result_id}")
+        assert captured.status_code == 200
+        assert captured.json()["block"]["source"] == result_id
+        assert captured.json()["block"]["kind"] == "coding_loop_chain_lifecycle_summary"
+        assert captured.json()["block"]["evidence"][0]["terminal_status"] == "stopped"
+
+        explained = client.get(f"/explain/coding-loop-chains/{result_id}")
+        assert explained.status_code == 200
+        assert explained.json()["subject"]["id"] == result_id
+        assert explained.json()["terminal_status"] == "stopped"
+        assert explained.json()["memory_blocks"][0]["source"] == result_id
