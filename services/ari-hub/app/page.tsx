@@ -65,6 +65,24 @@ export default async function HomePage() {
           <strong>{overview.candidate_skill_count}</strong>
         </div>
         <div>
+          <span>Pending approvals</span>
+          <strong>{metricValueLabel(overview.pending_approval_count)}</strong>
+        </div>
+        <div>
+          <span>Coding-loop results</span>
+          <strong>{metricValueLabel(overview.recent_coding_loop_count)}</strong>
+        </div>
+        <div>
+          <span>Lifecycle lessons</span>
+          <strong>{metricValueLabel(overview.recent_lifecycle_lesson_count)}</strong>
+        </div>
+        <div>
+          <span>Counts source</span>
+          <strong>
+            {overview.counts_generated_from_live_sources ? "live" : "partial"}
+          </strong>
+        </div>
+        <div>
           <span>Overview source</span>
           <strong>{result.source}</strong>
         </div>
@@ -149,6 +167,10 @@ function buildPanels(
       lines: [
         `Generated at: ${overview.generated_at}`,
         `Dashboard mode: ${overview.dashboard_mode}`,
+        `Summary counts: ${
+          overview.counts_generated_from_live_sources ? "live" : "partial"
+        }`,
+        overview.partial_counts_reason ?? "All summary count sources are readable.",
         overview.next_recommended_inspection,
       ],
     },
@@ -194,9 +216,9 @@ function buildPanels(
     },
     {
       title: "Memory / lifecycle lessons",
-      status: metricPanelStatus(overview.recent_memory_lesson_count),
+      status: metricPanelStatus(overview.recent_lifecycle_lesson_count),
       source: "api memory explain coding-loop-chain",
-      lines: metricLines(overview.recent_memory_lesson_count),
+      lines: metricLines(overview.recent_lifecycle_lesson_count),
     },
     {
       title: "Self-documentation content",
@@ -208,7 +230,14 @@ function buildPanels(
       title: "System health",
       status: source === "ari-api" ? "partial" : "missing",
       source: "future GET /system/health",
-      lines: overview.read_model_notes,
+      lines: [
+        ...overview.read_model_notes,
+        `Unavailable counts: ${
+          overview.unavailable_counts.length
+            ? overview.unavailable_counts.join(", ")
+            : "none"
+        }`,
+      ],
     },
   ];
 }
@@ -220,4 +249,8 @@ function metricPanelStatus(metric: OverviewMetric): DashboardPanel["status"] {
 function metricLines(metric: OverviewMetric): string[] {
   const value = metric.value === null ? "unavailable" : String(metric.value);
   return [`Value: ${value}`, `Status: ${metric.status}`, metric.reason];
+}
+
+function metricValueLabel(metric: OverviewMetric): string {
+  return metric.value === null ? "partial" : String(metric.value);
 }

@@ -25,7 +25,11 @@ export type AriOperatingOverview = {
   candidate_skills: OverviewSkill[];
   pending_approval_count: OverviewMetric;
   recent_coding_loop_count: OverviewMetric;
+  recent_lifecycle_lesson_count: OverviewMetric;
   recent_memory_lesson_count: OverviewMetric;
+  counts_generated_from_live_sources: boolean;
+  unavailable_counts: string[];
+  partial_counts_reason: string | null;
   self_documentation_status: string;
   dashboard_mode: string;
   authority_warning: string;
@@ -78,7 +82,15 @@ function fallbackOverview(error: unknown): AriOperatingOverview {
     candidate_skills: [],
     pending_approval_count: unavailableMetric("ARI overview is unavailable."),
     recent_coding_loop_count: unavailableMetric("ARI overview is unavailable."),
+    recent_lifecycle_lesson_count: unavailableMetric("ARI overview is unavailable."),
     recent_memory_lesson_count: unavailableMetric("ARI overview is unavailable."),
+    counts_generated_from_live_sources: false,
+    unavailable_counts: [
+      "pending_approval_count",
+      "recent_coding_loop_count",
+      "recent_lifecycle_lesson_count"
+    ],
+    partial_counts_reason: "ARI overview is unavailable.",
     self_documentation_status: "unavailable: connect to ARI overview for live status.",
     dashboard_mode: "read_only",
     authority_warning:
