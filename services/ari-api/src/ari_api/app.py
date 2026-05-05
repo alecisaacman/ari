@@ -13,12 +13,14 @@ from ari_core.modules.coordination.db import (
 )
 from ari_core.modules.execution.coding_loop import (
     advance_coding_loop_retry_chain,
+    approve_latest_pending_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
     decide_coding_loop_retry_continuation,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
+    reject_latest_pending_coding_loop_retry_approval,
     reject_stored_coding_loop_retry_approval,
     review_coding_loop_retry_execution,
     run_one_step_coding_loop,
@@ -45,6 +47,7 @@ from ari_core.modules.execution.inspection import (
     get_execution_run,
     inspect_coding_loop_chain,
     inspect_coding_loop_chain_advancement,
+    inspect_coding_loop_chain_approval_mutation,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -466,6 +469,43 @@ def create_app() -> FastAPI:
                 "advancement": inspect_coding_loop_chain_advancement(
                     advance_coding_loop_retry_chain(
                         result_id,
+                        max_depth=max_depth,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/results/{result_id}/approve-latest")
+    def execution_approve_latest_coding_loop_result_chain(
+        result_id: str,
+        payload: RetryApprovalApproveRequest,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    approve_latest_pending_coding_loop_retry_approval(
+                        result_id,
+                        approved_by=payload.approvedBy,
+                        max_depth=max_depth,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/results/{result_id}/reject-latest")
+    def execution_reject_latest_coding_loop_result_chain(
+        result_id: str,
+        payload: RetryApprovalRejectRequest,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    reject_latest_pending_coding_loop_retry_approval(
+                        result_id,
+                        rejected_reason=payload.reason,
+                        rejected_by=payload.rejectedBy,
                         max_depth=max_depth,
                     )
                 )

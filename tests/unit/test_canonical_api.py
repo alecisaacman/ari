@@ -468,11 +468,16 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         )
 
         approved_next = client.post(
-            "/execution/coding-loop/retry-approvals/"
-            f"{proposed_next.json()['retry_approval']['approval_id']}/approve",
+            f"/execution/coding-loop/results/{second_retry_result.id}/approve-latest",
             json={"approvedBy": "alec"},
         )
         assert approved_next.status_code == 200
+        assert approved_next.json()["approval_mutation"]["updated_retry_approval"][
+            "approval_id"
+        ] == proposed_next.json()["retry_approval"]["approval_id"]
+        assert approved_next.json()["approval_mutation"]["refreshed_chain"][
+            "terminal_status"
+        ] == "executable_approved_retry_available"
         advance_chain = client.post(
             f"/execution/coding-loop/results/{second_retry_result.id}/advance"
         )

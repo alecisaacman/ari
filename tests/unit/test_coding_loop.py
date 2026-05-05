@@ -10,6 +10,7 @@ from ari_core.modules.execution import (
     ModelPlanner,
     advance_coding_loop_retry_chain,
     approve_coding_loop_retry_approval,
+    approve_latest_pending_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
     decide_coding_loop_retry_continuation,
@@ -17,6 +18,7 @@ from ari_core.modules.execution import (
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
     reject_coding_loop_retry_approval,
+    reject_latest_pending_coding_loop_retry_approval,
     reject_stored_coding_loop_retry_approval,
     review_coding_loop_retry_execution,
     run_one_step_coding_loop,
@@ -1386,6 +1388,170 @@ def test_coding_loop_chain_advancement_refuses_incomplete_traversal(
     latest = get_coding_loop_retry_approval(next_approval.approval_id, db_path=db_path)
     assert latest is not None
     assert latest.retry_execution_run_id is None
+
+
+def test_coding_loop_chain_approve_latest_uses_existing_pending_approval(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    mutation = approve_latest_pending_coding_loop_retry_approval(
+        result.id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+
+    assert mutation.root_coding_loop_result_id == result.id
+    assert mutation.action_taken == "approved_latest"
+    assert mutation.updated_retry_approval.approval_id == result.retry_approval.approval_id
+    assert mutation.updated_retry_approval.approval_status == "approved"
+    assert mutation.updated_retry_approval.approval.approved_by == "alec"
+    assert mutation.updated_retry_approval.retry_execution_run_id is None
+    assert mutation.refreshed_chain is not None
+    assert mutation.refreshed_chain["terminal_status"] == (
+        "executable_approved_retry_available"
+    )
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_coding_loop_chain_reject_latest_uses_existing_pending_approval(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    mutation = reject_latest_pending_coding_loop_retry_approval(
+        result.id,
+        rejected_reason="Not this retry.",
+        rejected_by="alec",
+        db_path=db_path,
+    )
+
+    assert mutation.root_coding_loop_result_id == result.id
+    assert mutation.action_taken == "rejected_latest"
+    assert mutation.updated_retry_approval.approval_id == result.retry_approval.approval_id
+    assert mutation.updated_retry_approval.approval_status == "rejected"
+    assert mutation.updated_retry_approval.rejected_by == "alec"
+    assert mutation.updated_retry_approval.retry_execution_run_id is None
+    assert mutation.refreshed_chain is not None
+    assert mutation.refreshed_chain["terminal_status"] == "rejected"
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_coding_loop_chain_approve_latest_targets_latest_pending_approval(
+    tmp_path: Path,
+) -> None:
+    result, _root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=db_path)
+    next_approval = create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+
+    mutation = approve_latest_pending_coding_loop_retry_approval(
+        result.id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+
+    assert mutation.updated_retry_approval.approval_id == next_approval.approval_id
+    assert mutation.updated_retry_approval.approval_status == "approved"
+    assert mutation.updated_retry_approval.retry_execution_run_id is None
+    assert mutation.refreshed_chain is not None
+    assert mutation.refreshed_chain["terminal_status"] == (
+        "executable_approved_retry_available"
+    )
+    prior = get_coding_loop_retry_approval(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    assert prior is not None
+    assert prior.retry_execution_run_id == result.execution_run_id
+
+
+def test_coding_loop_chain_latest_approval_mutation_refuses_invalid_chains(
+    tmp_path: Path,
+) -> None:
+    success_db = tmp_path / "success" / "state" / "networking.db"
+    success_root = tmp_path / "success" / "repo"
+    success_root.mkdir(parents=True)
+    success = run_one_step_coding_loop(
+        "write file done.txt with done",
+        execution_root=success_root,
+        db_path=success_db,
+    )
+    with pytest.raises(ValueError, match="no pending retry approval"):
+        approve_latest_pending_coding_loop_retry_approval(
+            success.id,
+            approved_by="alec",
+            db_path=success_db,
+        )
+
+    approved_parent = tmp_path / "pending-then-approved"
+    approved_parent.mkdir()
+    result, _root, db_path = _retry_failure_result(approved_parent)
+    assert result.retry_approval is not None
+    approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    with pytest.raises(ValueError, match="no pending retry approval"):
+        reject_latest_pending_coding_loop_retry_approval(
+            result.id,
+            rejected_reason="Too late.",
+            db_path=db_path,
+        )
+
+    deep_parent = tmp_path / "truncated-approval"
+    deep_parent.mkdir()
+    deep_result, _root, deep_db = _retry_failure_result(deep_parent)
+    assert deep_result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        deep_result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=deep_db,
+    )
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=deep_result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=deep_db)
+    create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=deep_db,
+    )
+    with pytest.raises(ValueError, match="truncated"):
+        approve_latest_pending_coding_loop_retry_approval(
+            deep_result.id,
+            approved_by="alec",
+            max_depth=1,
+            db_path=deep_db,
+        )
+
+    with pytest.raises(ValueError, match="not found"):
+        approve_latest_pending_coding_loop_retry_approval(
+            "coding-loop-result-missing",
+            approved_by="alec",
+            db_path=deep_db,
+        )
 
 
 def test_one_step_coding_loop_adds_no_arbitrary_shell_access(tmp_path: Path) -> None:

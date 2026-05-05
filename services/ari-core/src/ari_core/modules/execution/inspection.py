@@ -10,6 +10,7 @@ from ..coordination.db import get_coordination_entity, list_coordination_entitie
 if TYPE_CHECKING:
     from .coding_loop import (
         CodingLoopChainAdvancement,
+        CodingLoopChainApprovalMutation,
         CodingLoopContinuationDecision,
         CodingLoopResult,
         CodingLoopRetryApproval,
@@ -224,6 +225,20 @@ def inspect_coding_loop_chain_advancement(
         "refreshed_terminal_status": payload.get("refreshed_terminal_status"),
         "refreshed_chain": payload.get("refreshed_chain"),
         "stop_reason": payload.get("stop_reason"),
+        "created_at": payload.get("created_at"),
+    }
+
+
+def inspect_coding_loop_chain_approval_mutation(
+    mutation: CodingLoopChainApprovalMutation | dict[str, Any],
+) -> dict[str, Any]:
+    payload = mutation if isinstance(mutation, dict) else mutation.to_dict()
+    return {
+        "root_coding_loop_result_id": payload.get("root_coding_loop_result_id"),
+        "action_taken": payload.get("action_taken"),
+        "reason": payload.get("reason"),
+        "updated_retry_approval": payload.get("updated_retry_approval"),
+        "refreshed_chain": payload.get("refreshed_chain"),
         "created_at": payload.get("created_at"),
     }
 

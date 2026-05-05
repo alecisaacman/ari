@@ -17,8 +17,10 @@ from .modules.execution.api import (
     handle_api_execution_action_run,
     handle_api_execution_coding_loop,
     handle_api_execution_coding_loops_advance,
+    handle_api_execution_coding_loops_approve_latest,
     handle_api_execution_coding_loops_chain,
     handle_api_execution_coding_loops_list,
+    handle_api_execution_coding_loops_reject_latest,
     handle_api_execution_coding_loops_show,
     handle_api_execution_command,
     handle_api_execution_context,
@@ -964,6 +966,47 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         default=10,
         help="Maximum retry approvals to traverse before advancing.",
     )
+    coding_loops_approve_latest_parser = coding_loops_subparsers.add_parser(
+        "approve-latest",
+        help="Approve the latest pending retry approval in a coding-loop chain.",
+    )
+    coding_loops_approve_latest_parser.add_argument(
+        "--id", required=True, help="Coding-loop result id."
+    )
+    coding_loops_approve_latest_parser.add_argument(
+        "--approved-by",
+        required=True,
+        help="Authority label for the approver.",
+    )
+    coding_loops_approve_latest_parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=10,
+        help="Maximum retry approvals to traverse before approving.",
+    )
+    coding_loops_reject_latest_parser = coding_loops_subparsers.add_parser(
+        "reject-latest",
+        help="Reject the latest pending retry approval in a coding-loop chain.",
+    )
+    coding_loops_reject_latest_parser.add_argument(
+        "--id", required=True, help="Coding-loop result id."
+    )
+    coding_loops_reject_latest_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Reason for rejection.",
+    )
+    coding_loops_reject_latest_parser.add_argument(
+        "--rejected-by",
+        default=None,
+        help="Optional authority label for the rejector.",
+    )
+    coding_loops_reject_latest_parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=10,
+        help="Maximum retry approvals to traverse before rejecting.",
+    )
 
     plans_parser = execution_subparsers.add_parser(
         "plans", help="Inspect persisted execution plan previews."
@@ -1582,6 +1625,18 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_execution_coding_loops_command == "advance"
         ):
             return handle_api_execution_coding_loops_advance(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "coding-loops"
+            and args.api_execution_coding_loops_command == "approve-latest"
+        ):
+            return handle_api_execution_coding_loops_approve_latest(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "coding-loops"
+            and args.api_execution_coding_loops_command == "reject-latest"
+        ):
+            return handle_api_execution_coding_loops_reject_latest(args, db_path=db_path)
         if (
             args.api_command == "execution"
             and args.api_execution_command == "plans"

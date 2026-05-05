@@ -619,16 +619,23 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
             [
                 "api",
                 "execution",
-                "retry-approvals",
-                "approve",
+                "coding-loops",
+                "approve-latest",
                 "--id",
-                next_retry_approval["approval_id"],
+                second_retry_result.id,
                 "--approved-by",
                 "alec",
             ],
             db_path=db_path,
         )
     assert exit_code == 0
+    approve_latest = json.loads(approve_next_output.getvalue())["approval_mutation"]
+    assert approve_latest["updated_retry_approval"]["approval_id"] == (
+        next_retry_approval["approval_id"]
+    )
+    assert approve_latest["refreshed_chain"]["terminal_status"] == (
+        "executable_approved_retry_available"
+    )
 
     advance_chain_output = StringIO()
     with redirect_stdout(advance_chain_output):

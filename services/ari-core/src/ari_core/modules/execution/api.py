@@ -4,12 +4,14 @@ from pathlib import Path
 from ...core.paths import DB_PATH
 from .coding_loop import (
     advance_coding_loop_retry_chain,
+    approve_latest_pending_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
     decide_coding_loop_retry_continuation,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
+    reject_latest_pending_coding_loop_retry_approval,
     reject_stored_coding_loop_retry_approval,
     review_coding_loop_retry_execution,
     run_one_step_coding_loop,
@@ -32,6 +34,7 @@ from .inspection import (
     get_execution_run,
     inspect_coding_loop_chain,
     inspect_coding_loop_chain_advancement,
+    inspect_coding_loop_chain_approval_mutation,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -171,6 +174,59 @@ def handle_api_execution_coding_loops_advance(args, db_path: Path = DB_PATH) -> 
         json.dumps(
             {
                 "advancement": inspect_coding_loop_chain_advancement(advancement),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_coding_loops_approve_latest(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        mutation = approve_latest_pending_coding_loop_retry_approval(
+            args.id,
+            approved_by=args.approved_by,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    mutation
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_coding_loops_reject_latest(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        mutation = reject_latest_pending_coding_loop_retry_approval(
+            args.id,
+            rejected_reason=args.reason,
+            rejected_by=args.rejected_by,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    mutation
+                ),
             }
         )
     )

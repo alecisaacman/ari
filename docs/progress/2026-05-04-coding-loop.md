@@ -68,6 +68,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   unexecuted retry approval. Advancement loads the chain, requires the terminal
   status to be `executable_approved_retry_available`, executes exactly that
   approved retry through the existing boundary, refreshes the chain, and stops.
+- The latest pending retry approval in a coding-loop chain can now be approved
+  or rejected from the root coding-loop result id. These chain-level controls
+  resolve the latest pending approval and delegate to the existing approval
+  mutation boundary.
 
 ## Boundary
 
@@ -123,8 +127,12 @@ is pending, rejected, stopped, unsafe, blocked, ask-user, truncated, cyclic, or
 otherwise incomplete, advancement returns a no-action/rejected result without
 execution.
 
+Chain-level approve/reject controls are convenience-only. They do not create new
+approval semantics, advance the chain, or execute retries. They refuse unknown,
+truncated, cyclic, stopped, unsafe, blocked, ask-user, or non-pending chains.
+
 ## Next Recommended Slice
 
-Add explicit chain-level approval/rejection convenience controls for the latest
-pending retry approval, while preserving the same underlying approval mutation
-boundary.
+Add a chain-level command that can propose the next pending approval after a
+reviewed `propose_retry` outcome, while preserving the explicit approval and
+one-step advancement boundaries.
