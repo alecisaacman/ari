@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -169,7 +170,10 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
                             "replace": "ready",
                         }
                     ],
-                    "verifyCommand": "python -m pytest operator_check_test.py -q",
+                    "verifyCommand": (
+                        f"{shlex.quote(sys.executable)} "
+                        "-m pytest operator_check_test.py -q"
+                    ),
                     "workingDirectory": ".",
                     "approvalRequired": False,
                 },
@@ -182,7 +186,7 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert approved.json()["action"]["status"] == "approved"
 
         ran = client.post(f"/execution/actions/{action_id}/run")
-        assert ran.status_code == 200
+        assert ran.status_code == 200, ran.text
         assert ran.json()["action"]["status"] == "verified"
         assert ran.json()["command_run"]["success"] is True
         assert ran.json()["mutations"][0]["path"] == "operator_target.py"

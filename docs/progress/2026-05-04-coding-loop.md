@@ -4,7 +4,7 @@ Date: 2026-05-04
 
 ## Position
 
-Overall ARI build estimate: 8.2/10.
+Overall ARI build estimate: 8.5/10.
 
 This slice upgrades the existing one-step coding loop seam. It does not add broad
 autonomy, approval mutation, arbitrary shell access, or multi-step execution.
@@ -49,6 +49,13 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   pending retry-approval artifact. The new approval links back to the prior
   retry approval and prior retry execution run, while the prior approval records
   the next approval id to prevent silent duplication.
+- Coding-loop lifecycle results are now persisted durably in the coordination
+  SQLite store as compact records. The records preserve non-executing outcomes,
+  preview and execution-run links, retry proposals, retry approval status,
+  retry execution summaries, post-run reviews, and next-approval lineage without
+  duplicating full `ExecutionRun` payloads.
+- Coding-loop results can now be listed and shown through the existing
+  execution CLI/API inspection family.
 
 ## Boundary
 
@@ -56,10 +63,10 @@ ARI still runs at most one validated action through the existing bounded
 execution path. Multi-step coding loops, repeated retry execution, automatic
 approval, and UI approval controls remain future slices.
 
-Coding-loop results are not persisted in a new store. If execution occurs, the
-existing `ExecutionRun` lifecycle trace remains the durable inspection record.
-If execution does not occur, the returned coding-loop inspection payload is the
-authority explanation for why ARI stopped, asked, or rejected.
+Coding-loop results are persisted as compact lifecycle records. If execution
+occurs, the existing `ExecutionRun` lifecycle trace remains the durable source
+for detailed execution data; coding-loop persistence stores references and
+summaries so inspection does not duplicate the execution trace.
 
 Retry-approval artifacts are boundary records only. They do not grant approval,
 execute the retry, or start a retry loop.
@@ -91,6 +98,6 @@ retry. It only creates the next pending authority artifact.
 
 ## Next Recommended Slice
 
-Add durable coding-loop result persistence so non-executing outcomes, previews,
-reviews, and approval lineage can be inspected without reconstructing them from
-return payloads alone.
+Add a bounded loop-continuation policy that can decide when an inspected
+approval/review chain is eligible to request the next approval item, while still
+requiring explicit authority before any further execution.

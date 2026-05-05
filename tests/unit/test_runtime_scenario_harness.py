@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from ari_core.runtime.scenario_harness import run_playground_goal, run_runtime_scenarios
 
 
@@ -15,7 +14,13 @@ def test_run_runtime_scenarios_executes_default_playground_cases(tmp_path: Path)
 
     assert len(result.scenarios) == 5
     by_name = {scenario.scenario: scenario for scenario in result.scenarios}
-    assert set(by_name) == {"repo_inspect", "note_capture", "plan_only", "codex_loop", "self_improve"}
+    assert set(by_name) == {
+        "repo_inspect",
+        "note_capture",
+        "plan_only",
+        "codex_loop",
+        "self_improve",
+    }
 
     repo_inspect = by_name["repo_inspect"]
     assert repo_inspect.route == "repo_inspect"
@@ -59,7 +64,11 @@ def test_run_runtime_scenarios_executes_default_playground_cases(tmp_path: Path)
 
 def test_run_runtime_scenarios_rejects_unknown_scenario_name(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown scenario name"):
-        run_runtime_scenarios(workspace=tmp_path / "playground", scenario_names=["does-not-exist"], reset_workspace=True)
+        run_runtime_scenarios(
+            workspace=tmp_path / "playground",
+            scenario_names=["does-not-exist"],
+            reset_workspace=True,
+        )
 
 
 def test_run_playground_goal_routes_and_persists_summary(tmp_path: Path) -> None:

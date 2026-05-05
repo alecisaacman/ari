@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
+
 def test_classify_request_routes_self_improvement_goals() -> None:
     from ari_core.runtime.request_router import classify_request
 
@@ -42,14 +43,20 @@ def test_route_goal_request_returns_unified_cli_contract(tmp_path: Path) -> None
     assert "repo" in payload["summary"].lower()
 
 
-def test_main_routes_direct_string_input_to_natural_language_surface(tmp_path: Path, monkeypatch) -> None:
+def test_main_routes_direct_string_input_to_natural_language_surface(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     from ari_core.ari import main
 
     output = StringIO()
     with redirect_stdout(output):
-        exit_code = main(["inspect", "repo", "status"], db_path=tmp_path / "state" / "networking.db")
+        exit_code = main(
+            ["inspect", "repo", "status"],
+            db_path=tmp_path / "state" / "networking.db",
+        )
 
     assert exit_code == 0
     payload = json.loads(output.getvalue())

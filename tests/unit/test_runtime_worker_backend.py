@@ -3,7 +3,11 @@ from __future__ import annotations
 import subprocess
 
 from ari_core.runtime.codex_adapter import CodexAdapter, CodexInvocationResult
-from ari_core.runtime.worker_backend import CommandWorkerBackend, StubWorkerBackend, resolve_worker_backend
+from ari_core.runtime.worker_backend import (
+    CommandWorkerBackend,
+    StubWorkerBackend,
+    resolve_worker_backend,
+)
 
 
 def test_resolve_worker_backend_uses_env_selected_stub(monkeypatch) -> None:

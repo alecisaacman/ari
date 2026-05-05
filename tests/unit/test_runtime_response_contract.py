@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from types import SimpleNamespace
 
+
 def test_build_cli_response_marks_successful_codex_loop_completed() -> None:
     from ari_core.runtime.response_contract import build_cli_response
 
@@ -86,7 +87,10 @@ def test_handle_runtime_codex_loop_emits_unified_contract(monkeypatch) -> None:
 
 
 def test_handle_runtime_self_improve_emits_unified_contract(monkeypatch) -> None:
-    from ari_core.runtime.self_improvement_runner import SelfImprovementRunResult, handle_runtime_self_improve
+    from ari_core.runtime.self_improvement_runner import (
+        SelfImprovementRunResult,
+        handle_runtime_self_improve,
+    )
 
     monkeypatch.setattr(
         "ari_core.runtime.self_improvement_runner.run_self_improvement_loop",
