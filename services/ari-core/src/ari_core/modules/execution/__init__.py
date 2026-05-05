@@ -1,11 +1,13 @@
 """Canonical bounded execution module."""
 
 from .coding_loop import (
+    CodingLoopChainAdvancement,
     CodingLoopContinuationDecision,
     CodingLoopRequest,
     CodingLoopResult,
     CodingLoopRetryApproval,
     CodingLoopRetryExecutionReview,
+    advance_coding_loop_retry_chain,
     approve_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
@@ -61,6 +63,7 @@ __all__ = [
     "ExecutionTool",
     "ExecutionToolRegistry",
     "FailureContext",
+    "CodingLoopChainAdvancement",
     "CodingLoopContinuationDecision",
     "CodingLoopRequest",
     "CodingLoopResult",
@@ -82,6 +85,7 @@ __all__ = [
     "get_execution_tool_registry",
     "approve_coding_loop_retry_approval",
     "approve_stored_coding_loop_retry_approval",
+    "advance_coding_loop_retry_chain",
     "create_coding_loop_retry_approval_from_review",
     "decide_coding_loop_retry_continuation",
     "execute_approved_coding_loop_retry_approval",

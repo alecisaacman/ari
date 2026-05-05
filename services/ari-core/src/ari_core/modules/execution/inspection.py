@@ -9,6 +9,7 @@ from ..coordination.db import get_coordination_entity, list_coordination_entitie
 
 if TYPE_CHECKING:
     from .coding_loop import (
+        CodingLoopChainAdvancement,
         CodingLoopContinuationDecision,
         CodingLoopResult,
         CodingLoopRetryApproval,
@@ -206,6 +207,24 @@ def inspect_coding_loop_chain(
         "next_retry_approval_id": None
         if latest is None
         else latest.get("next_retry_approval_id"),
+    }
+
+
+def inspect_coding_loop_chain_advancement(
+    advancement: CodingLoopChainAdvancement | dict[str, Any],
+) -> dict[str, Any]:
+    payload = advancement if isinstance(advancement, dict) else advancement.to_dict()
+    return {
+        "root_coding_loop_result_id": payload.get("root_coding_loop_result_id"),
+        "prior_terminal_status": payload.get("prior_terminal_status"),
+        "action_taken": payload.get("action_taken"),
+        "reason": payload.get("reason"),
+        "executed_retry_approval_id": payload.get("executed_retry_approval_id"),
+        "retry_execution_run_id": payload.get("retry_execution_run_id"),
+        "refreshed_terminal_status": payload.get("refreshed_terminal_status"),
+        "refreshed_chain": payload.get("refreshed_chain"),
+        "stop_reason": payload.get("stop_reason"),
+        "created_at": payload.get("created_at"),
     }
 
 

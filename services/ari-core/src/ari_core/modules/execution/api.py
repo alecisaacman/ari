@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ...core.paths import DB_PATH
 from .coding_loop import (
+    advance_coding_loop_retry_chain,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
     decide_coding_loop_retry_continuation,
@@ -30,6 +31,7 @@ from .inspection import (
     get_execution_plan_preview,
     get_execution_run,
     inspect_coding_loop_chain,
+    inspect_coding_loop_chain_advancement,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -152,6 +154,26 @@ def handle_api_execution_coding_loops_chain(args, db_path: Path = DB_PATH) -> in
         print(json.dumps({"error": f"Coding-loop result {args.id} not found."}))
         return 1
     print(json.dumps({"chain": chain}))
+    return 0
+
+
+def handle_api_execution_coding_loops_advance(args, db_path: Path = DB_PATH) -> int:
+    try:
+        advancement = advance_coding_loop_retry_chain(
+            args.id,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "advancement": inspect_coding_loop_chain_advancement(advancement),
+            }
+        )
+    )
     return 0
 
 

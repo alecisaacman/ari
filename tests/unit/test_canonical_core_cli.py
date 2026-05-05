@@ -612,6 +612,51 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert second_chain["retry_approvals"][1]["approval_id"] == (
         next_retry_approval["approval_id"]
     )
+
+    approve_next_output = StringIO()
+    with redirect_stdout(approve_next_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "retry-approvals",
+                "approve",
+                "--id",
+                next_retry_approval["approval_id"],
+                "--approved-by",
+                "alec",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+
+    advance_chain_output = StringIO()
+    with redirect_stdout(advance_chain_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "coding-loops",
+                "advance",
+                "--id",
+                second_retry_result.id,
+                "--max-depth",
+                "5",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    advancement = json.loads(advance_chain_output.getvalue())["advancement"]
+    assert advancement["prior_terminal_status"] == (
+        "executable_approved_retry_available"
+    )
+    assert advancement["action_taken"] == "executed_approved_retry"
+    assert advancement["executed_retry_approval_id"] == next_retry_approval["approval_id"]
+    assert advancement["retry_execution_run_id"]
+    assert advancement["refreshed_terminal_status"] == "stopped"
+    assert (execution_root / "loop-second-proof.txt").read_text(
+        encoding="utf-8"
+    ) == "inspected twice"
     assert db_path.exists()
 
 

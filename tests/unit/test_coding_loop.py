@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from ari_core.modules.execution import (
     ModelPlanner,
+    advance_coding_loop_retry_chain,
     approve_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
@@ -1235,6 +1236,156 @@ def test_coding_loop_retry_chain_terminal_statuses(
     rejected_chain = inspect_coding_loop_chain(rejected_result.id, db_path=db_path)
     assert rejected_chain is not None
     assert rejected_chain["terminal_status"] == "rejected"
+
+
+def test_coding_loop_chain_advancement_executes_one_approved_retry(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+    approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+
+    advancement = advance_coding_loop_retry_chain(result.id, db_path=db_path)
+
+    assert advancement.root_coding_loop_result_id == result.id
+    assert advancement.prior_terminal_status == "executable_approved_retry_available"
+    assert advancement.action_taken == "executed_approved_retry"
+    assert advancement.executed_retry_approval_id == result.retry_approval.approval_id
+    assert advancement.retry_execution_run_id is not None
+    assert advancement.refreshed_terminal_status == "stopped"
+    assert advancement.refreshed_chain is not None
+    assert advancement.refreshed_chain["terminal_status"] == "stopped"
+    assert advancement.refreshed_chain["chain_depth"] == 1
+    assert "One approved retry" in str(advancement.stop_reason)
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "right"
+
+    stored = get_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        db_path=db_path,
+    )
+    assert stored is not None
+    assert stored.retry_execution_run_id == advancement.retry_execution_run_id
+
+    repeated = advance_coding_loop_retry_chain(result.id, db_path=db_path)
+    assert repeated.action_taken == "no_action"
+    assert repeated.prior_terminal_status == "stopped"
+    assert repeated.retry_execution_run_id is None
+
+
+def test_coding_loop_chain_advancement_refuses_non_executable_chains(
+    tmp_path: Path,
+) -> None:
+    pending_parent = tmp_path / "pending"
+    pending_parent.mkdir()
+    pending_result, pending_root, db_path = _retry_failure_result(pending_parent)
+    assert pending_result.retry_approval is not None
+    pending = advance_coding_loop_retry_chain(pending_result.id, db_path=db_path)
+    assert pending.action_taken == "no_action"
+    assert pending.prior_terminal_status == "pending_approval"
+    assert pending.retry_execution_run_id is None
+    assert pending_root.joinpath("proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    rejected_parent = tmp_path / "rejected-advance"
+    rejected_parent.mkdir()
+    rejected_result, rejected_root, db_path = _retry_failure_result(rejected_parent)
+    assert rejected_result.retry_approval is not None
+    reject_stored_coding_loop_retry_approval(
+        rejected_result.retry_approval.approval_id,
+        rejected_reason="No retry.",
+        db_path=db_path,
+    )
+    rejected = advance_coding_loop_retry_chain(rejected_result.id, db_path=db_path)
+    assert rejected.action_taken == "no_action"
+    assert rejected.prior_terminal_status == "rejected"
+    assert rejected.retry_execution_run_id is None
+    assert rejected_root.joinpath("proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    stopped_parent = tmp_path / "stopped-advance"
+    stopped_parent.mkdir()
+    stopped_result, stopped_root, db_path = _retry_failure_result(stopped_parent)
+    assert stopped_result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        stopped_result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    execute_approved_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+    stopped = advance_coding_loop_retry_chain(stopped_result.id, db_path=db_path)
+    assert stopped.action_taken == "no_action"
+    assert stopped.prior_terminal_status == "stopped"
+    assert stopped.retry_execution_run_id is None
+    assert stopped_root.joinpath("proof.txt").read_text(encoding="utf-8") == "right"
+
+    unsafe_parent = tmp_path / "unsafe-advance"
+    unsafe_parent.mkdir()
+    unsafe_root = unsafe_parent / "repo"
+    unsafe_root.mkdir()
+    unsafe_result = run_one_step_coding_loop(
+        "run rm -rf .",
+        execution_root=unsafe_root,
+        db_path=unsafe_parent / "state" / "networking.db",
+    )
+    unsafe = advance_coding_loop_retry_chain(
+        unsafe_result.id,
+        db_path=unsafe_parent / "state" / "networking.db",
+    )
+    assert unsafe.action_taken == "no_action"
+    assert unsafe.prior_terminal_status == "unsafe"
+
+    with pytest.raises(ValueError, match="not found"):
+        advance_coding_loop_retry_chain(
+            "coding-loop-result-missing",
+            db_path=db_path,
+        )
+
+
+def test_coding_loop_chain_advancement_refuses_incomplete_traversal(
+    tmp_path: Path,
+) -> None:
+    result, _root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=db_path)
+    next_approval = create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    approve_stored_coding_loop_retry_approval(
+        next_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+
+    advancement = advance_coding_loop_retry_chain(
+        result.id,
+        max_depth=1,
+        db_path=db_path,
+    )
+
+    assert advancement.action_taken == "rejected"
+    assert advancement.prior_terminal_status == "unknown/incomplete"
+    assert advancement.retry_execution_run_id is None
+    refreshed = advancement.refreshed_chain
+    assert refreshed is not None
+    assert refreshed["truncated"] is True
+    latest = get_coding_loop_retry_approval(next_approval.approval_id, db_path=db_path)
+    assert latest is not None
+    assert latest.retry_execution_run_id is None
 
 
 def test_one_step_coding_loop_adds_no_arbitrary_shell_access(tmp_path: Path) -> None:

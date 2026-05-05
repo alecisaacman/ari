@@ -467,6 +467,33 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             proposed_next.json()["retry_approval"]["approval_id"]
         )
 
+        approved_next = client.post(
+            "/execution/coding-loop/retry-approvals/"
+            f"{proposed_next.json()['retry_approval']['approval_id']}/approve",
+            json={"approvedBy": "alec"},
+        )
+        assert approved_next.status_code == 200
+        advance_chain = client.post(
+            f"/execution/coding-loop/results/{second_retry_result.id}/advance"
+        )
+        assert advance_chain.status_code == 200
+        assert advance_chain.json()["advancement"]["prior_terminal_status"] == (
+            "executable_approved_retry_available"
+        )
+        assert advance_chain.json()["advancement"]["action_taken"] == (
+            "executed_approved_retry"
+        )
+        assert advance_chain.json()["advancement"]["executed_retry_approval_id"] == (
+            proposed_next.json()["retry_approval"]["approval_id"]
+        )
+        assert advance_chain.json()["advancement"]["retry_execution_run_id"]
+        assert advance_chain.json()["advancement"]["refreshed_terminal_status"] == (
+            "stopped"
+        )
+        assert (execution_root / "loop-api-second-proof.txt").read_text(
+            encoding="utf-8"
+        ) == "inspected twice through api"
+
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
         assert any(

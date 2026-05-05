@@ -64,6 +64,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   The chain view starts from a root coding-loop result, walks retry approvals
   through prior/next lineage, includes post-run reviews and continuation
   decisions, and reports a terminal chain status without executing anything.
+- Coding-loop retry chains can now be advanced by at most one approved,
+  unexecuted retry approval. Advancement loads the chain, requires the terminal
+  status to be `executable_approved_retry_available`, executes exactly that
+  approved retry through the existing boundary, refreshes the chain, and stops.
 
 ## Boundary
 
@@ -113,8 +117,14 @@ Retry-chain inspection is read-only and bounded by a maximum traversal depth.
 It links to existing `ExecutionRun` and retry-approval records instead of
 duplicating full execution traces.
 
+Chain advancement is bounded and authority-gated. It does not approve pending
+items, execute rejected items, create follow-up approvals, or loop. If the chain
+is pending, rejected, stopped, unsafe, blocked, ask-user, truncated, cyclic, or
+otherwise incomplete, advancement returns a no-action/rejected result without
+execution.
+
 ## Next Recommended Slice
 
-Add bounded multi-approval orchestration controls that can advance an
-inspectable chain one explicitly approved step at a time without collapsing into
-unattended autonomy.
+Add explicit chain-level approval/rejection convenience controls for the latest
+pending retry approval, while preserving the same underlying approval mutation
+boundary.

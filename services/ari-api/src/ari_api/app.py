@@ -12,6 +12,7 @@ from ari_core.modules.coordination.db import (
     put_coordination_entity,
 )
 from ari_core.modules.execution.coding_loop import (
+    advance_coding_loop_retry_chain,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
     decide_coding_loop_retry_continuation,
@@ -43,6 +44,7 @@ from ari_core.modules.execution.inspection import (
     get_execution_plan_preview,
     get_execution_run,
     inspect_coding_loop_chain,
+    inspect_coding_loop_chain_advancement,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -453,6 +455,22 @@ def create_app() -> FastAPI:
                 detail=f"Coding-loop result {result_id} not found.",
             )
         return {"chain": chain}
+
+    @app.post("/execution/coding-loop/results/{result_id}/advance")
+    def execution_advance_coding_loop_result_chain(
+        result_id: str,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "advancement": inspect_coding_loop_chain_advancement(
+                    advance_coding_loop_retry_chain(
+                        result_id,
+                        max_depth=max_depth,
+                    )
+                )
+            }
+        )
 
     @app.get("/execution/coding-loop/retry-approvals")
     def execution_retry_approvals(

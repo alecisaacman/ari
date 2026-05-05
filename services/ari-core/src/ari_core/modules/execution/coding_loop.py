@@ -56,6 +56,12 @@ CodingLoopContinuationStatus = Literal[
     "duplicate_exists",
 ]
 
+CodingLoopChainAdvancementAction = Literal[
+    "executed_approved_retry",
+    "no_action",
+    "rejected",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class CodingLoopRequest:
@@ -190,6 +196,23 @@ class CodingLoopContinuationDecision:
     suggested_next_goal: str | None
     suggested_next_action: dict[str, Any] | None
     approval_required: bool | None
+    created_at: str = field(default_factory=_now_iso)
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class CodingLoopChainAdvancement:
+    root_coding_loop_result_id: str
+    prior_terminal_status: str
+    action_taken: CodingLoopChainAdvancementAction
+    reason: str
+    executed_retry_approval_id: str | None
+    retry_execution_run_id: str | None
+    refreshed_terminal_status: str | None
+    refreshed_chain: dict[str, Any] | None
+    stop_reason: str | None
     created_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict[str, object]:
@@ -451,6 +474,85 @@ def execute_approved_coding_loop_retry_approval(
     return stored, execution_payload
 
 
+def advance_coding_loop_retry_chain(
+    result_id: str,
+    *,
+    max_depth: int = 10,
+    db_path: Path = DB_PATH,
+) -> CodingLoopChainAdvancement:
+    from .inspection import inspect_coding_loop_chain
+
+    prior_chain = inspect_coding_loop_chain(
+        result_id,
+        max_depth=max_depth,
+        db_path=db_path,
+    )
+    if prior_chain is None:
+        raise ValueError(f"Coding-loop result {result_id} not found.")
+
+    prior_status = str(prior_chain.get("terminal_status") or "unknown/incomplete")
+    if prior_chain.get("truncated") is True:
+        return _chain_advancement_result(
+            result_id,
+            prior_status,
+            "rejected",
+            "Coding-loop retry chain traversal was truncated.",
+            refreshed_chain=prior_chain,
+        )
+    if prior_chain.get("cycle_detected") is True:
+        return _chain_advancement_result(
+            result_id,
+            prior_status,
+            "rejected",
+            "Coding-loop retry chain traversal detected a cycle.",
+            refreshed_chain=prior_chain,
+        )
+    if prior_status != "executable_approved_retry_available":
+        return _chain_advancement_result(
+            result_id,
+            prior_status,
+            "no_action",
+            f"Coding-loop retry chain is not executable: {prior_status}.",
+            refreshed_chain=prior_chain,
+        )
+
+    approval_id = _string_or_none(prior_chain.get("latest_retry_approval_id"))
+    if approval_id is None:
+        return _chain_advancement_result(
+            result_id,
+            prior_status,
+            "rejected",
+            "Coding-loop retry chain has no latest retry approval to execute.",
+            refreshed_chain=prior_chain,
+        )
+
+    approval, execution_run = execute_approved_coding_loop_retry_approval(
+        approval_id,
+        db_path=db_path,
+    )
+    refreshed_chain = inspect_coding_loop_chain(
+        result_id,
+        max_depth=max_depth,
+        db_path=db_path,
+    )
+    refreshed_status = (
+        None
+        if refreshed_chain is None
+        else _string_or_none(refreshed_chain.get("terminal_status"))
+    )
+    return CodingLoopChainAdvancement(
+        root_coding_loop_result_id=result_id,
+        prior_terminal_status=prior_status,
+        action_taken="executed_approved_retry",
+        reason="Executed one approved retry approval and stopped.",
+        executed_retry_approval_id=approval.approval_id,
+        retry_execution_run_id=_string_or_none(execution_run.get("id")),
+        refreshed_terminal_status=refreshed_status,
+        refreshed_chain=refreshed_chain,
+        stop_reason="One approved retry was executed; chain advancement stops here.",
+    )
+
+
 def review_coding_loop_retry_execution(
     approval_id: str,
     *,
@@ -702,6 +804,32 @@ def _continuation_status_from_review(
     if status in {"not_executed", "stop", "blocked", "unsafe", "ask_user"}:
         return status
     return "ask_user"
+
+
+def _chain_advancement_result(
+    result_id: str,
+    prior_status: str,
+    action_taken: CodingLoopChainAdvancementAction,
+    reason: str,
+    *,
+    refreshed_chain: dict[str, Any] | None,
+) -> CodingLoopChainAdvancement:
+    refreshed_status = (
+        None
+        if refreshed_chain is None
+        else _string_or_none(refreshed_chain.get("terminal_status"))
+    )
+    return CodingLoopChainAdvancement(
+        root_coding_loop_result_id=result_id,
+        prior_terminal_status=prior_status,
+        action_taken=action_taken,
+        reason=reason,
+        executed_retry_approval_id=None,
+        retry_execution_run_id=None,
+        refreshed_terminal_status=refreshed_status,
+        refreshed_chain=refreshed_chain,
+        stop_reason=reason,
+    )
 
 
 def refresh_coding_loop_result_links(
