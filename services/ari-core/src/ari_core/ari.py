@@ -16,6 +16,7 @@ from .modules.execution.api import (
     handle_api_execution_action_list,
     handle_api_execution_action_run,
     handle_api_execution_coding_loop,
+    handle_api_execution_coding_loops_chain,
     handle_api_execution_coding_loops_list,
     handle_api_execution_coding_loops_show,
     handle_api_execution_command,
@@ -940,6 +941,17 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "show", help="Show a coding-loop result."
     )
     coding_loops_show_parser.add_argument("--id", required=True, help="Coding-loop result id.")
+    coding_loops_chain_parser = coding_loops_subparsers.add_parser(
+        "chain",
+        help="Show a bounded retry approval chain for a coding-loop result.",
+    )
+    coding_loops_chain_parser.add_argument("--id", required=True, help="Coding-loop result id.")
+    coding_loops_chain_parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=10,
+        help="Maximum retry approvals to traverse.",
+    )
 
     plans_parser = execution_subparsers.add_parser(
         "plans", help="Inspect persisted execution plan previews."
@@ -1546,6 +1558,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_execution_coding_loops_command == "show"
         ):
             return handle_api_execution_coding_loops_show(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "coding-loops"
+            and args.api_execution_coding_loops_command == "chain"
+        ):
+            return handle_api_execution_coding_loops_chain(args, db_path=db_path)
         if (
             args.api_command == "execution"
             and args.api_execution_command == "plans"

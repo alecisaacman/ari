@@ -265,6 +265,16 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             coding_loop_payload["execution_run_id"]
         )
 
+        coding_loop_chain = client.get(
+            f"/execution/coding-loop/results/{coding_loop_payload['id']}/chain"
+        )
+        assert coding_loop_chain.status_code == 200
+        assert coding_loop_chain.json()["chain"]["root_coding_loop_result_id"] == (
+            coding_loop_payload["id"]
+        )
+        assert coding_loop_chain.json()["chain"]["terminal_status"] == "stopped"
+        assert coding_loop_chain.json()["chain"]["chain_depth"] == 0
+
         unsafe_loop = client.post(
             "/execution/coding-loop",
             json={
@@ -443,6 +453,18 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         )
         assert shown_second_result.json()["coding_loop"]["post_run_review"]["status"] == (
             "propose_retry"
+        )
+        second_chain = client.get(
+            f"/execution/coding-loop/results/{second_retry_result.id}/chain"
+        )
+        assert second_chain.status_code == 200
+        assert second_chain.json()["chain"]["terminal_status"] == "pending_approval"
+        assert second_chain.json()["chain"]["chain_depth"] == 2
+        assert second_chain.json()["chain"]["retry_approvals"][0]["continuation"][
+            "status"
+        ] == "duplicate_exists"
+        assert second_chain.json()["chain"]["retry_approvals"][1]["approval_id"] == (
+            proposed_next.json()["retry_approval"]["approval_id"]
         )
 
         runs = client.get("/execution/runs")

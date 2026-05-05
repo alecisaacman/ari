@@ -60,6 +60,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   policy decides whether a review is eligible to create exactly one pending
   follow-up approval, or whether ARI should stop, block, ask, mark unsafe,
   report not-executed, or reject a duplicate continuation.
+- Coding-loop retry approval chains can now be inspected as one bounded story.
+  The chain view starts from a root coding-loop result, walks retry approvals
+  through prior/next lineage, includes post-run reviews and continuation
+  decisions, and reports a terminal chain status without executing anything.
 
 ## Boundary
 
@@ -105,8 +109,12 @@ approve, or retry. It only makes the next-approval eligibility decision typed
 and visible before the existing propose-next mutation is allowed to create a
 single pending approval artifact.
 
+Retry-chain inspection is read-only and bounded by a maximum traversal depth.
+It links to existing `ExecutionRun` and retry-approval records instead of
+duplicating full execution traces.
+
 ## Next Recommended Slice
 
-Add bounded multi-approval orchestration that can present a chain of pending
-approval items as one inspectable run story, while still requiring explicit
-approval before each execution step.
+Add bounded multi-approval orchestration controls that can advance an
+inspectable chain one explicitly approved step at a time without collapsing into
+unattended autonomy.

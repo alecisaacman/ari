@@ -24,6 +24,7 @@ from ari_core.modules.execution import (
 from ari_core.modules.execution.inspection import (
     get_coding_loop_result,
     get_execution_run,
+    inspect_coding_loop_chain,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -1126,6 +1127,114 @@ def test_coding_loop_result_tracks_retry_approval_review_and_lineage(
     assert persisted_after_next["next_retry_approval_id"] == next_approval.approval_id
     assert persisted_after_next["suggested_next_goal"] == "write file proof.txt with right\n"
     assert persisted_after_next["retry_execution_status"] == "exhausted"
+
+
+def test_coding_loop_retry_chain_inspection_reconstructs_lineage(
+    tmp_path: Path,
+) -> None:
+    result, _root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    pending_chain = inspect_coding_loop_chain(result.id, db_path=db_path)
+    assert pending_chain is not None
+    assert pending_chain["root_coding_loop_result_id"] == result.id
+    assert pending_chain["original_goal"] == "Create a proof file"
+    assert pending_chain["initial_status"] == "retryable_failure"
+    assert pending_chain["initial_execution_run_id"] == result.execution_run_id
+    assert pending_chain["terminal_status"] == "pending_approval"
+    assert pending_chain["chain_depth"] == 1
+    assert pending_chain["retry_approvals"][0]["approval_status"] == "pending"
+    assert pending_chain["retry_approvals"][0]["post_run_review"]["status"] == (
+        "not_executed"
+    )
+    assert pending_chain["retry_approvals"][0]["continuation"]["status"] == (
+        "not_executed"
+    )
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    approved_chain = inspect_coding_loop_chain(result.id, db_path=db_path)
+    assert approved_chain is not None
+    assert approved_chain["terminal_status"] == "executable_approved_retry_available"
+    assert approved_chain["retry_approvals"][0]["approval_status"] == "approved"
+
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=db_path)
+    next_approval = create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+
+    chain = inspect_coding_loop_chain(result.id, db_path=db_path)
+    assert chain is not None
+    assert chain["terminal_status"] == "pending_approval"
+    assert chain["chain_depth"] == 2
+    assert chain["truncated"] is False
+    assert chain["cycle_detected"] is False
+    assert [item["approval_id"] for item in chain["retry_approvals"]] == [
+        reviewed_failed_retry.approval_id,
+        next_approval.approval_id,
+    ]
+    first = chain["retry_approvals"][0]
+    second = chain["retry_approvals"][1]
+    assert first["retry_execution_run_id"] == result.execution_run_id
+    assert first["retry_execution_status"] == "exhausted"
+    assert first["retry_execution_reason"] == (
+        "Retryable execution failed until max_cycles was exhausted."
+    )
+    assert first["post_run_review"]["status"] == "propose_retry"
+    assert first["continuation"]["status"] == "duplicate_exists"
+    assert first["next_retry_approval_id"] == next_approval.approval_id
+    assert second["approval_status"] == "pending"
+    assert second["post_run_review"]["status"] == "not_executed"
+    assert chain["next_retry_approval_id"] is None
+
+    shallow = inspect_coding_loop_chain(result.id, max_depth=1, db_path=db_path)
+    assert shallow is not None
+    assert shallow["chain_depth"] == 1
+    assert shallow["truncated"] is True
+    assert shallow["terminal_status"] == "unknown/incomplete"
+
+
+def test_coding_loop_retry_chain_terminal_statuses(
+    tmp_path: Path,
+) -> None:
+    stopped_parent = tmp_path / "stopped"
+    stopped_parent.mkdir()
+    stopped_result, _root, db_path = _retry_failure_result(stopped_parent)
+    assert stopped_result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        stopped_result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    execute_approved_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+    stopped_chain = inspect_coding_loop_chain(stopped_result.id, db_path=db_path)
+    assert stopped_chain is not None
+    assert stopped_chain["terminal_status"] == "stopped"
+    assert stopped_chain["retry_approvals"][0]["post_run_review"]["status"] == "stop"
+
+    rejected_parent = tmp_path / "rejected"
+    rejected_parent.mkdir()
+    rejected_result, _root, db_path = _retry_failure_result(rejected_parent)
+    assert rejected_result.retry_approval is not None
+    reject_stored_coding_loop_retry_approval(
+        rejected_result.retry_approval.approval_id,
+        rejected_reason="No retry.",
+        db_path=db_path,
+    )
+    rejected_chain = inspect_coding_loop_chain(rejected_result.id, db_path=db_path)
+    assert rejected_chain is not None
+    assert rejected_chain["terminal_status"] == "rejected"
 
 
 def test_one_step_coding_loop_adds_no_arbitrary_shell_access(tmp_path: Path) -> None:

@@ -100,6 +100,115 @@ def get_coding_loop_result(
     return _decode_coding_loop_result_row(row)
 
 
+def inspect_coding_loop_chain(
+    result_id: str,
+    *,
+    max_depth: int = 10,
+    db_path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    root = get_coding_loop_result(result_id, db_path=db_path)
+    if root is None:
+        return None
+
+    from .coding_loop import (
+        decide_coding_loop_retry_continuation,
+        get_coding_loop_retry_approval,
+        review_coding_loop_retry_execution,
+    )
+
+    safe_max_depth = max(1, max_depth)
+    approvals: list[dict[str, Any]] = []
+    visited: set[str] = set()
+    truncated = False
+    cycle_detected = False
+    current_approval_id = _string_or_none(root.get("retry_approval_id"))
+
+    while current_approval_id is not None:
+        if current_approval_id in visited:
+            cycle_detected = True
+            break
+        if len(approvals) >= safe_max_depth:
+            truncated = True
+            break
+        visited.add(current_approval_id)
+
+        approval = get_coding_loop_retry_approval(current_approval_id, db_path=db_path)
+        if approval is None:
+            approvals.append(
+                {
+                    "approval_id": current_approval_id,
+                    "missing": True,
+                    "retry_approval": None,
+                    "post_run_review": None,
+                    "continuation": None,
+                    "next_retry_approval_id": None,
+                }
+            )
+            break
+
+        approval_payload = inspect_coding_loop_retry_approval(approval)
+        review_payload = None
+        continuation_payload = None
+        try:
+            review_payload = inspect_coding_loop_retry_execution_review(
+                review_coding_loop_retry_execution(current_approval_id, db_path=db_path)
+            )
+            continuation_payload = inspect_coding_loop_continuation_decision(
+                decide_coding_loop_retry_continuation(
+                    current_approval_id,
+                    db_path=db_path,
+                )
+            )
+        except ValueError:
+            review_payload = None
+            continuation_payload = None
+
+        approvals.append(
+            {
+                "approval_id": current_approval_id,
+                "missing": False,
+                "retry_approval": approval_payload,
+                "approval_status": approval_payload.get("approval_status"),
+                "retry_execution_run_id": approval_payload.get("retry_execution_run_id"),
+                "retry_execution_status": approval_payload.get("retry_execution_status"),
+                "retry_execution_reason": approval_payload.get("retry_execution_reason"),
+                "post_run_review": review_payload,
+                "continuation": continuation_payload,
+                "next_retry_approval_id": approval_payload.get("next_retry_approval_id"),
+                "created_at": approval_payload.get("created_at"),
+                "updated_at": approval_payload.get("updated_at"),
+            }
+        )
+        current_approval_id = _string_or_none(approval_payload.get("next_retry_approval_id"))
+
+    terminal_status = _chain_terminal_status(
+        root,
+        approvals,
+        truncated=truncated,
+        cycle_detected=cycle_detected,
+    )
+    latest = approvals[-1] if approvals else None
+    return {
+        "root_coding_loop_result_id": root["id"],
+        "original_goal": root["original_goal"],
+        "initial_status": root["status"],
+        "initial_reason": root["reason"],
+        "initial_execution_run_id": root["execution_run_id"],
+        "retry_approvals": approvals,
+        "terminal_status": terminal_status,
+        "chain_depth": len(approvals),
+        "max_depth": safe_max_depth,
+        "truncated": truncated,
+        "cycle_detected": cycle_detected,
+        "created_at": root["created_at"],
+        "updated_at": _latest_chain_timestamp(root, approvals),
+        "latest_retry_approval_id": None if latest is None else latest.get("approval_id"),
+        "next_retry_approval_id": None
+        if latest is None
+        else latest.get("next_retry_approval_id"),
+    }
+
+
 def inspect_coding_loop_result(
     result: CodingLoopResult | dict[str, Any],
 ) -> dict[str, Any]:
@@ -280,6 +389,65 @@ def _decode_coding_loop_result_row(row: Any) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def _chain_terminal_status(
+    root: dict[str, Any],
+    approvals: list[dict[str, Any]],
+    *,
+    truncated: bool,
+    cycle_detected: bool,
+) -> str:
+    if truncated or cycle_detected:
+        return "unknown/incomplete"
+    if not approvals:
+        root_status = str(root.get("status") or "")
+        if root_status == "success":
+            return "stopped"
+        if root_status in {"blocked", "unsafe", "ask_user"}:
+            return root_status
+        if root_status == "requires_approval":
+            return "pending_approval"
+        return "unknown/incomplete"
+
+    latest = approvals[-1]
+    if latest.get("missing") is True:
+        return "unknown/incomplete"
+
+    approval_status = str(latest.get("approval_status") or "")
+    retry_execution_run_id = _string_or_none(latest.get("retry_execution_run_id"))
+    if approval_status == "pending":
+        return "pending_approval"
+    if approval_status == "rejected":
+        return "rejected"
+    if approval_status == "approved" and retry_execution_run_id is None:
+        return "executable_approved_retry_available"
+
+    review = latest.get("post_run_review")
+    review_status = str(review.get("status") or "") if isinstance(review, dict) else ""
+    if review_status == "stop":
+        return "stopped"
+    if review_status in {"blocked", "unsafe", "ask_user"}:
+        return review_status
+    if review_status == "propose_retry":
+        return "unknown/incomplete"
+    return "unknown/incomplete"
+
+
+def _latest_chain_timestamp(
+    root: dict[str, Any],
+    approvals: list[dict[str, Any]],
+) -> str | None:
+    timestamps = [
+        value
+        for value in (
+            root.get("updated_at"),
+            *[approval.get("updated_at") for approval in approvals],
+            *[approval.get("created_at") for approval in approvals],
+        )
+        if isinstance(value, str)
+    ]
+    return max(timestamps) if timestamps else None
 
 
 def _json_list(raw_value: str) -> list[dict[str, Any]]:

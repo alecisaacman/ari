@@ -29,6 +29,7 @@ from .inspection import (
     get_coding_loop_result,
     get_execution_plan_preview,
     get_execution_run,
+    inspect_coding_loop_chain,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -138,6 +139,19 @@ def handle_api_execution_coding_loops_show(args, db_path: Path = DB_PATH) -> int
         print(json.dumps({"error": f"Coding-loop result {args.id} not found."}))
         return 1
     print(json.dumps({"coding_loop": result}))
+    return 0
+
+
+def handle_api_execution_coding_loops_chain(args, db_path: Path = DB_PATH) -> int:
+    chain = inspect_coding_loop_chain(
+        args.id,
+        max_depth=args.max_depth,
+        db_path=db_path,
+    )
+    if chain is None:
+        print(json.dumps({"error": f"Coding-loop result {args.id} not found."}))
+        return 1
+    print(json.dumps({"chain": chain}))
     return 0
 
 

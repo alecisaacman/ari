@@ -326,6 +326,18 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert shown_coding_loop["id"] == coding_loop["id"]
     assert shown_coding_loop["status"] == "success"
 
+    coding_loop_chain_output = StringIO()
+    with redirect_stdout(coding_loop_chain_output):
+        exit_code = main(
+            ["api", "execution", "coding-loops", "chain", "--id", coding_loop["id"]],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    coding_loop_chain = json.loads(coding_loop_chain_output.getvalue())["chain"]
+    assert coding_loop_chain["root_coding_loop_result_id"] == coding_loop["id"]
+    assert coding_loop_chain["terminal_status"] == "stopped"
+    assert coding_loop_chain["chain_depth"] == 0
+
     unsafe_loop_output = StringIO()
     with redirect_stdout(unsafe_loop_output):
         exit_code = main(
@@ -574,6 +586,32 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
         next_retry_approval["approval_id"]
     )
     assert shown_second_result["post_run_review"]["status"] == "propose_retry"
+
+    second_chain_output = StringIO()
+    with redirect_stdout(second_chain_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "coding-loops",
+                "chain",
+                "--id",
+                second_retry_result.id,
+                "--max-depth",
+                "5",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    second_chain = json.loads(second_chain_output.getvalue())["chain"]
+    assert second_chain["terminal_status"] == "pending_approval"
+    assert second_chain["chain_depth"] == 2
+    assert second_chain["retry_approvals"][0]["continuation"]["status"] == (
+        "duplicate_exists"
+    )
+    assert second_chain["retry_approvals"][1]["approval_id"] == (
+        next_retry_approval["approval_id"]
+    )
     assert db_path.exists()
 
 
