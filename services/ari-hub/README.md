@@ -5,9 +5,11 @@ ARI v1 is the private local-first ARI runtime. ACE is the browser, phone, voice,
 ## Current ACE dashboard shell
 
 The default home page is now the first minimal ACE read-only dashboard shell.
-It is static and diagnostic: it displays ARI doctrine, skill status, readiness
-surfaces, pending authority surfaces, coding-loop chain surfaces, memory
-surfaces, self-documentation surfaces, and system-health gaps.
+It reads the ARI-owned `/overview` read model when `ari-api` is available and
+falls back to a clearly labeled static shell when it is not. It displays ARI
+doctrine, skill status, readiness surfaces, pending authority surfaces,
+coding-loop chain surfaces, memory surfaces, self-documentation surfaces, and
+system-health gaps.
 
 The shell does not approve, reject, execute, advance chains, mutate memory,
 create skills, call external services, or own independent state. Future controls

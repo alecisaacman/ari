@@ -682,6 +682,21 @@ button {
   line-height: 1.65;
 }
 
+.ace-readonly-warning,
+.ace-readonly-empty {
+  margin: 14px 0 0;
+  color: #7f1d1d;
+  line-height: 1.55;
+}
+
+.ace-readonly-warning {
+  max-width: 78ch;
+  padding: 10px 12px;
+  border: 1px solid rgba(127, 29, 29, 0.12);
+  border-radius: 8px;
+  background: rgba(254, 226, 226, 0.58);
+}
+
 .ace-readonly-authority {
   align-self: stretch;
   display: grid;

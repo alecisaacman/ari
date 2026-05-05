@@ -26,7 +26,8 @@
 - read-only skill-readiness evaluator for catalog promotion gates
 - read-only missing-skill proposal generation for bounded future skill slices
 - ARI-owned read-only overview model exposed through CLI and API inspection
-- first ACE read-only dashboard shell in `services/ari-hub`
+- first ACE read-only dashboard shell in `services/ari-hub`, backed by the
+  ARI-owned overview model when available
 
 ## Still evolving
 - autonomous coding loop
