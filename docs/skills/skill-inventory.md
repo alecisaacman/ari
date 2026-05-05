@@ -114,3 +114,6 @@ canonical brain, not become a coding-loop shell.
 Do not let imported agents become competing brains. ARI may wrap tools and
 skills, but ARI owns goal interpretation, authority, memory, execution policy,
 verification, inspection, explanation, and learning.
+
+Read-only ACE dashboard work is governed by
+`docs/ace/read-only-dashboard-contract.md`.

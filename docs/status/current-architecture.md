@@ -33,3 +33,5 @@ Native skills must follow `docs/skills/ari-native-skill-contract.md`: they plug
 into ARI's shared memory, authority, validation, execution, verification,
 inspection, explanation, and learning spine rather than becoming separate
 brains. Current skill status is tracked in `docs/skills/skill-inventory.md`.
+
+ACE read-only dashboard work must follow `docs/ace/read-only-dashboard-contract.md`.

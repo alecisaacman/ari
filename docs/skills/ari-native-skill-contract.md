@@ -175,3 +175,5 @@ into ARI; they do not become ARI.
 
 The first static manifest instance is `docs/skills/coding-loop-skill.md`.
 The current docs-only skill inventory is `docs/skills/skill-inventory.md`.
+ACE read-only dashboard consumption is bounded by
+`docs/ace/read-only-dashboard-contract.md`.
