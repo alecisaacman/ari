@@ -169,7 +169,7 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
                             "replace": "ready",
                         }
                     ],
-                    "verifyCommand": f"{sys.executable} -m pytest operator_check_test.py -q",
+                    "verifyCommand": "python -m pytest operator_check_test.py -q",
                     "workingDirectory": ".",
                     "approvalRequired": False,
                 },
