@@ -114,11 +114,11 @@ claim later.
 
 ## First Implementation Boundary
 
-The first implementation should only:
+The first implementation now only:
 
 - read a commit range or recent build summary
 - generate a content seed
-- store or print the seed
+- return a JSON-serializable seed object
 - avoid recording
 - avoid publishing
 - avoid external uploads
@@ -155,14 +155,14 @@ source of truth.
 
 ## Implementation Readiness Checklist
 
-- [ ] Source data available.
-- [ ] Redaction rules defined.
-- [ ] Seed schema defined.
+- [x] Source data available.
+- [x] Redaction rules defined.
+- [x] Seed schema defined.
 - [ ] Storage target decided.
-- [ ] Verification rules defined.
-- [ ] Tests planned.
-- [ ] No external upload path.
-- [ ] Approval boundaries defined.
+- [x] Verification rules defined.
+- [x] Tests planned.
+- [x] No external upload path.
+- [x] Approval boundaries defined.
 
 ## Anti-Patterns
 

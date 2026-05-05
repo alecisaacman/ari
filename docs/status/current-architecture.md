@@ -19,6 +19,7 @@
 - compact lifecycle memory for bounded coding-loop chains
 - docs-only skill design for future self-documentation/content creation
 - docs-only readiness checklist for self-documentation content seeds
+- read-only self-documentation content seed generator from git commit ranges
 
 ## Still evolving
 - autonomous coding loop

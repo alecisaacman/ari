@@ -21,8 +21,8 @@ capabilities.
 - `skill_id`: `ari.native.self_documentation`
 - Name: Self-Documentation
 - Lifecycle status: candidate / designed
-- Current implementation status: not implemented
-- Active today: no
+- Current implementation status: Stage 1 prototype
+- Active today: no runtime registry entry; core content seed generation exists
 - Relationship to coding-loop lifecycle memory: future inputs should include
   compact coding-loop chain lifecycle summaries, execution-run memories, docs,
   commits, and test results.
@@ -68,7 +68,7 @@ The skill must reject or require clarification for goals that ask it to:
 
 - Capability: turn recent commits, tests, docs, execution runs, coding-loop
   lifecycle memory, and user-approved framing into content seeds.
-- Execution: read-only inspection and summary generation only.
+- Execution: read-only local git inspection and summary generation only.
 - Output examples: build-event summary, content seed, factual narrative outline.
 
 ### Stage 2: Demo Script And Shot-List Generation
@@ -263,3 +263,7 @@ The first implementation should prove:
 
 Stage 1 readiness is defined in
 `docs/skills/self-documentation-stage-1-readiness.md`.
+
+The first Stage 1 implementation provides a local, deterministic `ContentSeed`
+generator from a git commit range. It does not persist, record, edit, export,
+publish, upload, or call external services.
