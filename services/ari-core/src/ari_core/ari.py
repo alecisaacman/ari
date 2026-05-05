@@ -390,8 +390,8 @@ def _handle_api_skills_propose(args: argparse.Namespace) -> int:
     return 0
 
 
-def _handle_api_overview_show(args: argparse.Namespace) -> int:
-    overview = get_ari_operating_overview()
+def _handle_api_overview_show(args: argparse.Namespace, *, db_path: Path = DB_PATH) -> int:
+    overview = get_ari_operating_overview(db_path=db_path)
     payload = {"overview": overview.to_dict()}
     if args.as_json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -1800,7 +1800,7 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
 
     if args.command == "api":
         if args.api_command == "overview" and args.api_overview_command == "show":
-            return _handle_api_overview_show(args)
+            return _handle_api_overview_show(args, db_path=db_path)
         if (
             args.api_command == "self-doc"
             and args.api_self_doc_command == "seed"

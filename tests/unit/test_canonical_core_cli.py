@@ -345,6 +345,12 @@ def test_canonical_core_cli_overview_show_json(tmp_path: Path, monkeypatch) -> N
     assert overview["prototype_skill_count"] == 1
     assert overview["candidate_skill_count"] >= 8
     assert overview["active_skills"][0]["skill_id"] == "ari.native.coding_loop"
+    assert overview["pending_approval_count"]["status"] == "live"
+    assert overview["recent_coding_loop_count"]["status"] == "live"
+    assert overview["recent_lifecycle_lesson_count"]["status"] == "live"
+    assert overview["counts_generated_from_live_sources"] is True
+    assert overview["unavailable_counts"] == []
+    assert overview["partial_counts_reason"] is None
     assert "ACE may display" in overview["authority_warning"]
 
 

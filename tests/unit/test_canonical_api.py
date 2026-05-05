@@ -69,6 +69,12 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert overview_payload["prototype_skill_count"] == 1
         assert overview_payload["candidate_skill_count"] >= 8
         assert overview_payload["active_skills"][0]["skill_id"] == "ari.native.coding_loop"
+        assert overview_payload["pending_approval_count"]["status"] == "live"
+        assert overview_payload["recent_coding_loop_count"]["status"] == "live"
+        assert overview_payload["recent_lifecycle_lesson_count"]["status"] == "live"
+        assert overview_payload["counts_generated_from_live_sources"] is True
+        assert overview_payload["unavailable_counts"] == []
+        assert overview_payload["partial_counts_reason"] is None
         assert "ACE may display" in overview_payload["authority_warning"]
 
         memory = client.post(
