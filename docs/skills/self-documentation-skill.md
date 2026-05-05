@@ -260,3 +260,6 @@ The first implementation should prove:
 - output is inspectable
 - memory effects are compact
 - no ACE-owned truth layer is introduced
+
+Stage 1 readiness is defined in
+`docs/skills/self-documentation-stage-1-readiness.md`.

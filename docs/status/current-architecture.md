@@ -18,6 +18,7 @@
 - execution layer for bounded coding actions
 - compact lifecycle memory for bounded coding-loop chains
 - docs-only skill design for future self-documentation/content creation
+- docs-only readiness checklist for self-documentation content seeds
 
 ## Still evolving
 - autonomous coding loop

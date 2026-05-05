@@ -58,6 +58,9 @@ runtime-loadable.
 | `ari.native.planner_quality_goal_decomposition` | candidate / not implemented | Break broad goals into bounded skill invocations and safe next actions. | Approval before invoking skills with side effects or escalating to external models. | Bounded decomposition records, skill-fit rationale, rejected alternatives, and stop conditions. |
 | `ari.native.self_documentation` | designed / not implemented | Convert ARI activity into factual build summaries, content seeds, demo scripts, shot lists, voiceover drafts, and future approval-gated media packages. | Approval before recording, exporting public-facing media, publishing, using external services, or including sensitive data. | Commit/test/doc/run evidence, current capability checks, no-secret/no-private-data review, and no false-claim validation. |
 
+Stage 1 readiness for `ari.native.self_documentation` is tracked in
+`docs/skills/self-documentation-stage-1-readiness.md`.
+
 ## Imported Or Wrapped Skills
 
 No imported or open-source skills are active yet.
