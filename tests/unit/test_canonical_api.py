@@ -344,6 +344,14 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             encoding="utf-8"
         ) == "inspected through api"
 
+        retry_review = client.get(
+            f"/execution/coding-loop/retry-approvals/{retry_approval_id}/review"
+        )
+        assert retry_review.status_code == 200
+        assert retry_review.json()["review"]["status"] == "stop"
+        assert retry_review.json()["review"]["retry_execution_status"] == "completed"
+        assert retry_review.json()["review"]["approval_required"] is False
+
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
         assert any(

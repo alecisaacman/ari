@@ -8,6 +8,7 @@ from .coding_loop import (
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
     reject_stored_coding_loop_retry_approval,
+    review_coding_loop_retry_execution,
     run_one_step_coding_loop,
 )
 from .controller import build_repo_context, plan_execution_goal, run_execution_goal
@@ -27,6 +28,7 @@ from .inspection import (
     get_execution_run,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
+    inspect_coding_loop_retry_execution_review,
     list_execution_plan_previews,
     list_execution_runs,
 )
@@ -181,6 +183,22 @@ def handle_api_execution_retry_approvals_execute(args, db_path: Path = DB_PATH) 
             {
                 "retry_approval": inspect_coding_loop_retry_approval(approval),
                 "execution_run": execution_run,
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_retry_approvals_review(args, db_path: Path = DB_PATH) -> int:
+    try:
+        review = review_coding_loop_retry_execution(args.id, db_path=db_path)
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "review": inspect_coding_loop_retry_execution_review(review),
             }
         )
     )

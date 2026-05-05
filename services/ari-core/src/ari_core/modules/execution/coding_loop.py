@@ -37,6 +37,15 @@ CodingLoopStatus = Literal[
     "requires_approval",
 ]
 
+CodingLoopRetryExecutionReviewStatus = Literal[
+    "not_executed",
+    "stop",
+    "propose_retry",
+    "blocked",
+    "unsafe",
+    "ask_user",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class CodingLoopRequest:
@@ -135,6 +144,22 @@ class CodingLoopRetryApproval:
             "rejected_by": self.rejected_by,
             "rejected_at": self.rejected_at,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class CodingLoopRetryExecutionReview:
+    approval_id: str
+    status: CodingLoopRetryExecutionReviewStatus
+    reason: str
+    retry_execution_run_id: str | None
+    retry_execution_status: str | None
+    suggested_next_goal: str | None
+    suggested_next_action: dict[str, Any] | None
+    approval_required: bool | None
+    created_at: str = field(default_factory=_now_iso)
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
 
 
 def run_one_step_coding_loop(
@@ -384,6 +409,113 @@ def execute_approved_coding_loop_retry_approval(
     )
     stored = store_coding_loop_retry_approval(updated, db_path=db_path)
     return stored, execution_payload
+
+
+def review_coding_loop_retry_execution(
+    approval_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> CodingLoopRetryExecutionReview:
+    approval = get_coding_loop_retry_approval(approval_id, db_path=db_path)
+    if approval is None:
+        raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
+    if approval.retry_execution_run_id is None:
+        return CodingLoopRetryExecutionReview(
+            approval_id=approval.approval_id,
+            status="not_executed",
+            reason="Retry approval has not executed.",
+            retry_execution_run_id=None,
+            retry_execution_status=approval.retry_execution_status,
+            suggested_next_goal=None,
+            suggested_next_action=None,
+            approval_required=None,
+        )
+
+    from .inspection import get_execution_run
+
+    execution_run = get_execution_run(approval.retry_execution_run_id, db_path=db_path)
+    if execution_run is None:
+        return CodingLoopRetryExecutionReview(
+            approval_id=approval.approval_id,
+            status="blocked",
+            reason=(
+                "Retry execution run is referenced by approval but was not found: "
+                f"{approval.retry_execution_run_id}."
+            ),
+            retry_execution_run_id=approval.retry_execution_run_id,
+            retry_execution_status=approval.retry_execution_status,
+            suggested_next_goal=None,
+            suggested_next_action=None,
+            approval_required=None,
+        )
+
+    loop_status, reason = _classify_execution_run(execution_run)
+    if loop_status == "success":
+        return CodingLoopRetryExecutionReview(
+            approval_id=approval.approval_id,
+            status="stop",
+            reason=reason,
+            retry_execution_run_id=approval.retry_execution_run_id,
+            retry_execution_status=approval.retry_execution_status,
+            suggested_next_goal=None,
+            suggested_next_action=None,
+            approval_required=False,
+        )
+    if loop_status == "unsafe":
+        return CodingLoopRetryExecutionReview(
+            approval_id=approval.approval_id,
+            status="unsafe",
+            reason=reason,
+            retry_execution_run_id=approval.retry_execution_run_id,
+            retry_execution_status=approval.retry_execution_status,
+            suggested_next_goal=None,
+            suggested_next_action=None,
+            approval_required=None,
+        )
+    if loop_status == "retryable_failure":
+        proposal = _retry_proposal(execution_run)
+        if proposal is None:
+            return CodingLoopRetryExecutionReview(
+                approval_id=approval.approval_id,
+                status="ask_user",
+                reason=(
+                    "Retry execution failed, but ARI could not derive a bounded "
+                    "follow-up proposal."
+                ),
+                retry_execution_run_id=approval.retry_execution_run_id,
+                retry_execution_status=approval.retry_execution_status,
+                suggested_next_goal=None,
+                suggested_next_action=None,
+                approval_required=True,
+            )
+        return CodingLoopRetryExecutionReview(
+            approval_id=approval.approval_id,
+            status="propose_retry",
+            reason="Retry execution failed verification; propose a new approval item only.",
+            retry_execution_run_id=approval.retry_execution_run_id,
+            retry_execution_status=approval.retry_execution_status,
+            suggested_next_goal=_string_or_none(proposal.get("suggested_next_goal")),
+            suggested_next_action=(
+                proposal.get("suggested_next_action")
+                if isinstance(proposal.get("suggested_next_action"), dict)
+                else None
+            ),
+            approval_required=True,
+        )
+
+    review_status: CodingLoopRetryExecutionReviewStatus = (
+        "ask_user" if loop_status == "ask_user" else "blocked"
+    )
+    return CodingLoopRetryExecutionReview(
+        approval_id=approval.approval_id,
+        status=review_status,
+        reason=reason,
+        retry_execution_run_id=approval.retry_execution_run_id,
+        retry_execution_status=approval.retry_execution_status,
+        suggested_next_goal=None,
+        suggested_next_action=None,
+        approval_required=None,
+    )
 
 
 def _validate_retry_execution_boundary(approval: CodingLoopRetryApproval) -> None:

@@ -4,7 +4,7 @@ Date: 2026-05-04
 
 ## Position
 
-Overall ARI build estimate: 7.8/10.
+Overall ARI build estimate: 8.0/10.
 
 This slice upgrades the existing one-step coding loop seam. It does not add broad
 autonomy, approval mutation, arbitrary shell access, or multi-step execution.
@@ -41,6 +41,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   links the original failed execution, approval artifact, retry execution run,
   failed verification summary, proposed retry, authority state, and final retry
   status.
+- Approved retry execution can now be reviewed through a read-only post-run
+  classification artifact. The review decides whether ARI should stop, block,
+  mark unsafe, ask the user, or propose another bounded approval item without
+  executing anything.
 
 ## Boundary
 
@@ -72,8 +76,12 @@ Retry-execution memory capture is explanatory only. It does not execute,
 approve, reject, or mutate retry proposals beyond creating an idempotent
 session memory block for the already-existing retry approval.
 
+Post-run retry execution review is also explanatory/control-only. A
+`propose_retry` review does not create a new approval artifact and does not
+execute. It only exposes the next bounded control decision for a later approval
+slice.
+
 ## Next Recommended Slice
 
-Add the next control boundary for approved retry execution review: structured
-post-run classification that can decide whether ARI should stop, ask, or
-propose another bounded approval item without executing it.
+Turn `propose_retry` reviews into a new pending approval artifact, preserving
+the same no-auto-execution boundary.

@@ -8,7 +8,11 @@ from ...core.paths import DB_PATH
 from ..coordination.db import get_coordination_entity, list_coordination_entities
 
 if TYPE_CHECKING:
-    from .coding_loop import CodingLoopResult, CodingLoopRetryApproval
+    from .coding_loop import (
+        CodingLoopResult,
+        CodingLoopRetryApproval,
+        CodingLoopRetryExecutionReview,
+    )
 
 
 def list_execution_runs(
@@ -141,6 +145,23 @@ def inspect_coding_loop_retry_approval(
         "executed_at": payload.get("executed_at"),
         "rejected_by": payload.get("rejected_by"),
         "rejected_at": payload.get("rejected_at"),
+    }
+
+
+def inspect_coding_loop_retry_execution_review(
+    review: CodingLoopRetryExecutionReview | dict[str, Any],
+) -> dict[str, Any]:
+    payload = review if isinstance(review, dict) else review.to_dict()
+    return {
+        "approval_id": payload.get("approval_id"),
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "retry_execution_run_id": payload.get("retry_execution_run_id"),
+        "retry_execution_status": payload.get("retry_execution_status"),
+        "suggested_next_goal": payload.get("suggested_next_goal"),
+        "suggested_next_action": payload.get("suggested_next_action"),
+        "approval_required": payload.get("approval_required"),
+        "created_at": payload.get("created_at"),
     }
 
 
