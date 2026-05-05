@@ -6,6 +6,7 @@
 - Name: Coding Loop
 - Status: first mature ARI-native skill
 - Owner: ARI core execution spine
+- Inventory: `docs/skills/skill-inventory.md`
 
 ## Purpose
 
