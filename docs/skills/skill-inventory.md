@@ -15,6 +15,9 @@ skills and candidate missing skills. It returns a routing recommendation only;
 it does not execute skills, load skills dynamically, or persist routing
 decisions.
 
+The static catalog can be inspected through `api skills list --json` and
+`api skills show --id <skill_id> --json`.
+
 ## Current Native Skills
 
 ### `ari.native.coding_loop`

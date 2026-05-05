@@ -94,7 +94,7 @@ from .modules.self_documentation import (
     generate_content_package_from_seed,
     generate_content_seed_from_commits,
 )
-from .modules.skills import route_goal_to_skill
+from .modules.skills import get_skill_manifest, list_skill_manifests, route_goal_to_skill
 from .modules.tasks.api import (
     handle_api_tasks_create,
     handle_api_tasks_get,
@@ -297,6 +297,45 @@ def _handle_api_skills_route(args: argparse.Namespace) -> int:
     if payload["clarification_question"]:
         print(f"Clarification: {payload['clarification_question']}")
     print(f"Reason: {payload['reason']}")
+    return 0
+
+
+def _handle_api_skills_list(args: argparse.Namespace) -> int:
+    payload = {"skills": [manifest.to_dict() for manifest in list_skill_manifests()]}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    for manifest in payload["skills"]:
+        print(
+            f"{manifest['skill_id']} | {manifest['lifecycle_status']} | "
+            f"{manifest['implementation_status']}"
+        )
+    return 0
+
+
+def _handle_api_skills_show(args: argparse.Namespace) -> int:
+    manifest = get_skill_manifest(args.skill_id)
+    if manifest is None:
+        message = f"Unknown skill id: {args.skill_id}"
+        if args.as_json:
+            print(json.dumps({"error": message}, indent=2, sort_keys=True))
+        else:
+            print(message, file=sys.stderr)
+        return 1
+
+    payload = {"skill": manifest.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    skill = payload["skill"]
+    print(f"Skill: {skill['skill_id']}")
+    print(f"Name: {skill['name']}")
+    print(f"Lifecycle: {skill['lifecycle_status']}")
+    print(f"Implementation: {skill['implementation_status']}")
+    print(f"Purpose: {skill['purpose']}")
+    print(f"Authority: {skill['authority_boundary']}")
     return 0
 
 
@@ -649,6 +688,19 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "skills", help="Read-only ARI skill inventory and routing commands."
     )
     skills_subparsers = skills_parser.add_subparsers(dest="api_skills_command", required=True)
+    skills_list_parser = skills_subparsers.add_parser(
+        "list", help="List static ARI skill manifests."
+    )
+    skills_list_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    skills_show_parser = skills_subparsers.add_parser(
+        "show", help="Show one static ARI skill manifest."
+    )
+    skills_show_parser.add_argument("--id", dest="skill_id", required=True, help="Skill id.")
+    skills_show_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
     skills_route_parser = skills_subparsers.add_parser(
         "route", help="Classify a goal and recommend a native skill route."
     )
@@ -1660,6 +1712,10 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_self_doc_package_command == "from-seed-json"
         ):
             return _handle_api_self_doc_package_from_seed_json(args)
+        if args.api_command == "skills" and args.api_skills_command == "list":
+            return _handle_api_skills_list(args)
+        if args.api_command == "skills" and args.api_skills_command == "show":
+            return _handle_api_skills_show(args)
         if args.api_command == "skills" and args.api_skills_command == "route":
             return _handle_api_skills_route(args)
         if args.api_command == "memory" and args.api_memory_command == "remember":

@@ -22,6 +22,7 @@
 - read-only self-documentation content seed generator from git commit ranges
 - static machine-readable skill catalog plus read-only skill-selection
   prototype for routing goals to known skills or missing-skill candidates
+- read-only CLI inspection for the static skill catalog
 
 ## Still evolving
 - autonomous coding loop

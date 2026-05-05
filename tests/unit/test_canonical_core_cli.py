@@ -353,6 +353,97 @@ def test_canonical_core_cli_skills_route_json(tmp_path: Path, monkeypatch) -> No
     assert route["verification_expectation"]
 
 
+def test_canonical_core_cli_skills_list_json(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            ["api", "skills", "list", "--json"],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    skills = json.loads(output.getvalue())["skills"]
+    skill_ids = {skill["skill_id"] for skill in skills}
+    assert "ari.native.coding_loop" in skill_ids
+    assert "ari.native.self_documentation" in skill_ids
+    assert "ari.native.file_organization" in skill_ids
+    assert "ari.native.document_processing" in skill_ids
+    assert "ari.native.research_gathering" in skill_ids
+    first_skill = skills[0]
+    assert first_skill["name"]
+    assert first_skill["capability_summary"]
+    assert first_skill["authority_boundary"]
+    assert first_skill["verification_expectation"]
+    assert first_skill["memory_effect_expectation"]
+    assert first_skill["inspection_surfaces"]
+    assert first_skill["safety_constraints"]
+    assert first_skill["docs_refs"]
+
+
+def test_canonical_core_cli_skills_show_json(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "show",
+                "--id",
+                "ari.native.coding_loop",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    skill = json.loads(output.getvalue())["skill"]
+    assert skill["skill_id"] == "ari.native.coding_loop"
+    assert skill["authority_boundary"]
+    assert skill["verification_expectation"]
+    assert skill["memory_effect_expectation"]
+
+
+def test_canonical_core_cli_skills_show_unknown_id_fails_safely(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "show",
+                "--id",
+                "ari.native.nope",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert "Unknown skill id" in payload["error"]
+
+
 def test_canonical_core_cli_skills_route_missing_goal_fails_safely(
     tmp_path: Path,
     monkeypatch,
