@@ -46,6 +46,16 @@ CodingLoopRetryExecutionReviewStatus = Literal[
     "ask_user",
 ]
 
+CodingLoopContinuationStatus = Literal[
+    "create_pending_approval",
+    "not_executed",
+    "stop",
+    "blocked",
+    "unsafe",
+    "ask_user",
+    "duplicate_exists",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class CodingLoopRequest:
@@ -159,6 +169,24 @@ class CodingLoopRetryExecutionReview:
     reason: str
     retry_execution_run_id: str | None
     retry_execution_status: str | None
+    suggested_next_goal: str | None
+    suggested_next_action: dict[str, Any] | None
+    approval_required: bool | None
+    created_at: str = field(default_factory=_now_iso)
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class CodingLoopContinuationDecision:
+    approval_id: str
+    eligible: bool
+    status: CodingLoopContinuationStatus
+    reason: str
+    review_status: CodingLoopRetryExecutionReviewStatus | None
+    retry_execution_run_id: str | None
+    next_retry_approval_id: str | None
     suggested_next_goal: str | None
     suggested_next_action: dict[str, Any] | None
     approval_required: bool | None
@@ -538,21 +566,26 @@ def create_coding_loop_retry_approval_from_review(
     approval = get_coding_loop_retry_approval(approval_id, db_path=db_path)
     if approval is None:
         raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
-    if approval.retry_execution_run_id is None:
+
+    continuation = decide_coding_loop_retry_continuation(
+        approval_id,
+        db_path=db_path,
+    )
+    if continuation.status == "not_executed":
         raise ValueError("Coding-loop retry approval has not executed.")
-    if approval.next_retry_approval_id is not None:
+    if continuation.status == "duplicate_exists":
         raise ValueError(
             "Coding-loop retry approval review already produced a next approval: "
-            f"{approval.next_retry_approval_id}."
+            f"{continuation.next_retry_approval_id}."
+        )
+    if not continuation.eligible:
+        raise ValueError(
+            "Coding-loop retry execution review is not propose_retry: "
+            f"{continuation.review_status or continuation.status}."
         )
 
     review = review_coding_loop_retry_execution(approval_id, db_path=db_path)
-    if review.status != "propose_retry":
-        raise ValueError(
-            "Coding-loop retry execution review is not propose_retry: "
-            f"{review.status}."
-        )
-    if not review.suggested_next_goal or review.suggested_next_action is None:
+    if not continuation.suggested_next_goal or continuation.suggested_next_action is None:
         raise ValueError("Coding-loop retry execution review has no next retry proposal.")
 
     created_at = _now_iso()
@@ -562,10 +595,10 @@ def create_coding_loop_retry_approval_from_review(
         source_preview_id=approval.source_preview_id,
         source_execution_run_id=approval.retry_execution_run_id,
         original_goal=approval.original_goal,
-        proposed_retry_goal=review.suggested_next_goal,
-        proposed_retry_action=review.suggested_next_action,
+        proposed_retry_goal=continuation.suggested_next_goal,
+        proposed_retry_action=continuation.suggested_next_action,
         proposed_retry_action_description=_describe_retry_action(
-            review.suggested_next_action
+            continuation.suggested_next_action
         ),
         reason=review.reason,
         failed_verification_summary=_review_failure_summary(approval, review),
@@ -578,7 +611,7 @@ def create_coding_loop_retry_approval_from_review(
         ),
         approval_status="pending",
         retry_execution_requires_approval=True,
-        proposed_action_requires_approval=bool(review.approval_required),
+        proposed_action_requires_approval=bool(continuation.approval_required),
         created_at=created_at,
         prior_retry_approval_id=approval.approval_id,
         prior_retry_execution_run_id=approval.retry_execution_run_id,
@@ -592,6 +625,83 @@ def create_coding_loop_retry_approval_from_review(
     store_coding_loop_retry_approval(updated_prior, db_path=db_path)
     refresh_coding_loop_result_links(approval.source_coding_loop_result_id, db_path=db_path)
     return stored_next
+
+
+def decide_coding_loop_retry_continuation(
+    approval_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> CodingLoopContinuationDecision:
+    approval = get_coding_loop_retry_approval(approval_id, db_path=db_path)
+    if approval is None:
+        raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
+
+    if approval.next_retry_approval_id is not None:
+        return CodingLoopContinuationDecision(
+            approval_id=approval.approval_id,
+            eligible=False,
+            status="duplicate_exists",
+            reason=(
+                "This retry execution review already produced a follow-up approval: "
+                f"{approval.next_retry_approval_id}."
+            ),
+            review_status=None,
+            retry_execution_run_id=approval.retry_execution_run_id,
+            next_retry_approval_id=approval.next_retry_approval_id,
+            suggested_next_goal=None,
+            suggested_next_action=None,
+            approval_required=None,
+        )
+
+    review = review_coding_loop_retry_execution(approval_id, db_path=db_path)
+    if review.status == "propose_retry":
+        if review.suggested_next_goal and review.suggested_next_action is not None:
+            return CodingLoopContinuationDecision(
+                approval_id=approval.approval_id,
+                eligible=True,
+                status="create_pending_approval",
+                reason="Review is eligible to create one pending follow-up approval.",
+                review_status=review.status,
+                retry_execution_run_id=review.retry_execution_run_id,
+                next_retry_approval_id=None,
+                suggested_next_goal=review.suggested_next_goal,
+                suggested_next_action=review.suggested_next_action,
+                approval_required=review.approval_required,
+            )
+        return CodingLoopContinuationDecision(
+            approval_id=approval.approval_id,
+            eligible=False,
+            status="ask_user",
+            reason="Review proposed a retry but did not include a bounded next action.",
+            review_status=review.status,
+            retry_execution_run_id=review.retry_execution_run_id,
+            next_retry_approval_id=None,
+            suggested_next_goal=None,
+            suggested_next_action=None,
+            approval_required=True,
+        )
+
+    status = _continuation_status_from_review(review.status)
+    return CodingLoopContinuationDecision(
+        approval_id=approval.approval_id,
+        eligible=False,
+        status=status,
+        reason=review.reason,
+        review_status=review.status,
+        retry_execution_run_id=review.retry_execution_run_id,
+        next_retry_approval_id=None,
+        suggested_next_goal=review.suggested_next_goal,
+        suggested_next_action=review.suggested_next_action,
+        approval_required=review.approval_required,
+    )
+
+
+def _continuation_status_from_review(
+    status: CodingLoopRetryExecutionReviewStatus,
+) -> CodingLoopContinuationStatus:
+    if status in {"not_executed", "stop", "blocked", "unsafe", "ask_user"}:
+        return status
+    return "ask_user"
 
 
 def refresh_coding_loop_result_links(

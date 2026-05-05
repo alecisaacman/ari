@@ -5,6 +5,7 @@ from ...core.paths import DB_PATH
 from .coding_loop import (
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
+    decide_coding_loop_retry_continuation,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
@@ -25,9 +26,10 @@ from .engine import (
     write_file,
 )
 from .inspection import (
+    get_coding_loop_result,
     get_execution_plan_preview,
     get_execution_run,
-    get_coding_loop_result,
+    inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
     inspect_coding_loop_retry_execution_review,
@@ -209,6 +211,7 @@ def handle_api_execution_retry_approvals_execute(args, db_path: Path = DB_PATH) 
 def handle_api_execution_retry_approvals_review(args, db_path: Path = DB_PATH) -> int:
     try:
         review = review_coding_loop_retry_execution(args.id, db_path=db_path)
+        continuation = decide_coding_loop_retry_continuation(args.id, db_path=db_path)
     except ValueError as error:
         print(json.dumps({"error": str(error)}))
         return 1
@@ -216,6 +219,9 @@ def handle_api_execution_retry_approvals_review(args, db_path: Path = DB_PATH) -
         json.dumps(
             {
                 "review": inspect_coding_loop_retry_execution_review(review),
+                "continuation": inspect_coding_loop_continuation_decision(
+                    continuation
+                ),
             }
         )
     )

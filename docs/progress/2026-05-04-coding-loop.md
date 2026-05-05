@@ -56,6 +56,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   duplicating full `ExecutionRun` payloads.
 - Coding-loop results can now be listed and shown through the existing
   execution CLI/API inspection family.
+- Post-run retry reviews now have an explicit loop-continuation policy. The
+  policy decides whether a review is eligible to create exactly one pending
+  follow-up approval, or whether ARI should stop, block, ask, mark unsafe,
+  report not-executed, or reject a duplicate continuation.
 
 ## Boundary
 
@@ -96,8 +100,13 @@ Creating a follow-up approval from a `propose_retry` review is still an
 approval-boundary operation. It does not approve or execute the follow-up
 retry. It only creates the next pending authority artifact.
 
+Loop-continuation policy is inspection/control-only. It does not execute,
+approve, or retry. It only makes the next-approval eligibility decision typed
+and visible before the existing propose-next mutation is allowed to create a
+single pending approval artifact.
+
 ## Next Recommended Slice
 
-Add a bounded loop-continuation policy that can decide when an inspected
-approval/review chain is eligible to request the next approval item, while still
-requiring explicit authority before any further execution.
+Add bounded multi-approval orchestration that can present a chain of pending
+approval items as one inspectable run story, while still requiring explicit
+approval before each execution step.

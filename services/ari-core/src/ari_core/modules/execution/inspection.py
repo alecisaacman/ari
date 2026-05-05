@@ -9,6 +9,7 @@ from ..coordination.db import get_coordination_entity, list_coordination_entitie
 
 if TYPE_CHECKING:
     from .coding_loop import (
+        CodingLoopContinuationDecision,
         CodingLoopResult,
         CodingLoopRetryApproval,
         CodingLoopRetryExecutionReview,
@@ -189,6 +190,25 @@ def inspect_coding_loop_retry_execution_review(
         "reason": payload.get("reason"),
         "retry_execution_run_id": payload.get("retry_execution_run_id"),
         "retry_execution_status": payload.get("retry_execution_status"),
+        "suggested_next_goal": payload.get("suggested_next_goal"),
+        "suggested_next_action": payload.get("suggested_next_action"),
+        "approval_required": payload.get("approval_required"),
+        "created_at": payload.get("created_at"),
+    }
+
+
+def inspect_coding_loop_continuation_decision(
+    decision: CodingLoopContinuationDecision | dict[str, Any],
+) -> dict[str, Any]:
+    payload = decision if isinstance(decision, dict) else decision.to_dict()
+    return {
+        "approval_id": payload.get("approval_id"),
+        "eligible": payload.get("eligible"),
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "review_status": payload.get("review_status"),
+        "retry_execution_run_id": payload.get("retry_execution_run_id"),
+        "next_retry_approval_id": payload.get("next_retry_approval_id"),
         "suggested_next_goal": payload.get("suggested_next_goal"),
         "suggested_next_action": payload.get("suggested_next_action"),
         "approval_required": payload.get("approval_required"),

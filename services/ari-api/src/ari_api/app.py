@@ -14,6 +14,7 @@ from ari_core.modules.coordination.db import (
 from ari_core.modules.execution.coding_loop import (
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
+    decide_coding_loop_retry_continuation,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
@@ -41,6 +42,7 @@ from ari_core.modules.execution.inspection import (
     get_coding_loop_result,
     get_execution_plan_preview,
     get_execution_run,
+    inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
     inspect_coding_loop_retry_execution_review,
@@ -506,7 +508,10 @@ def create_app() -> FastAPI:
             lambda: {
                 "review": inspect_coding_loop_retry_execution_review(
                     review_coding_loop_retry_execution(approval_id)
-                )
+                ),
+                "continuation": inspect_coding_loop_continuation_decision(
+                    decide_coding_loop_retry_continuation(approval_id)
+                ),
             }
         )
 

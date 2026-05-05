@@ -477,10 +477,13 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
             db_path=db_path,
         )
     assert exit_code == 0
-    retry_review = json.loads(retry_approval_review_output.getvalue())["review"]
+    retry_review_payload = json.loads(retry_approval_review_output.getvalue())
+    retry_review = retry_review_payload["review"]
     assert retry_review["status"] == "stop"
     assert retry_review["retry_execution_status"] == "completed"
     assert retry_review["approval_required"] is False
+    assert retry_review_payload["continuation"]["eligible"] is False
+    assert retry_review_payload["continuation"]["status"] == "stop"
 
     (execution_root / "loop-second-proof.txt").write_text("old", encoding="utf-8")
     second_retry_result = run_one_step_coding_loop(

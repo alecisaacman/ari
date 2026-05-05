@@ -368,6 +368,8 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert retry_review.json()["review"]["status"] == "stop"
         assert retry_review.json()["review"]["retry_execution_status"] == "completed"
         assert retry_review.json()["review"]["approval_required"] is False
+        assert retry_review.json()["continuation"]["eligible"] is False
+        assert retry_review.json()["continuation"]["status"] == "stop"
 
         (execution_root / "loop-api-second-proof.txt").write_text(
             "old",

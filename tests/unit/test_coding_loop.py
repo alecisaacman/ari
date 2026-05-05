@@ -11,6 +11,7 @@ from ari_core.modules.execution import (
     approve_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
     create_coding_loop_retry_approval_from_review,
+    decide_coding_loop_retry_continuation,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
@@ -23,6 +24,7 @@ from ari_core.modules.execution import (
 from ari_core.modules.execution.inspection import (
     get_coding_loop_result,
     get_execution_run,
+    inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
     inspect_coding_loop_retry_execution_review,
@@ -813,6 +815,64 @@ def test_coding_loop_retry_execution_review_can_propose_next_approval_item(
     }
     assert review.approval_required is True
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_coding_loop_continuation_policy_is_inspectable_and_bounded(
+    tmp_path: Path,
+) -> None:
+    result, _root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    pending = decide_coding_loop_retry_continuation(
+        result.retry_approval.approval_id,
+        db_path=db_path,
+    )
+    assert pending.eligible is False
+    assert pending.status == "not_executed"
+    assert pending.review_status == "not_executed"
+    assert pending.next_retry_approval_id is None
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=db_path)
+
+    continuation = decide_coding_loop_retry_continuation(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    inspected = inspect_coding_loop_continuation_decision(continuation)
+    assert inspected["eligible"] is True
+    assert inspected["status"] == "create_pending_approval"
+    assert inspected["review_status"] == "propose_retry"
+    assert inspected["suggested_next_goal"] == "write file proof.txt with right\n"
+    assert inspected["suggested_next_action"] == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+    assert inspected["approval_required"] is True
+
+    next_approval = create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    duplicate = decide_coding_loop_retry_continuation(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    assert duplicate.eligible is False
+    assert duplicate.status == "duplicate_exists"
+    assert duplicate.next_retry_approval_id == next_approval.approval_id
 
 
 def test_propose_retry_review_creates_pending_follow_up_approval(
