@@ -72,6 +72,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   or rejected from the root coding-loop result id. These chain-level controls
   resolve the latest pending approval and delegate to the existing approval
   mutation boundary.
+- Eligible `propose_retry` reviews can now create the next pending retry
+  approval from the root coding-loop result id. The chain-level proposal command
+  resolves the eligible reviewed approval and delegates to the existing
+  next-approval creation boundary.
 
 ## Boundary
 
@@ -131,8 +135,12 @@ Chain-level approve/reject controls are convenience-only. They do not create new
 approval semantics, advance the chain, or execute retries. They refuse unknown,
 truncated, cyclic, stopped, unsafe, blocked, ask-user, or non-pending chains.
 
+Chain-level propose-next controls are also convenience-only. They do not approve,
+execute, or advance. They create exactly one pending approval only when the
+latest reviewed retry is eligible for `propose_retry`, and refuse duplicate or
+non-eligible chains.
+
 ## Next Recommended Slice
 
-Add a chain-level command that can propose the next pending approval after a
-reviewed `propose_retry` outcome, while preserving the explicit approval and
-one-step advancement boundaries.
+Add a compact chain lifecycle summary for memory capture so ARI can learn from
+bounded coding-loop outcomes without duplicating full execution traces.

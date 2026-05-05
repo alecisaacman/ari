@@ -11,6 +11,7 @@ from .coding_loop import (
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
+    propose_next_coding_loop_retry_approval_from_chain,
     reject_latest_pending_coding_loop_retry_approval,
     reject_stored_coding_loop_retry_approval,
     review_coding_loop_retry_execution,
@@ -35,6 +36,7 @@ from .inspection import (
     inspect_coding_loop_chain,
     inspect_coding_loop_chain_advancement,
     inspect_coding_loop_chain_approval_mutation,
+    inspect_coding_loop_chain_next_approval_proposal,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -226,6 +228,31 @@ def handle_api_execution_coding_loops_reject_latest(
             {
                 "approval_mutation": inspect_coding_loop_chain_approval_mutation(
                     mutation
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_coding_loops_propose_next(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        proposal = propose_next_coding_loop_retry_approval_from_chain(
+            args.id,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "next_approval_proposal": (
+                    inspect_coding_loop_chain_next_approval_proposal(proposal)
                 ),
             }
         )

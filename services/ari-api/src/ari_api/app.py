@@ -20,6 +20,7 @@ from ari_core.modules.execution.coding_loop import (
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
+    propose_next_coding_loop_retry_approval_from_chain,
     reject_latest_pending_coding_loop_retry_approval,
     reject_stored_coding_loop_retry_approval,
     review_coding_loop_retry_execution,
@@ -48,6 +49,7 @@ from ari_core.modules.execution.inspection import (
     inspect_coding_loop_chain,
     inspect_coding_loop_chain_advancement,
     inspect_coding_loop_chain_approval_mutation,
+    inspect_coding_loop_chain_next_approval_proposal,
     inspect_coding_loop_continuation_decision,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
@@ -507,6 +509,24 @@ def create_app() -> FastAPI:
                         rejected_reason=payload.reason,
                         rejected_by=payload.rejectedBy,
                         max_depth=max_depth,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/results/{result_id}/propose-next")
+    def execution_propose_next_coding_loop_result_chain(
+        result_id: str,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "next_approval_proposal": (
+                    inspect_coding_loop_chain_next_approval_proposal(
+                        propose_next_coding_loop_retry_approval_from_chain(
+                            result_id,
+                            max_depth=max_depth,
+                        )
                     )
                 )
             }

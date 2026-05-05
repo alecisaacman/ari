@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .coding_loop import (
         CodingLoopChainAdvancement,
         CodingLoopChainApprovalMutation,
+        CodingLoopChainNextApprovalProposal,
         CodingLoopContinuationDecision,
         CodingLoopResult,
         CodingLoopRetryApproval,
@@ -238,6 +239,19 @@ def inspect_coding_loop_chain_approval_mutation(
         "action_taken": payload.get("action_taken"),
         "reason": payload.get("reason"),
         "updated_retry_approval": payload.get("updated_retry_approval"),
+        "refreshed_chain": payload.get("refreshed_chain"),
+        "created_at": payload.get("created_at"),
+    }
+
+
+def inspect_coding_loop_chain_next_approval_proposal(
+    proposal: CodingLoopChainNextApprovalProposal | dict[str, Any],
+) -> dict[str, Any]:
+    payload = proposal if isinstance(proposal, dict) else proposal.to_dict()
+    return {
+        "root_coding_loop_result_id": payload.get("root_coding_loop_result_id"),
+        "reason": payload.get("reason"),
+        "new_retry_approval": payload.get("new_retry_approval"),
         "refreshed_chain": payload.get("refreshed_chain"),
         "created_at": payload.get("created_at"),
     }

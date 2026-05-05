@@ -549,16 +549,18 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
             [
                 "api",
                 "execution",
-                "retry-approvals",
+                "coding-loops",
                 "propose-next",
                 "--id",
-                second_retry_result.retry_approval.approval_id,
+                second_retry_result.id,
             ],
             db_path=db_path,
         )
     assert exit_code == 0
-    next_retry_approval = json.loads(propose_next_output.getvalue())["retry_approval"]
+    next_proposal = json.loads(propose_next_output.getvalue())["next_approval_proposal"]
+    next_retry_approval = next_proposal["new_retry_approval"]
     assert next_retry_approval["approval_status"] == "pending"
+    assert next_proposal["refreshed_chain"]["terminal_status"] == "pending_approval"
     assert (
         next_retry_approval["prior_retry_approval_id"]
         == second_retry_result.retry_approval.approval_id

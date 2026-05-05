@@ -431,25 +431,30 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             db_path=DB_PATH,
         )
         proposed_next = client.post(
-            "/execution/coding-loop/retry-approvals/"
-            f"{second_retry_result.retry_approval.approval_id}/propose-next"
+            f"/execution/coding-loop/results/{second_retry_result.id}/propose-next"
         )
         assert proposed_next.status_code == 200
-        assert proposed_next.json()["retry_approval"]["approval_status"] == "pending"
+        next_retry_approval = proposed_next.json()["next_approval_proposal"][
+            "new_retry_approval"
+        ]
+        assert next_retry_approval["approval_status"] == "pending"
+        assert proposed_next.json()["next_approval_proposal"]["refreshed_chain"][
+            "terminal_status"
+        ] == "pending_approval"
         assert (
-            proposed_next.json()["retry_approval"]["prior_retry_approval_id"]
+            next_retry_approval["prior_retry_approval_id"]
             == second_retry_result.retry_approval.approval_id
         )
-        assert proposed_next.json()["retry_approval"][
-            "prior_retry_execution_run_id"
-        ] == second_retry_result.execution_run_id
+        assert next_retry_approval["prior_retry_execution_run_id"] == (
+            second_retry_result.execution_run_id
+        )
 
         shown_second_result = client.get(
             f"/execution/coding-loop/results/{second_retry_result.id}"
         )
         assert shown_second_result.status_code == 200
         assert shown_second_result.json()["coding_loop"]["next_retry_approval_id"] == (
-            proposed_next.json()["retry_approval"]["approval_id"]
+            next_retry_approval["approval_id"]
         )
         assert shown_second_result.json()["coding_loop"]["post_run_review"]["status"] == (
             "propose_retry"
@@ -464,7 +469,7 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             "status"
         ] == "duplicate_exists"
         assert second_chain.json()["chain"]["retry_approvals"][1]["approval_id"] == (
-            proposed_next.json()["retry_approval"]["approval_id"]
+            next_retry_approval["approval_id"]
         )
 
         approved_next = client.post(
@@ -474,7 +479,7 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert approved_next.status_code == 200
         assert approved_next.json()["approval_mutation"]["updated_retry_approval"][
             "approval_id"
-        ] == proposed_next.json()["retry_approval"]["approval_id"]
+        ] == next_retry_approval["approval_id"]
         assert approved_next.json()["approval_mutation"]["refreshed_chain"][
             "terminal_status"
         ] == "executable_approved_retry_available"
@@ -489,7 +494,7 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             "executed_approved_retry"
         )
         assert advance_chain.json()["advancement"]["executed_retry_approval_id"] == (
-            proposed_next.json()["retry_approval"]["approval_id"]
+            next_retry_approval["approval_id"]
         )
         assert advance_chain.json()["advancement"]["retry_execution_run_id"]
         assert advance_chain.json()["advancement"]["refreshed_terminal_status"] == (

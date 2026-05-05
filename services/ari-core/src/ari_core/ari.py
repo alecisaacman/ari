@@ -20,6 +20,7 @@ from .modules.execution.api import (
     handle_api_execution_coding_loops_approve_latest,
     handle_api_execution_coding_loops_chain,
     handle_api_execution_coding_loops_list,
+    handle_api_execution_coding_loops_propose_next,
     handle_api_execution_coding_loops_reject_latest,
     handle_api_execution_coding_loops_show,
     handle_api_execution_command,
@@ -1007,6 +1008,19 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         default=10,
         help="Maximum retry approvals to traverse before rejecting.",
     )
+    coding_loops_propose_next_parser = coding_loops_subparsers.add_parser(
+        "propose-next",
+        help="Create the next pending retry approval from an eligible chain review.",
+    )
+    coding_loops_propose_next_parser.add_argument(
+        "--id", required=True, help="Coding-loop result id."
+    )
+    coding_loops_propose_next_parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=10,
+        help="Maximum retry approvals to traverse before proposing.",
+    )
 
     plans_parser = execution_subparsers.add_parser(
         "plans", help="Inspect persisted execution plan previews."
@@ -1637,6 +1651,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_execution_coding_loops_command == "reject-latest"
         ):
             return handle_api_execution_coding_loops_reject_latest(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "coding-loops"
+            and args.api_execution_coding_loops_command == "propose-next"
+        ):
+            return handle_api_execution_coding_loops_propose_next(args, db_path=db_path)
         if (
             args.api_command == "execution"
             and args.api_execution_command == "plans"

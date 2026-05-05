@@ -17,6 +17,7 @@ from ari_core.modules.execution import (
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
+    propose_next_coding_loop_retry_approval_from_chain,
     reject_coding_loop_retry_approval,
     reject_latest_pending_coding_loop_retry_approval,
     reject_stored_coding_loop_retry_approval,
@@ -1550,6 +1551,152 @@ def test_coding_loop_chain_latest_approval_mutation_refuses_invalid_chains(
         approve_latest_pending_coding_loop_retry_approval(
             "coding-loop-result-missing",
             approved_by="alec",
+            db_path=deep_db,
+        )
+
+
+def test_coding_loop_chain_propose_next_creates_pending_approval(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=db_path)
+
+    proposal = propose_next_coding_loop_retry_approval_from_chain(
+        result.id,
+        db_path=db_path,
+    )
+
+    next_approval = proposal.new_retry_approval
+    assert proposal.root_coding_loop_result_id == result.id
+    assert next_approval.approval_status == "pending"
+    assert next_approval.retry_execution_run_id is None
+    assert next_approval.prior_retry_approval_id == reviewed_failed_retry.approval_id
+    assert next_approval.prior_retry_execution_run_id == result.execution_run_id
+    assert next_approval.source_coding_loop_result_id == result.id
+    assert next_approval.original_goal == "Create a proof file"
+    assert next_approval.proposed_retry_goal == "write file proof.txt with right\n"
+    assert next_approval.proposed_retry_action == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+    assert proposal.refreshed_chain is not None
+    assert proposal.refreshed_chain["terminal_status"] == "pending_approval"
+    assert proposal.refreshed_chain["chain_depth"] == 2
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    prior = get_coding_loop_retry_approval(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    assert prior is not None
+    assert prior.next_retry_approval_id == next_approval.approval_id
+
+    with pytest.raises(ValueError, match="already produced"):
+        propose_next_coding_loop_retry_approval_from_chain(result.id, db_path=db_path)
+
+
+def test_coding_loop_chain_propose_next_refuses_non_eligible_chains(
+    tmp_path: Path,
+) -> None:
+    pending_parent = tmp_path / "pending-propose"
+    pending_parent.mkdir()
+    pending_result, _root, db_path = _retry_failure_result(pending_parent)
+    with pytest.raises(ValueError, match="no eligible propose_retry"):
+        propose_next_coding_loop_retry_approval_from_chain(
+            pending_result.id,
+            db_path=db_path,
+        )
+
+    rejected_parent = tmp_path / "rejected-propose"
+    rejected_parent.mkdir()
+    rejected_result, _root, db_path = _retry_failure_result(rejected_parent)
+    assert rejected_result.retry_approval is not None
+    reject_latest_pending_coding_loop_retry_approval(
+        rejected_result.id,
+        rejected_reason="No retry.",
+        db_path=db_path,
+    )
+    with pytest.raises(ValueError, match="no eligible propose_retry"):
+        propose_next_coding_loop_retry_approval_from_chain(
+            rejected_result.id,
+            db_path=db_path,
+        )
+
+    stopped_parent = tmp_path / "stopped-propose"
+    stopped_parent.mkdir()
+    stopped_result, _root, db_path = _retry_failure_result(stopped_parent)
+    assert stopped_result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        stopped_result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    execute_approved_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+    with pytest.raises(ValueError, match="no eligible propose_retry"):
+        propose_next_coding_loop_retry_approval_from_chain(
+            stopped_result.id,
+            db_path=db_path,
+        )
+
+    unsafe_root = tmp_path / "unsafe-propose" / "repo"
+    unsafe_db = tmp_path / "unsafe-propose" / "state" / "networking.db"
+    unsafe_root.mkdir(parents=True)
+    unsafe_result = run_one_step_coding_loop(
+        "run rm -rf .",
+        execution_root=unsafe_root,
+        db_path=unsafe_db,
+    )
+    with pytest.raises(ValueError, match="no eligible propose_retry"):
+        propose_next_coding_loop_retry_approval_from_chain(
+            unsafe_result.id,
+            db_path=unsafe_db,
+        )
+
+    deep_parent = tmp_path / "truncated-propose"
+    deep_parent.mkdir()
+    deep_result, _root, deep_db = _retry_failure_result(deep_parent)
+    assert deep_result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        deep_result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=deep_db,
+    )
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=deep_result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=deep_db)
+    create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=deep_db,
+    )
+    with pytest.raises(ValueError, match="truncated"):
+        propose_next_coding_loop_retry_approval_from_chain(
+            deep_result.id,
+            max_depth=1,
+            db_path=deep_db,
+        )
+
+    with pytest.raises(ValueError, match="not found"):
+        propose_next_coding_loop_retry_approval_from_chain(
+            "coding-loop-result-missing",
             db_path=deep_db,
         )
 

@@ -244,6 +244,24 @@ class CodingLoopChainApprovalMutation:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CodingLoopChainNextApprovalProposal:
+    root_coding_loop_result_id: str
+    reason: str
+    new_retry_approval: CodingLoopRetryApproval
+    refreshed_chain: dict[str, Any] | None
+    created_at: str = field(default_factory=_now_iso)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "root_coding_loop_result_id": self.root_coding_loop_result_id,
+            "reason": self.reason,
+            "new_retry_approval": self.new_retry_approval.to_dict(),
+            "refreshed_chain": self.refreshed_chain,
+            "created_at": self.created_at,
+        }
+
+
 def run_one_step_coding_loop(
     request: CodingLoopRequest | str,
     *,
@@ -516,6 +534,35 @@ def reject_latest_pending_coding_loop_retry_approval(
         approval,
         max_depth=max_depth,
         db_path=db_path,
+    )
+
+
+def propose_next_coding_loop_retry_approval_from_chain(
+    result_id: str,
+    *,
+    max_depth: int = 10,
+    db_path: Path = DB_PATH,
+) -> CodingLoopChainNextApprovalProposal:
+    approval_id = _latest_eligible_propose_retry_approval_id(
+        result_id,
+        max_depth=max_depth,
+        db_path=db_path,
+    )
+    approval = create_coding_loop_retry_approval_from_review(
+        approval_id,
+        db_path=db_path,
+    )
+    from .inspection import inspect_coding_loop_chain
+
+    return CodingLoopChainNextApprovalProposal(
+        root_coding_loop_result_id=result_id,
+        reason="Created the next pending retry approval from an eligible chain review.",
+        new_retry_approval=approval,
+        refreshed_chain=inspect_coding_loop_chain(
+            result_id,
+            max_depth=max_depth,
+            db_path=db_path,
+        ),
     )
 
 
@@ -953,6 +1000,66 @@ def _latest_pending_chain_approval_id(
     if latest.get("retry_execution_run_id") is not None:
         raise ValueError("Coding-loop retry chain pending approval already executed.")
     return latest_approval_id
+
+
+def _latest_eligible_propose_retry_approval_id(
+    result_id: str,
+    *,
+    max_depth: int,
+    db_path: Path,
+) -> str:
+    from .inspection import inspect_coding_loop_chain
+
+    chain = inspect_coding_loop_chain(
+        result_id,
+        max_depth=max_depth,
+        db_path=db_path,
+    )
+    if chain is None:
+        raise ValueError(f"Coding-loop result {result_id} not found.")
+    if chain.get("truncated") is True:
+        raise ValueError("Coding-loop retry chain traversal was truncated.")
+    if chain.get("cycle_detected") is True:
+        raise ValueError("Coding-loop retry chain traversal detected a cycle.")
+
+    approvals = chain.get("retry_approvals")
+    latest = approvals[-1] if isinstance(approvals, list) and approvals else None
+    if not isinstance(latest, dict):
+        raise ValueError(
+            "Coding-loop retry chain has no eligible propose_retry review: "
+            f"{chain.get('terminal_status')}."
+        )
+    continuation = latest.get("continuation")
+    if not isinstance(continuation, dict):
+        raise ValueError("Coding-loop retry chain has no inspectable continuation.")
+    if continuation.get("status") != "create_pending_approval":
+        duplicate = _first_duplicate_continuation(approvals)
+        if duplicate is not None:
+            raise ValueError(
+                "Coding-loop retry approval review already produced a next approval: "
+                f"{duplicate.get('next_retry_approval_id')}."
+            )
+        raise ValueError(
+            "Coding-loop retry chain has no eligible propose_retry review: "
+            f"{continuation.get('review_status') or chain.get('terminal_status')}."
+        )
+
+    approval_id = _string_or_none(latest.get("approval_id"))
+    if approval_id is None:
+        raise ValueError("Coding-loop retry chain has no latest retry approval.")
+    return approval_id
+
+
+def _first_duplicate_continuation(approvals: object) -> dict[str, Any] | None:
+    if not isinstance(approvals, list):
+        return None
+    for approval in reversed(approvals):
+        if not isinstance(approval, dict):
+            continue
+        continuation = approval.get("continuation")
+        if isinstance(continuation, dict) and continuation.get("status") == "duplicate_exists":
+            return continuation
+    return None
 
 
 def _chain_approval_mutation_result(
