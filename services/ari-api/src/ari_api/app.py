@@ -13,6 +13,7 @@ from ari_core.modules.coordination.db import (
 )
 from ari_core.modules.execution.coding_loop import (
     approve_stored_coding_loop_retry_approval,
+    execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
     reject_stored_coding_loop_retry_approval,
@@ -456,6 +457,14 @@ def create_app() -> FastAPI:
             }
         )
 
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/execute")
+    def execution_execute_retry_approval(approval_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: _retry_execution_response(
+                execute_approved_coding_loop_retry_approval(approval_id)
+            )
+        )
+
     @app.get("/execution/plans")
     def execution_plans(
         limit: int = Query(default=10, ge=1, le=50),
@@ -540,6 +549,16 @@ def create_app() -> FastAPI:
         return get_execution_snapshot(limit=limit)
 
     return app
+
+
+def _retry_execution_response(
+    result: tuple[Any, dict[str, Any]],
+) -> dict[str, Any]:
+    approval, execution_run = result
+    return {
+        "retry_approval": inspect_coding_loop_retry_approval(approval),
+        "execution_run": execution_run,
+    }
 
 
 def _ensure_entity(entity: str) -> None:

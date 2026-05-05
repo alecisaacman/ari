@@ -331,6 +331,19 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert approved_retry.json()["retry_approval"]["approval"]["approved_by"] == "alec"
         assert (execution_root / "loop-api-proof.txt").read_text(encoding="utf-8") == "wrong"
 
+        executed_retry = client.post(
+            f"/execution/coding-loop/retry-approvals/{retry_approval_id}/execute"
+        )
+        assert executed_retry.status_code == 200
+        assert (
+            executed_retry.json()["retry_approval"]["retry_execution_status"]
+            == "completed"
+        )
+        assert executed_retry.json()["execution_run"]["status"] == "completed"
+        assert (execution_root / "loop-api-proof.txt").read_text(
+            encoding="utf-8"
+        ) == "inspected through api"
+
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
         assert any(

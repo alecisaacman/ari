@@ -25,6 +25,7 @@ from .modules.execution.api import (
     handle_api_execution_plans_show,
     handle_api_execution_read_file,
     handle_api_execution_retry_approvals_approve,
+    handle_api_execution_retry_approvals_execute,
     handle_api_execution_retry_approvals_list,
     handle_api_execution_retry_approvals_reject,
     handle_api_execution_retry_approvals_show,
@@ -972,6 +973,11 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Optional authority label for the rejector.",
     )
+    retry_approvals_execute_parser = retry_approvals_subparsers.add_parser(
+        "execute",
+        help="Execute one approved coding-loop retry approval.",
+    )
+    retry_approvals_execute_parser.add_argument("--id", required=True, help="Approval id.")
 
     execution_subparsers.add_parser("tools", help="List canonical execution tools.")
 
@@ -1514,6 +1520,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_execution_retry_approvals_command == "reject"
         ):
             return handle_api_execution_retry_approvals_reject(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "retry-approvals"
+            and args.api_execution_retry_approvals_command == "execute"
+        ):
+            return handle_api_execution_retry_approvals_execute(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "snapshot":
             return handle_api_execution_snapshot(args, db_path=db_path)
         if (

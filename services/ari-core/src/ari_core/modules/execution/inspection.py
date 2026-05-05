@@ -129,12 +129,16 @@ def inspect_coding_loop_retry_approval(
         "failed_verification_summary": payload.get("failed_verification_summary"),
         "approval_status": payload.get("approval_status"),
         "approval": payload.get("approval"),
+        "retry_execution_run_id": payload.get("retry_execution_run_id"),
+        "retry_execution_status": payload.get("retry_execution_status"),
+        "retry_execution_reason": payload.get("retry_execution_reason"),
         "retry_execution_requires_approval": payload.get(
             "retry_execution_requires_approval"
         ),
         "proposed_action_requires_approval": payload.get("proposed_action_requires_approval"),
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
+        "executed_at": payload.get("executed_at"),
         "rejected_by": payload.get("rejected_by"),
         "rejected_at": payload.get("rejected_at"),
     }

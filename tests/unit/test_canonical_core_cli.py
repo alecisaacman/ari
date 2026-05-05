@@ -412,6 +412,28 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert approved_retry_approval["approval_status"] == "approved"
     assert approved_retry_approval["approval"]["approved_by"] == "alec"
     assert (execution_root / "loop-proof.txt").read_text(encoding="utf-8") == "wrong"
+
+    retry_approval_execute_output = StringIO()
+    with redirect_stdout(retry_approval_execute_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "retry-approvals",
+                "execute",
+                "--id",
+                retry_approval_id,
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    executed_retry_approval = json.loads(retry_approval_execute_output.getvalue())
+    assert (
+        executed_retry_approval["retry_approval"]["retry_execution_status"]
+        == "completed"
+    )
+    assert executed_retry_approval["execution_run"]["status"] == "completed"
+    assert (execution_root / "loop-proof.txt").read_text(encoding="utf-8") == "inspected"
     assert db_path.exists()
 
 

@@ -445,8 +445,12 @@ create table if not exists ari_runtime_coding_loop_retry_approvals (
     approval_json text not null,
     retry_execution_requires_approval integer not null,
     proposed_action_requires_approval integer not null,
+    retry_execution_run_id text,
+    retry_execution_status text,
+    retry_execution_reason text,
     created_at text not null,
     updated_at text,
+    executed_at text,
     rejected_by text,
     rejected_at text
 );

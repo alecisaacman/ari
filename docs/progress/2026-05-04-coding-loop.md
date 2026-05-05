@@ -4,7 +4,7 @@ Date: 2026-05-04
 
 ## Position
 
-Overall ARI build estimate: 7.1/10.
+Overall ARI build estimate: 7.6/10.
 
 This slice upgrades the existing one-step coding loop seam. It does not add broad
 autonomy, approval mutation, arbitrary shell access, or multi-step execution.
@@ -32,12 +32,16 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
 - Pending retry-approval artifacts can be stored durably and marked approved or
   rejected through typed mutation seams. Mutation preserves the original
   proposal and source references and records terminal approval state.
+- Durably approved retry-approval artifacts can now execute exactly one retry
+  through the existing bounded execution controller. Execution records the
+  retry `ExecutionRun` id, execution status, reason, and timestamp back onto
+  the durable approval artifact.
 
 ## Boundary
 
 ARI still runs at most one validated action through the existing bounded
-execution path. Multi-step coding loops, retry execution, automatic approval,
-and UI approval controls remain future slices.
+execution path. Multi-step coding loops, repeated retry execution, automatic
+approval, and UI approval controls remain future slices.
 
 Coding-loop results are not persisted in a new store. If execution occurs, the
 existing `ExecutionRun` lifecycle trace remains the durable inspection record.
@@ -49,10 +53,17 @@ execute the retry, or start a retry loop.
 
 Retry approvals are now persisted in the existing coordination SQLite store as
 `ari_runtime_coding_loop_retry_approvals`. CLI/API inspection and mutation are
-available for retry approvals, but approval still only records authority state;
-it does not execute the retry.
+available for retry approvals.
+
+Approved retry execution is a separate boundary from approval mutation. A retry
+can execute only when the durable approval exists, is approved, has not already
+executed, and can be reconstructed as a normal `ExecutionGoal` through the
+existing bounded execution controller. Pending or rejected retry approvals do
+not execute. Already executed approvals do not execute again. Unsafe retry
+goals still fail closed through the existing planner, validation, and command
+policy path.
 
 ## Next Recommended Slice
 
-Add an explicit approved retry execution boundary that can execute only a
-durably approved, policy-validated retry proposal.
+Tighten retry execution explainability by linking retry execution traces into
+the broader memory/explanation layer without adding multi-step autonomy.

@@ -102,7 +102,11 @@ class CodingLoopRetryApproval:
     retry_execution_requires_approval: bool
     proposed_action_requires_approval: bool
     created_at: str
+    retry_execution_run_id: str | None = None
+    retry_execution_status: str | None = None
+    retry_execution_reason: str | None = None
     updated_at: str | None = None
+    executed_at: str | None = None
     rejected_by: str | None = None
     rejected_at: str | None = None
 
@@ -122,8 +126,12 @@ class CodingLoopRetryApproval:
             "approval_status": self.approval_status,
             "retry_execution_requires_approval": self.retry_execution_requires_approval,
             "proposed_action_requires_approval": self.proposed_action_requires_approval,
+            "retry_execution_run_id": self.retry_execution_run_id,
+            "retry_execution_status": self.retry_execution_status,
+            "retry_execution_reason": self.retry_execution_reason,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "executed_at": self.executed_at,
             "rejected_by": self.rejected_by,
             "rejected_at": self.rejected_at,
         }
@@ -339,6 +347,80 @@ def approve_stored_coding_loop_retry_approval(
     return store_coding_loop_retry_approval(approved, db_path=db_path)
 
 
+def execute_approved_coding_loop_retry_approval(
+    approval_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> tuple[CodingLoopRetryApproval, dict[str, Any]]:
+    current = get_coding_loop_retry_approval(approval_id, db_path=db_path)
+    if current is None:
+        raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
+    _validate_retry_execution_boundary(current)
+
+    source_run = _source_execution_run(current, db_path=db_path)
+    retry_goal = ExecutionGoal(
+        objective=current.proposed_retry_goal,
+        max_cycles=1,
+        metadata={
+            "source": "coding_loop_retry_approval",
+            "approval_id": current.approval_id,
+            "source_execution_run_id": current.source_execution_run_id,
+        },
+    )
+    execution_run = run_execution_goal(
+        retry_goal,
+        execution_root=source_run["repo_root"],
+        db_path=db_path,
+    )
+    execution_payload = execution_run.to_dict()
+    executed_at = _now_iso()
+    updated = replace(
+        current,
+        retry_execution_run_id=execution_run.id,
+        retry_execution_status=str(execution_payload.get("status") or ""),
+        retry_execution_reason=str(execution_payload.get("reason") or ""),
+        executed_at=executed_at,
+        updated_at=executed_at,
+    )
+    stored = store_coding_loop_retry_approval(updated, db_path=db_path)
+    return stored, execution_payload
+
+
+def _validate_retry_execution_boundary(approval: CodingLoopRetryApproval) -> None:
+    if approval.approval.status != "approved":
+        raise ValueError(
+            "Coding-loop retry approval must be approved before execution; "
+            f"current status is {approval.approval.status}."
+        )
+    if approval.retry_execution_run_id is not None or approval.executed_at is not None:
+        raise ValueError("Coding-loop retry approval has already been executed.")
+    if not approval.proposed_retry_goal.strip():
+        raise ValueError("Coding-loop retry approval does not include a retry goal.")
+
+
+def _source_execution_run(
+    approval: CodingLoopRetryApproval,
+    *,
+    db_path: Path,
+) -> dict[str, Any]:
+    if approval.source_execution_run_id is None:
+        raise ValueError("Coding-loop retry approval has no source execution run.")
+    row = get_coordination_entity(
+        "runtime_execution_run",
+        approval.source_execution_run_id,
+        db_path=db_path,
+    )
+    if row is None:
+        raise ValueError(
+            "Source execution run not found for coding-loop retry approval: "
+            f"{approval.source_execution_run_id}."
+        )
+    return {
+        "id": row["id"],
+        "repo_root": row["repo_root"],
+    }
+
+
 def reject_stored_coding_loop_retry_approval(
     approval_id: str,
     *,
@@ -376,8 +458,12 @@ def _retry_approval_record(approval: CodingLoopRetryApproval) -> dict[str, objec
         "approval_json": json.dumps(approval.approval.to_dict()),
         "retry_execution_requires_approval": int(approval.retry_execution_requires_approval),
         "proposed_action_requires_approval": int(approval.proposed_action_requires_approval),
+        "retry_execution_run_id": approval.retry_execution_run_id,
+        "retry_execution_status": approval.retry_execution_status,
+        "retry_execution_reason": approval.retry_execution_reason,
         "created_at": approval.created_at,
         "updated_at": approval.updated_at,
+        "executed_at": approval.executed_at,
         "rejected_by": approval.rejected_by,
         "rejected_at": approval.rejected_at,
     }
@@ -402,7 +488,11 @@ def _retry_approval_from_row(row: Any) -> CodingLoopRetryApproval:
         retry_execution_requires_approval=bool(row["retry_execution_requires_approval"]),
         proposed_action_requires_approval=bool(row["proposed_action_requires_approval"]),
         created_at=str(row["created_at"]),
+        retry_execution_run_id=_string_or_none(row["retry_execution_run_id"]),
+        retry_execution_status=_string_or_none(row["retry_execution_status"]),
+        retry_execution_reason=_string_or_none(row["retry_execution_reason"]),
         updated_at=_string_or_none(row["updated_at"]),
+        executed_at=_string_or_none(row["executed_at"]),
         rejected_by=_string_or_none(row["rejected_by"]),
         rejected_at=_string_or_none(row["rejected_at"]),
     )
@@ -843,7 +933,11 @@ def _retry_approval_artifact(
         retry_execution_requires_approval=True,
         proposed_action_requires_approval=proposed_action_requires_approval,
         created_at=created_at,
+        retry_execution_run_id=None,
+        retry_execution_status=None,
+        retry_execution_reason=None,
         updated_at=None,
+        executed_at=None,
         rejected_by=None,
         rejected_at=None,
     )

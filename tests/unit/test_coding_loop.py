@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -9,11 +10,13 @@ from ari_core.modules.execution import (
     ModelPlanner,
     approve_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
+    execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
     reject_coding_loop_retry_approval,
     reject_stored_coding_loop_retry_approval,
     run_one_step_coding_loop,
+    store_coding_loop_retry_approval,
 )
 from ari_core.modules.execution.inspection import (
     get_execution_run,
@@ -628,6 +631,123 @@ def test_stored_coding_loop_retry_approval_fails_safely(
             rejected_reason="Too late.",
             db_path=db_path,
         )
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_approved_coding_loop_retry_approval_executes_one_retry(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    executed, execution_run = execute_approved_coding_loop_retry_approval(
+        approved.approval_id,
+        db_path=db_path,
+    )
+
+    assert executed.retry_execution_run_id == execution_run["id"]
+    assert executed.retry_execution_status == "completed"
+    assert executed.retry_execution_reason == "Action executed and verification passed."
+    assert executed.executed_at is not None
+    assert execution_run["status"] == "completed"
+    assert execution_run["cycles_run"] == 1
+    assert execution_run["decisions"][0]["planner_name"] == "rule_based"
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "right"
+
+    stored = get_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+    assert stored is not None
+    assert stored.retry_execution_run_id == execution_run["id"]
+    assert stored.retry_execution_status == "completed"
+    assert stored.executed_at == executed.executed_at
+    inspected = inspect_coding_loop_retry_approval(stored)
+    assert inspected["retry_execution_run_id"] == execution_run["id"]
+    assert inspected["retry_execution_status"] == "completed"
+    assert inspected["executed_at"] == executed.executed_at
+
+
+def test_coding_loop_retry_execution_requires_approved_status(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    with pytest.raises(ValueError, match="must be approved"):
+        execute_approved_coding_loop_retry_approval(
+            result.retry_approval.approval_id,
+            db_path=db_path,
+        )
+
+    rejected = reject_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        rejected_reason="Do not retry.",
+        db_path=db_path,
+    )
+    with pytest.raises(ValueError, match="must be approved"):
+        execute_approved_coding_loop_retry_approval(
+            rejected.approval_id,
+            db_path=db_path,
+        )
+
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_coding_loop_retry_execution_fails_safely_for_unknown_or_repeated_id(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    with pytest.raises(ValueError, match="not found"):
+        execute_approved_coding_loop_retry_approval(
+            "coding-loop-retry-approval-missing",
+            db_path=db_path,
+        )
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    execute_approved_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+    with pytest.raises(ValueError, match="already been executed"):
+        execute_approved_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "right"
+
+
+def test_approved_coding_loop_retry_execution_keeps_unsafe_retry_closed(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    unsafe = replace(
+        approved,
+        proposed_retry_goal="run rm -rf .",
+        proposed_retry_action={"type": "run_command", "command": ["rm", "-rf", "."]},
+        proposed_retry_action_description="run_command ['rm', '-rf', '.']",
+    )
+    store_coding_loop_retry_approval(unsafe, db_path=db_path)
+
+    executed, execution_run = execute_approved_coding_loop_retry_approval(
+        unsafe.approval_id,
+        db_path=db_path,
+    )
+
+    assert execution_run["status"] == "rejected"
+    assert executed.retry_execution_status == "rejected"
+    assert "command is not allowlisted" in executed.retry_execution_reason
+    assert execution_run["cycles_run"] == 1
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
 
 
