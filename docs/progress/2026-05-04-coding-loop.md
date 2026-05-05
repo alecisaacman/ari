@@ -85,6 +85,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   future skills must plug into ARI's shared memory, authority, validation,
   execution, verification, persistence, inspection, explanation, and learning
   spine without becoming competing brains.
+- Coding-loop chain-control helpers have been extracted into a focused
+  execution module. The public coding-loop entrypoints, CLI/API behavior,
+  approval semantics, persistence, inspection, and memory capture behavior are
+  unchanged.
 
 ## Boundary
 
@@ -156,6 +160,5 @@ bounded outcomes without copying full `ExecutionRun` payloads.
 
 ## Next Recommended Slice
 
-Consolidate coding-loop module boundaries where they have grown large, starting
-with a small extraction of chain/approval helpers if it reduces coupling without
-changing behavior.
+Continue behavior-preserving consolidation only where it is obviously useful;
+the next likely boundary is retry review / continuation helpers.
