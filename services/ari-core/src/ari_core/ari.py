@@ -79,6 +79,7 @@ from .modules.networking.cli import (
     handle_today,
 )
 from .modules.notes.api import handle_api_notes_save, handle_api_notes_search
+from .modules.overview import get_ari_operating_overview
 from .modules.policy.api import (
     handle_api_policy_awareness_derive,
     handle_api_policy_awareness_latest,
@@ -389,6 +390,23 @@ def _handle_api_skills_propose(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_api_overview_show(args: argparse.Namespace) -> int:
+    overview = get_ari_operating_overview()
+    payload = {"overview": overview.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    overview_payload = payload["overview"]
+    print(f"ARI overview: {overview_payload['system_label']}")
+    print(f"Dashboard mode: {overview_payload['dashboard_mode']}")
+    print(f"Active skills: {overview_payload['active_skill_count']}")
+    print(f"Prototype skills: {overview_payload['prototype_skill_count']}")
+    print(f"Candidate skills: {overview_payload['candidate_skill_count']}")
+    print(f"Authority: {overview_payload['authority_warning']}")
+    return 0
+
+
 def execute(action: dict, execution_root: Path | str | None = None) -> dict:
     """Run a minimal bounded execution action through canonical ARI."""
 
@@ -684,6 +702,19 @@ def _add_docs_parsers(subparsers: argparse._SubParsersAction) -> None:
 def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     api_parser = subparsers.add_parser("api", help="Canonical ARI API commands.")
     api_subparsers = api_parser.add_subparsers(dest="api_command", required=True)
+
+    overview_parser = api_subparsers.add_parser(
+        "overview", help="Read-only ARI operating overview commands."
+    )
+    overview_subparsers = overview_parser.add_subparsers(
+        dest="api_overview_command", required=True
+    )
+    overview_show_parser = overview_subparsers.add_parser(
+        "show", help="Show the ARI-owned dashboard overview read model."
+    )
+    overview_show_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
 
     self_doc_parser = api_subparsers.add_parser(
         "self-doc", help="ARI self-documentation skill commands."
@@ -1768,6 +1799,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_session_build(args, db_path=db_path)
 
     if args.command == "api":
+        if args.api_command == "overview" and args.api_overview_command == "show":
+            return _handle_api_overview_show(args)
         if (
             args.api_command == "self-doc"
             and args.api_self_doc_command == "seed"

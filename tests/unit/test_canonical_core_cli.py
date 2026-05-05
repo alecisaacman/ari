@@ -324,6 +324,53 @@ def test_canonical_core_cli_self_doc_package_from_incomplete_seed_json(
     assert "source_commits" in payload["error"]
 
 
+def test_canonical_core_cli_overview_show_json(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            ["api", "overview", "show", "--json"],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    overview = json.loads(output.getvalue())["overview"]
+    assert overview["dashboard_mode"] == "read_only"
+    assert overview["active_skill_count"] == 1
+    assert overview["prototype_skill_count"] == 1
+    assert overview["candidate_skill_count"] >= 8
+    assert overview["active_skills"][0]["skill_id"] == "ari.native.coding_loop"
+    assert "ACE may display" in overview["authority_warning"]
+
+
+def test_canonical_core_cli_overview_does_not_execute(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    def fail_external(*args, **kwargs):
+        raise AssertionError(f"unexpected execution call: {args} {kwargs}")
+
+    monkeypatch.setattr("subprocess.run", fail_external)
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            ["api", "overview", "show", "--json"],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    assert json.loads(output.getvalue())["overview"]["dashboard_mode"] == "read_only"
+
+
 def test_canonical_core_cli_skills_route_json(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))

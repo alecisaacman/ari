@@ -61,6 +61,16 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert health.status_code == 200
         assert health.json()["service"] == "ari-api"
 
+        overview = client.get("/overview")
+        assert overview.status_code == 200
+        overview_payload = overview.json()["overview"]
+        assert overview_payload["dashboard_mode"] == "read_only"
+        assert overview_payload["active_skill_count"] == 1
+        assert overview_payload["prototype_skill_count"] == 1
+        assert overview_payload["candidate_skill_count"] >= 8
+        assert overview_payload["active_skills"][0]["skill_id"] == "ari.native.coding_loop"
+        assert "ACE may display" in overview_payload["authority_warning"]
+
         memory = client.post(
             "/memory",
             json={

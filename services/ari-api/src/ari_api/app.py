@@ -85,6 +85,7 @@ from ari_core.modules.memory.explain import (
 )
 from ari_core.modules.memory.self_model import ensure_self_model_memory, get_self_model_memory
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
+from ari_core.modules.overview import get_ari_operating_overview
 from ari_core.modules.policy.engine import (
     build_project_draft,
     classify_builder_output,
@@ -144,6 +145,10 @@ def create_app() -> FastAPI:
             "dbExists": Path(DB_PATH).exists(),
             "entities": sorted(ENTITY_CONFIG.keys()),
         }
+
+    @app.get("/overview")
+    def overview() -> dict[str, Any]:
+        return {"overview": get_ari_operating_overview().to_dict()}
 
     @app.post("/notes")
     def create_note(payload: NoteCreateRequest) -> dict[str, Any]:
