@@ -9,10 +9,11 @@ the shared ARI spine, verify the result, and learn from the outcome.
 This document is a status inventory, not a runtime registry. It does not enable
 dynamic loading, generic orchestration, or imported skill execution.
 
-ARI also has a minimal read-only skill-selection prototype that can classify a
-goal against known documented skills and candidate missing skills. It returns a
-routing recommendation only; it does not execute skills, load skills
-dynamically, or persist routing decisions.
+ARI also has a minimal read-only skill-selection prototype backed by a static
+machine-readable skill catalog. It can classify a goal against known documented
+skills and candidate missing skills. It returns a routing recommendation only;
+it does not execute skills, load skills dynamically, or persist routing
+decisions.
 
 ## Current Native Skills
 

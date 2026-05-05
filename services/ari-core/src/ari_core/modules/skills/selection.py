@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import uuid4
 
+from .catalog import SkillManifest, get_skill_manifest
+
 
 class SkillRouteStatus(StrEnum):
     ROUTE_TO_SKILL = "route_to_skill"
@@ -34,81 +36,6 @@ class SkillRoutingRecommendation:
         payload = asdict(self)
         payload["status"] = self.status.value
         return payload
-
-
-@dataclass(frozen=True, slots=True)
-class _SkillProfile:
-    skill_id: str
-    capabilities: tuple[str, ...]
-    authority_boundary: str
-    verification_expectation: str
-    memory_effect_expectation: str
-
-
-CODING_LOOP = _SkillProfile(
-    skill_id="ari.native.coding_loop",
-    capabilities=(
-        "bounded repository inspection",
-        "bounded file write or patch proposal",
-        "unit-test or ruff-backed verification",
-        "approval-aware retry chain",
-    ),
-    authority_boundary=(
-        "Must use ARI execution validation, safe command policy, and approval boundaries "
-        "before mutation or approved retry execution."
-    ),
-    verification_expectation=(
-        "Verify with existing bounded execution results and allowed local test/lint commands."
-    ),
-    memory_effect_expectation=(
-        "Capture compact coding-loop lifecycle memory only after an inspected chain outcome."
-    ),
-)
-
-SELF_DOCUMENTATION = _SkillProfile(
-    skill_id="ari.native.self_documentation",
-    capabilities=(
-        "content seed generation from local evidence",
-        "content package planning from seed evidence",
-        "demo script and shot-list drafting",
-        "redaction and claims-to-avoid review",
-    ),
-    authority_boundary=(
-        "Read-only by default; approval required before recording, exporting, posting, "
-        "uploading, or including sensitive data."
-    ),
-    verification_expectation=(
-        "Verify claims against commits, tests, docs, execution traces, and current skill status."
-    ),
-    memory_effect_expectation=(
-        "May create compact content-planning summaries; must not duplicate full traces."
-    ),
-)
-
-MISSING_SKILL_CANDIDATES = {
-    "file_organization": _SkillProfile(
-        skill_id="ari.native.file_organization",
-        capabilities=("local file organization", "dry-run move or cleanup proposal"),
-        authority_boundary=(
-            "Approval required before broad filesystem traversal, moves, copies, or deletes."
-        ),
-        verification_expectation=(
-            "Would require before/after manifests and reversible dry-run plans."
-        ),
-        memory_effect_expectation="Would store compact organization rationale and outcomes.",
-    ),
-    "document_processing": _SkillProfile(
-        skill_id="ari.native.document_processing",
-        capabilities=("document or PDF summarization", "document extraction"),
-        authority_boundary=(
-            "Approval required before exposing, exporting, or mutating private documents."
-        ),
-        verification_expectation=(
-            "Would require extracted-text evidence, file references, and readback checks."
-        ),
-        memory_effect_expectation="Would store compact document summary references only.",
-    ),
-}
 
 
 def route_goal_to_skill(goal: str) -> SkillRoutingRecommendation:
@@ -147,8 +74,10 @@ def route_goal_to_skill(goal: str) -> SkillRoutingRecommendation:
     if missing_candidate:
         return _missing_skill(clean_goal, missing_candidate)
 
-    coding_score = _score(normalized, _CODING_KEYWORDS)
-    self_doc_score = _score(normalized, _SELF_DOCUMENTATION_KEYWORDS)
+    coding_loop = _required_manifest("ari.native.coding_loop")
+    self_documentation = _required_manifest("ari.native.self_documentation")
+    coding_score = _score(normalized, coding_loop.allowed_goal_patterns)
+    self_doc_score = _score(normalized, self_documentation.allowed_goal_patterns)
 
     if coding_score == 0 and self_doc_score == 0:
         return _ask_user(
@@ -158,41 +87,8 @@ def route_goal_to_skill(goal: str) -> SkillRoutingRecommendation:
         )
 
     if coding_score >= self_doc_score:
-        return _route_to_skill(clean_goal, CODING_LOOP, coding_score)
-    return _route_to_skill(clean_goal, SELF_DOCUMENTATION, self_doc_score)
-
-
-_CODING_KEYWORDS = (
-    "write file",
-    "patch",
-    "fix failing",
-    "unit test",
-    "pytest",
-    "ruff",
-    "inspect recent code",
-    "code changes",
-    "repo",
-    "repository",
-    "implementation",
-    "refactor",
-    "bug",
-)
-
-_SELF_DOCUMENTATION_KEYWORDS = (
-    "content seed",
-    "content package",
-    "demo script",
-    "shot list",
-    "voiceover",
-    "linkedin post",
-    "tiktok",
-    "reel",
-    "build summary",
-    "recent commits",
-    "last ari work",
-    "self-documentation",
-    "document its own build",
-)
+        return _route_to_skill(clean_goal, coding_loop, coding_score)
+    return _route_to_skill(clean_goal, self_documentation, self_doc_score)
 
 _UNSAFE_KEYWORDS = (
     "expose secrets",
@@ -221,7 +117,7 @@ _BLOCKED_KEYWORDS = (
 
 def _route_to_skill(
     goal: str,
-    profile: _SkillProfile,
+    profile: SkillManifest,
     score: int,
 ) -> SkillRoutingRecommendation:
     confidence = min(0.95, 0.62 + (score * 0.08))
@@ -232,14 +128,14 @@ def _route_to_skill(
         recommended_skill_id=profile.skill_id,
         confidence=round(confidence, 2),
         reason=f"Goal matches {profile.skill_id} capability keywords.",
-        matched_capabilities=profile.capabilities,
+        matched_capabilities=profile.capability_summary,
         required_authority_boundary=profile.authority_boundary,
         verification_expectation=profile.verification_expectation,
         memory_effect_expectation=profile.memory_effect_expectation,
     )
 
 
-def _missing_skill(goal: str, profile: _SkillProfile) -> SkillRoutingRecommendation:
+def _missing_skill(goal: str, profile: SkillManifest) -> SkillRoutingRecommendation:
     return SkillRoutingRecommendation(
         route_id=f"skill-route-{uuid4()}",
         goal=goal,
@@ -247,7 +143,7 @@ def _missing_skill(goal: str, profile: _SkillProfile) -> SkillRoutingRecommendat
         recommended_skill_id=None,
         confidence=0.82,
         reason=f"Goal appears to require missing candidate skill {profile.skill_id}.",
-        matched_capabilities=profile.capabilities,
+        matched_capabilities=profile.capability_summary,
         required_authority_boundary=profile.authority_boundary,
         verification_expectation=profile.verification_expectation,
         memory_effect_expectation=profile.memory_effect_expectation,
@@ -307,16 +203,25 @@ def _blocked_reason(goal: str) -> str | None:
     return None
 
 
-def _missing_skill_candidate(goal: str) -> _SkillProfile | None:
-    if any(keyword in goal for keyword in ("downloads folder", "organize files", "file organize")):
-        return MISSING_SKILL_CANDIDATES["file_organization"]
-    if any(keyword in goal for keyword in ("pdf", "docx", "this document", "document file")):
-        return MISSING_SKILL_CANDIDATES["document_processing"]
+def _missing_skill_candidate(goal: str) -> SkillManifest | None:
+    file_organization = _required_manifest("ari.native.file_organization")
+    document_processing = _required_manifest("ari.native.document_processing")
+    if _score(goal, file_organization.allowed_goal_patterns):
+        return file_organization
+    if _score(goal, document_processing.allowed_goal_patterns):
+        return document_processing
     return None
 
 
 def _score(goal: str, keywords: tuple[str, ...]) -> int:
     return sum(1 for keyword in keywords if keyword in goal)
+
+
+def _required_manifest(skill_id: str) -> SkillManifest:
+    manifest = get_skill_manifest(skill_id)
+    if manifest is None:
+        raise RuntimeError(f"Static skill catalog missing required skill {skill_id}.")
+    return manifest
 
 
 def _now_iso() -> str:

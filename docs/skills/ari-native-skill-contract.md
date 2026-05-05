@@ -176,8 +176,9 @@ into ARI; they do not become ARI.
 
 The read-only skill-selection prototype may recommend an existing skill, ask
 for clarification, identify a missing candidate skill, or block unsafe goals.
-It must not execute skills, load skills dynamically, or become a separate
-planner.
+It uses a static machine-readable catalog for skill metadata, but it must not
+execute skills, load skills dynamically, persist routing decisions, or become a
+separate planner.
 
 The first static manifest instance is `docs/skills/coding-loop-skill.md`.
 The first designed candidate beyond the coding loop is

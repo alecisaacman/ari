@@ -20,8 +20,8 @@
 - docs-only skill design for future self-documentation/content creation
 - docs-only readiness checklist for self-documentation content seeds
 - read-only self-documentation content seed generator from git commit ranges
-- read-only skill-selection prototype for routing goals to known skills or
-  missing-skill candidates
+- static machine-readable skill catalog plus read-only skill-selection
+  prototype for routing goals to known skills or missing-skill candidates
 
 ## Still evolving
 - autonomous coding loop
