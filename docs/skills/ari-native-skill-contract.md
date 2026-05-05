@@ -172,3 +172,5 @@ This contract should guide:
 The next code work should extract only the smallest reusable pieces proven by
 the coding loop. Until then, this contract is the boundary: future skills plug
 into ARI; they do not become ARI.
+
+The first static manifest instance is `docs/skills/coding-loop-skill.md`.
