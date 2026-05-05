@@ -265,5 +265,6 @@ Stage 1 readiness is defined in
 `docs/skills/self-documentation-stage-1-readiness.md`.
 
 The first Stage 1 implementation provides a local, deterministic `ContentSeed`
-generator from a git commit range. It does not persist, record, edit, export,
-publish, upload, or call external services.
+generator from a git commit range, exposed through
+`api self-doc seed from-commits --from <hash> --to <hash> --json`. It does not
+persist, record, edit, export, publish, upload, or call external services.

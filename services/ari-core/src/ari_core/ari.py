@@ -1,5 +1,6 @@
 # ruff: noqa: E501
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -88,6 +89,7 @@ from .modules.policy.api import (
     handle_api_policy_project_draft,
     handle_api_policy_project_focus,
 )
+from .modules.self_documentation import generate_content_seed_from_commits
 from .modules.tasks.api import (
     handle_api_tasks_create,
     handle_api_tasks_get,
@@ -198,6 +200,40 @@ TOP_LEVEL_COMMANDS = {
     *LEGACY_NETWORKING_TOP_LEVEL,
     *LEGACY_DOCUMENTATION_TOP_LEVEL,
 }
+
+
+def _handle_api_self_doc_seed_from_commits(args: argparse.Namespace) -> int:
+    try:
+        seed = generate_content_seed_from_commits(
+            from_ref=args.from_ref,
+            to_ref=args.to_ref,
+            repo_root=Path(args.repo_root),
+            test_output=args.test_output,
+            user_framing=args.user_framing,
+        )
+    except ValueError as exc:
+        if args.as_json:
+            print(json.dumps({"error": str(exc)}, indent=2, sort_keys=True))
+        else:
+            print(f"Unable to generate content seed: {exc}", file=sys.stderr)
+        return 1
+
+    payload = seed.to_dict()
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Content seed: {payload['title']}")
+    print(f"Seed id: {payload['seed_id']}")
+    print(f"Source range: {payload['source_commit_range']}")
+    print(f"Commits: {len(payload['source_commits'])}")
+    print(f"Files: {len(payload['source_files'])}")
+    print(f"Demo idea: {payload['demo_idea']}")
+    if payload["risk_notes"]:
+        print("Risk notes:")
+        for note in payload["risk_notes"]:
+            print(f"- {note}")
+    return 0
 
 
 def execute(action: dict, execution_root: Path | str | None = None) -> dict:
@@ -495,6 +531,40 @@ def _add_docs_parsers(subparsers: argparse._SubParsersAction) -> None:
 def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     api_parser = subparsers.add_parser("api", help="Canonical ARI API commands.")
     api_subparsers = api_parser.add_subparsers(dest="api_command", required=True)
+
+    self_doc_parser = api_subparsers.add_parser(
+        "self-doc", help="ARI self-documentation skill commands."
+    )
+    self_doc_subparsers = self_doc_parser.add_subparsers(
+        dest="api_self_doc_command", required=True
+    )
+    self_doc_seed_parser = self_doc_subparsers.add_parser(
+        "seed", help="Generate factual self-documentation content seeds."
+    )
+    self_doc_seed_subparsers = self_doc_seed_parser.add_subparsers(
+        dest="api_self_doc_seed_command", required=True
+    )
+    self_doc_from_commits_parser = self_doc_seed_subparsers.add_parser(
+        "from-commits", help="Generate a ContentSeed from a local git commit range."
+    )
+    self_doc_from_commits_parser.add_argument(
+        "--from", dest="from_ref", required=True, help="Starting git ref, exclusive."
+    )
+    self_doc_from_commits_parser.add_argument(
+        "--to", dest="to_ref", required=True, help="Ending git ref, inclusive."
+    )
+    self_doc_from_commits_parser.add_argument(
+        "--repo-root", default=".", help="Local git repository root. Defaults to cwd."
+    )
+    self_doc_from_commits_parser.add_argument(
+        "--test-output", default=None, help="Optional test output text to include as evidence."
+    )
+    self_doc_from_commits_parser.add_argument(
+        "--user-framing", default=None, help="Optional user-approved narrative framing."
+    )
+    self_doc_from_commits_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
 
     memory_parser = api_subparsers.add_parser(
         "memory", help="Canonical ARI structured memory API commands."
@@ -1487,6 +1557,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_session_build(args, db_path=db_path)
 
     if args.command == "api":
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "seed"
+            and args.api_self_doc_seed_command == "from-commits"
+        ):
+            return _handle_api_self_doc_seed_from_commits(args)
         if args.api_command == "memory" and args.api_memory_command == "remember":
             return handle_api_memory_remember(args, db_path=db_path)
         if args.api_command == "memory" and args.api_memory_command == "list":

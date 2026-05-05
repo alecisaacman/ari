@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from dataclasses import replace
@@ -12,6 +13,140 @@ def _purge_modules() -> None:
     for module_name in list(sys.modules):
         if module_name == "ari_core" or module_name.startswith("ari_core."):
             sys.modules.pop(module_name, None)
+
+
+def _git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def test_canonical_core_cli_self_doc_seed_from_commits_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "ari@example.com")
+    _git(repo, "config", "user.name", "ARI Test")
+    (repo / "README.md").write_text("ARI\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "Initial ARI baseline")
+    base_ref = _git(repo, "rev-parse", "HEAD")
+
+    docs_dir = repo / "docs" / "skills"
+    tests_dir = repo / "tests" / "unit"
+    docs_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+    (docs_dir / "self-documentation-skill.md").write_text(
+        "Document content seed generation.\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_self_documentation_content_seed.py").write_text(
+        "def test_seed():\n    assert True\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "Generate self-documentation content seeds")
+    head_ref = _git(repo, "rev-parse", "HEAD")
+
+    before_files = {
+        path.relative_to(repo)
+        for path in repo.rglob("*")
+        if ".git" not in path.relative_to(repo).parts
+    }
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "seed",
+                "from-commits",
+                "--from",
+                base_ref,
+                "--to",
+                head_ref,
+                "--repo-root",
+                str(repo),
+                "--test-output",
+                ".venv312/bin/python -m pytest tests/unit -q\n181 passed",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    seed = json.loads(output.getvalue())
+    assert seed["seed_id"].startswith("content-seed-")
+    assert seed["source_commit_range"] == f"{base_ref}..{head_ref}"
+    assert seed["source_commits"] == [
+        {
+            "hash": head_ref,
+            "subject": "Generate self-documentation content seeds",
+        }
+    ]
+    assert "docs/skills/self-documentation-skill.md" in seed["source_files"]
+    assert "tests/unit/test_self_documentation_content_seed.py" in seed["source_files"]
+    assert seed["hook_options"]
+    assert seed["demo_idea"]
+    assert seed["claims_to_avoid"]
+    after_files = {
+        path.relative_to(repo)
+        for path in repo.rglob("*")
+        if ".git" not in path.relative_to(repo).parts
+    }
+    assert after_files == before_files
+
+
+def test_canonical_core_cli_self_doc_seed_from_commits_invalid_range(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "seed",
+                "from-commits",
+                "--from",
+                "missing-start",
+                "--to",
+                "missing-end",
+                "--repo-root",
+                str(repo),
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert "Unable to inspect git commits" in payload["error"]
 
 
 def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(

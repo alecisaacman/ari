@@ -128,13 +128,17 @@ publish publicly, or call external integrations.
 
 ## CLI/API Future Surface
 
+Implemented read-only CLI:
+
+- `api self-doc seed from-commits --from <hash> --to <hash> --json`
+
 Possible future commands:
 
-- `api self-doc seed from-commits --from <hash> --to <hash>`
 - `api self-doc seed latest --limit <n>`
 - `api self-doc seed show --id <seed_id>`
 
-These are suggestions only. They are not implemented by this readiness doc.
+The future commands require persistence first and are not implemented by this
+readiness doc.
 
 ## Relationship To ACE
 
