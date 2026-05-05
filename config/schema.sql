@@ -430,6 +430,30 @@ create table if not exists ari_runtime_execution_plan_previews (
     created_at text not null
 );
 
+create table if not exists ari_runtime_coding_loop_results (
+    id text primary key,
+    original_goal text not null,
+    status text not null,
+    reason text not null,
+    preview_id text,
+    execution_run_id text,
+    execution_occurred integer not null,
+    approval_required_reason text,
+    retry_proposal_json text not null,
+    retry_approval_id text,
+    retry_approval_status text,
+    retry_execution_run_id text,
+    retry_execution_status text,
+    retry_execution_reason text,
+    post_run_review_json text not null,
+    next_retry_approval_id text,
+    suggested_next_goal text,
+    suggested_next_action_json text not null,
+    stop_reason text,
+    created_at text not null,
+    updated_at text not null
+);
+
 create table if not exists ari_runtime_coding_loop_retry_approvals (
     approval_id text primary key,
     source_coding_loop_result_id text not null,

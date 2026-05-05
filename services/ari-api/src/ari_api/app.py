@@ -38,11 +38,13 @@ from ari_core.modules.execution.engine import (
     write_file,
 )
 from ari_core.modules.execution.inspection import (
+    get_coding_loop_result,
     get_execution_plan_preview,
     get_execution_run,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
     inspect_coding_loop_retry_execution_review,
+    list_coding_loop_results,
     list_execution_plan_previews,
     list_execution_runs,
 )
@@ -419,6 +421,22 @@ def create_app() -> FastAPI:
                 )
             }
         )
+
+    @app.get("/execution/coding-loop/results")
+    def execution_coding_loop_results(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"coding_loops": list_coding_loop_results(limit=limit)}
+
+    @app.get("/execution/coding-loop/results/{result_id}")
+    def execution_coding_loop_result(result_id: str) -> dict[str, Any]:
+        result = get_coding_loop_result(result_id)
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Coding-loop result {result_id} not found.",
+            )
+        return {"coding_loop": result}
 
     @app.get("/execution/coding-loop/retry-approvals")
     def execution_retry_approvals(

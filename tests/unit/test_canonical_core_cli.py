@@ -304,6 +304,28 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert coding_loop["retry_approval_status"] is None
     assert (execution_root / "loop-proof.txt").read_text(encoding="utf-8") == "inspected"
 
+    coding_loops_output = StringIO()
+    with redirect_stdout(coding_loops_output):
+        exit_code = main(
+            ["api", "execution", "coding-loops", "list", "--limit", "3"],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    coding_loops = json.loads(coding_loops_output.getvalue())["coding_loops"]
+    assert coding_loops[0]["id"] == coding_loop["id"]
+    assert coding_loops[0]["execution_run_id"] == coding_loop["execution_run_id"]
+
+    coding_loop_show_output = StringIO()
+    with redirect_stdout(coding_loop_show_output):
+        exit_code = main(
+            ["api", "execution", "coding-loops", "show", "--id", coding_loop["id"]],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    shown_coding_loop = json.loads(coding_loop_show_output.getvalue())["coding_loop"]
+    assert shown_coding_loop["id"] == coding_loop["id"]
+    assert shown_coding_loop["status"] == "success"
+
     unsafe_loop_output = StringIO()
     with redirect_stdout(unsafe_loop_output):
         exit_code = main(
@@ -529,6 +551,26 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert next_retry_approval["prior_retry_execution_run_id"] == (
         second_retry_result.execution_run_id
     )
+
+    shown_second_result_output = StringIO()
+    with redirect_stdout(shown_second_result_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "coding-loops",
+                "show",
+                "--id",
+                second_retry_result.id,
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    shown_second_result = json.loads(shown_second_result_output.getvalue())["coding_loop"]
+    assert shown_second_result["next_retry_approval_id"] == (
+        next_retry_approval["approval_id"]
+    )
+    assert shown_second_result["post_run_review"]["status"] == "propose_retry"
     assert db_path.exists()
 
 

@@ -71,6 +71,34 @@ def get_execution_plan_preview(
     return _decode_execution_plan_preview_row(row)
 
 
+def list_coding_loop_results(
+    *,
+    limit: int = 10,
+    db_path: Path = DB_PATH,
+) -> list[dict[str, Any]]:
+    rows = list_coordination_entities(
+        "runtime_coding_loop_result",
+        limit=limit,
+        db_path=db_path,
+    )
+    return [_decode_coding_loop_result_row(row) for row in rows]
+
+
+def get_coding_loop_result(
+    result_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    row = get_coordination_entity(
+        "runtime_coding_loop_result",
+        result_id,
+        db_path=db_path,
+    )
+    if row is None:
+        return None
+    return _decode_coding_loop_result_row(row)
+
+
 def inspect_coding_loop_result(
     result: CodingLoopResult | dict[str, Any],
 ) -> dict[str, Any]:
@@ -208,6 +236,32 @@ def _decode_execution_plan_preview_row(row: Any) -> dict[str, Any]:
     }
 
 
+def _decode_coding_loop_result_row(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "original_goal": row["original_goal"],
+        "status": row["status"],
+        "reason": row["reason"],
+        "preview_id": row["preview_id"],
+        "execution_run_id": row["execution_run_id"],
+        "execution_occurred": bool(row["execution_occurred"]),
+        "approval_required_reason": row["approval_required_reason"],
+        "retry_proposal": _json_object_or_none(row["retry_proposal_json"]),
+        "retry_approval_id": row["retry_approval_id"],
+        "retry_approval_status": row["retry_approval_status"],
+        "retry_execution_run_id": row["retry_execution_run_id"],
+        "retry_execution_status": row["retry_execution_status"],
+        "retry_execution_reason": row["retry_execution_reason"],
+        "post_run_review": _json_object_or_none(row["post_run_review_json"]),
+        "next_retry_approval_id": row["next_retry_approval_id"],
+        "suggested_next_goal": row["suggested_next_goal"],
+        "suggested_next_action": _json_object_or_none(row["suggested_next_action_json"]),
+        "stop_reason": row["stop_reason"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
 def _json_list(raw_value: str) -> list[dict[str, Any]]:
     decoded = json.loads(raw_value or "[]")
     if not isinstance(decoded, list):
@@ -220,6 +274,11 @@ def _json_object(raw_value: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         return {}
     return decoded
+
+
+def _json_object_or_none(raw_value: str) -> dict[str, Any] | None:
+    decoded = _json_object(raw_value)
+    return decoded or None
 
 
 def _string_or_none(raw: object) -> str | None:

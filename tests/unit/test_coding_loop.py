@@ -21,10 +21,12 @@ from ari_core.modules.execution import (
     store_coding_loop_retry_approval,
 )
 from ari_core.modules.execution.inspection import (
+    get_coding_loop_result,
     get_execution_run,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
     inspect_coding_loop_retry_execution_review,
+    list_coding_loop_results,
 )
 from ari_core.modules.execution.models import (
     ExecutionGoal,
@@ -940,6 +942,130 @@ def test_one_step_coding_loop_lifecycle_is_inspectable(tmp_path: Path) -> None:
     assert stored is not None
     assert stored["status"] == "completed"
     assert result.to_dict()["execution_run_id"] == result.execution_run_id
+
+    persisted = get_coding_loop_result(result.id, db_path=db_path)
+    assert persisted is not None
+    assert persisted["id"] == result.id
+    assert persisted["status"] == "success"
+    assert persisted["original_goal"] == "write file proof.txt with lifecycle"
+    assert persisted["execution_run_id"] == result.execution_run_id
+    assert persisted["execution_occurred"] is True
+    assert persisted["retry_proposal"] is None
+    assert persisted["retry_approval_id"] is None
+    assert persisted["post_run_review"] is None
+    assert "execution_run" not in persisted
+
+
+def test_coding_loop_result_persists_non_executing_outcomes(tmp_path: Path) -> None:
+    db_path = tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "README.md").write_text("safe\n", encoding="utf-8")
+
+    ask_user = run_one_step_coding_loop(
+        "Invent a broad product strategy",
+        execution_root=root,
+        db_path=db_path,
+    )
+    blocked = run_one_step_coding_loop(
+        "write files one.txt with one; two.txt with two",
+        execution_root=root,
+        db_path=db_path,
+    )
+    unsafe = run_one_step_coding_loop(
+        "run rm -rf .",
+        execution_root=root,
+        db_path=db_path,
+    )
+    requires_approval = run_one_step_coding_loop(
+        "Write an authority-gated file",
+        execution_root=root,
+        db_path=db_path,
+        planner=_ApprovalPlanner(),
+    )
+
+    persisted = {
+        result.id: get_coding_loop_result(result.id, db_path=db_path)
+        for result in (ask_user, blocked, unsafe, requires_approval)
+    }
+
+    assert persisted[ask_user.id] is not None
+    assert persisted[ask_user.id]["status"] == "ask_user"
+    assert persisted[ask_user.id]["execution_occurred"] is False
+    assert persisted[blocked.id]["status"] == "blocked"
+    assert persisted[blocked.id]["execution_run_id"] is None
+    assert persisted[unsafe.id]["status"] == "unsafe"
+    assert persisted[unsafe.id]["execution_occurred"] is False
+    assert persisted[requires_approval.id]["status"] == "requires_approval"
+    assert persisted[requires_approval.id]["approval_required_reason"] is not None
+    assert not (root / "approval.txt").exists()
+
+    listed = list_coding_loop_results(limit=10, db_path=db_path)
+    listed_ids = {result["id"] for result in listed}
+    assert {ask_user.id, blocked.id, unsafe.id, requires_approval.id}.issubset(
+        listed_ids
+    )
+
+
+def test_coding_loop_result_tracks_retry_approval_review_and_lineage(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    persisted = get_coding_loop_result(result.id, db_path=db_path)
+    assert persisted is not None
+    assert persisted["status"] == "retryable_failure"
+    assert persisted["retry_proposal"] == result.retry_proposal
+    assert persisted["retry_approval_id"] == result.retry_approval.approval_id
+    assert persisted["retry_approval_status"] == "pending"
+    assert persisted["suggested_next_goal"] == "write file proof.txt with right\n"
+    assert persisted["suggested_next_action"] == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    executed, execution_run = execute_approved_coding_loop_retry_approval(
+        approved.approval_id,
+        db_path=db_path,
+    )
+    persisted_after_execution = get_coding_loop_result(result.id, db_path=db_path)
+    assert persisted_after_execution is not None
+    assert persisted_after_execution["retry_approval_status"] == "approved"
+    assert persisted_after_execution["retry_execution_run_id"] == execution_run["id"]
+    assert persisted_after_execution["retry_execution_status"] == "completed"
+    assert persisted_after_execution["post_run_review"]["status"] == "stop"
+    assert persisted_after_execution["post_run_review"]["retry_execution_run_id"] == (
+        execution_run["id"]
+    )
+    assert persisted_after_execution["next_retry_approval_id"] is None
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "right"
+
+    reviewed_failed_retry = replace(
+        executed,
+        retry_execution_run_id=result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+        next_retry_approval_id=None,
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=db_path)
+    next_approval = create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    persisted_after_next = get_coding_loop_result(result.id, db_path=db_path)
+    assert persisted_after_next is not None
+    assert persisted_after_next["post_run_review"]["status"] == "propose_retry"
+    assert persisted_after_next["next_retry_approval_id"] == next_approval.approval_id
+    assert persisted_after_next["suggested_next_goal"] == "write file proof.txt with right\n"
+    assert persisted_after_next["retry_execution_status"] == "exhausted"
 
 
 def test_one_step_coding_loop_adds_no_arbitrary_shell_access(tmp_path: Path) -> None:

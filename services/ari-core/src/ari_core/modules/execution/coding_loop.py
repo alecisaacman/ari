@@ -201,6 +201,7 @@ def run_one_step_coding_loop(
             preview=preview,
             approval_required_reason=approval_required_reason,
             created_at=created_at,
+            db_path=db_path,
         )
 
     preview_block = _preview_block_reason(preview)
@@ -212,6 +213,7 @@ def run_one_step_coding_loop(
             preview_id=preview_id,
             preview=preview,
             created_at=created_at,
+            db_path=db_path,
         )
 
     plan = _plan_from_preview(preview)
@@ -223,6 +225,7 @@ def run_one_step_coding_loop(
             preview_id=preview_id,
             preview=preview,
             created_at=created_at,
+            db_path=db_path,
         )
 
     execution_run = run_execution_goal(
@@ -375,7 +378,9 @@ def approve_stored_coding_loop_retry_approval(
         approved_by=approved_by,
         approved_at=approved_at,
     )
-    return store_coding_loop_retry_approval(approved, db_path=db_path)
+    stored = store_coding_loop_retry_approval(approved, db_path=db_path)
+    refresh_coding_loop_result_links(stored.source_coding_loop_result_id, db_path=db_path)
+    return stored
 
 
 def execute_approved_coding_loop_retry_approval(
@@ -414,6 +419,7 @@ def execute_approved_coding_loop_retry_approval(
         updated_at=executed_at,
     )
     stored = store_coding_loop_retry_approval(updated, db_path=db_path)
+    refresh_coding_loop_result_links(stored.source_coding_loop_result_id, db_path=db_path)
     return stored, execution_payload
 
 
@@ -584,7 +590,34 @@ def create_coding_loop_retry_approval_from_review(
         updated_at=created_at,
     )
     store_coding_loop_retry_approval(updated_prior, db_path=db_path)
+    refresh_coding_loop_result_links(approval.source_coding_loop_result_id, db_path=db_path)
     return stored_next
+
+
+def refresh_coding_loop_result_links(
+    result_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    from .inspection import get_coding_loop_result
+
+    persisted = get_coding_loop_result(result_id, db_path=db_path)
+    if persisted is None:
+        return None
+    retry_approval_id = _string_or_none(persisted.get("retry_approval_id"))
+    if retry_approval_id is None:
+        return persisted
+    retry_approval = get_coding_loop_retry_approval(retry_approval_id, db_path=db_path)
+    if retry_approval is None:
+        return persisted
+    return _persist_coding_loop_result_record(
+        _coding_loop_result_record_from_payload(
+            persisted,
+            retry_approval=retry_approval,
+            db_path=db_path,
+        ),
+        db_path=db_path,
+    )
 
 
 def _review_failure_summary(
@@ -653,7 +686,9 @@ def reject_stored_coding_loop_retry_approval(
         rejected_by=rejected_by,
         rejected_at=rejected_at,
     )
-    return store_coding_loop_retry_approval(rejected, db_path=db_path)
+    stored = store_coding_loop_retry_approval(rejected, db_path=db_path)
+    refresh_coding_loop_result_links(stored.source_coding_loop_result_id, db_path=db_path)
+    return stored
 
 
 def _retry_approval_record(approval: CodingLoopRetryApproval) -> dict[str, object]:
@@ -1113,7 +1148,167 @@ def _result(
     )
     if retry_approval is not None and db_path is not None:
         store_coding_loop_retry_approval(retry_approval, db_path=db_path)
+    if db_path is not None:
+        _persist_coding_loop_result(result, db_path=db_path)
     return result
+
+
+def _persist_coding_loop_result(
+    result: CodingLoopResult,
+    *,
+    db_path: Path,
+) -> dict[str, Any]:
+    retry_approval = result.retry_approval
+    return _persist_coding_loop_result_record(
+        _coding_loop_result_record_from_payload(
+            result.to_dict(),
+            retry_approval=retry_approval,
+            db_path=db_path,
+        ),
+        db_path=db_path,
+    )
+
+
+def _persist_coding_loop_result_record(
+    record: dict[str, object],
+    *,
+    db_path: Path,
+) -> dict[str, Any]:
+    row = put_coordination_entity(
+        "runtime_coding_loop_result",
+        record,
+        db_path=db_path,
+    )
+    return {key: row[key] for key in row.keys()}
+
+
+def _coding_loop_result_record_from_payload(
+    payload: dict[str, Any],
+    *,
+    retry_approval: CodingLoopRetryApproval | None,
+    db_path: Path,
+) -> dict[str, object]:
+    retry_approval_payload = (
+        None if retry_approval is None else retry_approval.to_dict()
+    )
+    retry_proposal = payload.get("retry_proposal")
+    retry_payload = retry_proposal if isinstance(retry_proposal, dict) else None
+    retry_approval_id = _retry_approval_id(payload, retry_approval_payload)
+    latest_retry_approval = (
+        None
+        if retry_approval_id is None
+        else get_coding_loop_retry_approval(retry_approval_id, db_path=db_path)
+    )
+    latest_retry_payload = (
+        retry_approval_payload
+        if latest_retry_approval is None
+        else latest_retry_approval.to_dict()
+    )
+    post_run_review = (
+        None
+        if latest_retry_approval is None or latest_retry_approval.retry_execution_run_id is None
+        else review_coding_loop_retry_execution(
+            latest_retry_approval.approval_id,
+            db_path=db_path,
+        ).to_dict()
+    )
+    execution_run_id = _string_or_none(payload.get("execution_run_id"))
+    status = str(payload.get("status") or "")
+    reason = str(payload.get("reason") or "")
+    return {
+        "id": str(payload["id"]),
+        "original_goal": _original_goal(payload),
+        "status": status,
+        "reason": reason,
+        "preview_id": _string_or_none(payload.get("preview_id")),
+        "execution_run_id": execution_run_id,
+        "execution_occurred": int(execution_run_id is not None),
+        "approval_required_reason": _string_or_none(
+            payload.get("approval_required_reason")
+        ),
+        "retry_proposal_json": json.dumps(retry_payload or {}),
+        "retry_approval_id": retry_approval_id,
+        "retry_approval_status": _string_or_none(
+            None if latest_retry_payload is None else latest_retry_payload.get("approval_status")
+        ),
+        "retry_execution_run_id": _string_or_none(
+            None
+            if latest_retry_payload is None
+            else latest_retry_payload.get("retry_execution_run_id")
+        ),
+        "retry_execution_status": _string_or_none(
+            None
+            if latest_retry_payload is None
+            else latest_retry_payload.get("retry_execution_status")
+        ),
+        "retry_execution_reason": _string_or_none(
+            None
+            if latest_retry_payload is None
+            else latest_retry_payload.get("retry_execution_reason")
+        ),
+        "post_run_review_json": json.dumps(post_run_review or {}),
+        "next_retry_approval_id": _string_or_none(
+            None
+            if latest_retry_payload is None
+            else latest_retry_payload.get("next_retry_approval_id")
+        ),
+        "suggested_next_goal": _suggested_goal(retry_payload, post_run_review),
+        "suggested_next_action_json": json.dumps(
+            _suggested_action(retry_payload, post_run_review) or {}
+        ),
+        "stop_reason": reason if status == "success" else None,
+        "created_at": str(payload.get("created_at") or _now_iso()),
+        "updated_at": _now_iso(),
+    }
+
+
+def _retry_approval_id(
+    payload: dict[str, Any],
+    retry_approval_payload: dict[str, Any] | None,
+) -> str | None:
+    if retry_approval_payload is not None:
+        return _string_or_none(retry_approval_payload.get("approval_id"))
+    return _string_or_none(payload.get("retry_approval_id"))
+
+
+def _original_goal(payload: dict[str, Any]) -> str:
+    request = payload.get("request")
+    if isinstance(request, dict):
+        goal = request.get("goal")
+        if isinstance(goal, str):
+            return goal
+    goal = payload.get("original_goal")
+    return goal if isinstance(goal, str) else ""
+
+
+def _suggested_goal(
+    retry_payload: dict[str, Any] | None,
+    post_run_review: dict[str, Any] | None,
+) -> str | None:
+    if post_run_review is not None:
+        reviewed = _string_or_none(post_run_review.get("suggested_next_goal"))
+        if reviewed is not None:
+            return reviewed
+    if retry_payload is not None:
+        return _string_or_none(retry_payload.get("suggested_next_goal"))
+    return None
+
+
+def _suggested_action(
+    retry_payload: dict[str, Any] | None,
+    post_run_review: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if post_run_review is not None and isinstance(
+        post_run_review.get("suggested_next_action"),
+        dict,
+    ):
+        return post_run_review["suggested_next_action"]
+    if retry_payload is not None and isinstance(
+        retry_payload.get("suggested_next_action"),
+        dict,
+    ):
+        return retry_payload["suggested_next_action"]
+    return None
 
 
 def _retry_approval_artifact(

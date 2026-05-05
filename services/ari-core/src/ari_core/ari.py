@@ -16,6 +16,8 @@ from .modules.execution.api import (
     handle_api_execution_action_list,
     handle_api_execution_action_run,
     handle_api_execution_coding_loop,
+    handle_api_execution_coding_loops_list,
+    handle_api_execution_coding_loops_show,
     handle_api_execution_command,
     handle_api_execution_context,
     handle_api_execution_goal,
@@ -921,6 +923,24 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
     )
 
+    coding_loops_parser = execution_subparsers.add_parser(
+        "coding-loops", help="Inspect persisted coding-loop results."
+    )
+    coding_loops_subparsers = coding_loops_parser.add_subparsers(
+        dest="api_execution_coding_loops_command",
+        required=True,
+    )
+    coding_loops_list_parser = coding_loops_subparsers.add_parser(
+        "list", help="List recent coding-loop results."
+    )
+    coding_loops_list_parser.add_argument(
+        "--limit", type=int, default=10, help="Maximum coding-loop results."
+    )
+    coding_loops_show_parser = coding_loops_subparsers.add_parser(
+        "show", help="Show a coding-loop result."
+    )
+    coding_loops_show_parser.add_argument("--id", required=True, help="Coding-loop result id.")
+
     plans_parser = execution_subparsers.add_parser(
         "plans", help="Inspect persisted execution plan previews."
     )
@@ -1514,6 +1534,18 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_execution_plan(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "coding-loop":
             return handle_api_execution_coding_loop(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "coding-loops"
+            and args.api_execution_coding_loops_command == "list"
+        ):
+            return handle_api_execution_coding_loops_list(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "coding-loops"
+            and args.api_execution_coding_loops_command == "show"
+        ):
+            return handle_api_execution_coding_loops_show(args, db_path=db_path)
         if (
             args.api_command == "execution"
             and args.api_execution_command == "plans"

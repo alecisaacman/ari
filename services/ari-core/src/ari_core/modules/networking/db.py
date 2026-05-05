@@ -29,6 +29,7 @@ def initialize_database(db_path: Path = DB_PATH, schema_path: Path = SCHEMA_PATH
         connection.executescript(schema_sql)
         _ensure_followups_completed_at_column(connection)
         _ensure_retry_approval_execution_columns(connection)
+        _ensure_coding_loop_result_table(connection)
         connection.commit()
     return db_path
 
@@ -79,6 +80,36 @@ def _ensure_retry_approval_execution_columns(connection: sqlite3.Connection) -> 
                 "alter table ari_runtime_coding_loop_retry_approvals "
                 f"add column {column_name} text"
             )
+
+
+def _ensure_coding_loop_result_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        create table if not exists ari_runtime_coding_loop_results (
+            id text primary key,
+            original_goal text not null,
+            status text not null,
+            reason text not null,
+            preview_id text,
+            execution_run_id text,
+            execution_occurred integer not null,
+            approval_required_reason text,
+            retry_proposal_json text not null,
+            retry_approval_id text,
+            retry_approval_status text,
+            retry_execution_run_id text,
+            retry_execution_status text,
+            retry_execution_reason text,
+            post_run_review_json text not null,
+            next_retry_approval_id text,
+            suggested_next_goal text,
+            suggested_next_action_json text not null,
+            stop_reason text,
+            created_at text not null,
+            updated_at text not null
+        )
+        """
+    )
 
 
 def add_contact(

@@ -27,23 +27,17 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
     monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "execution-root"))
     execution_root = tmp_path / "execution-root"
     execution_root.mkdir(parents=True, exist_ok=True)
-    (execution_root / "operator-target.js").write_text(
-        "export const status = 'pending';\n", encoding="utf-8"
+    (execution_root / "operator_target.py").write_text(
+        "status = 'pending'\n", encoding="utf-8"
     )
-    (execution_root / "operator-check.test.mjs").write_text(
+    (execution_root / "operator_check_test.py").write_text(
         "\n".join(
             [
-                "import assert from 'node:assert/strict';",
-                "import fs from 'node:fs';",
-                "import test from 'node:test';",
+                "from pathlib import Path",
                 "",
-                "test('operator target is ready', () => {",
-                "  const source = fs.readFileSync(",
-                "    new URL('./operator-target.js', import.meta.url),",
-                "    'utf8',",
-                "  );",
-                "  assert.match(source, /ready/);",
-                "});",
+                "",
+                "def test_operator_target_is_ready():",
+                "    assert 'ready' in Path('operator_target.py').read_text()",
                 "",
             ]
         ),
@@ -168,17 +162,17 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
                 "title": "Promote operator target",
                 "summary": "Patch a file and verify it.",
                 "operations": [
-                    {
-                        "type": "patch",
-                        "path": "operator-target.js",
-                        "find": "pending",
-                        "replace": "ready",
-                    }
-                ],
-                "verifyCommand": "node --test operator-check.test.mjs",
-                "workingDirectory": ".",
-                "approvalRequired": False,
-            },
+                        {
+                            "type": "patch",
+                            "path": "operator_target.py",
+                            "find": "pending",
+                            "replace": "ready",
+                        }
+                    ],
+                    "verifyCommand": f"{sys.executable} -m pytest operator_check_test.py -q",
+                    "workingDirectory": ".",
+                    "approvalRequired": False,
+                },
         )
         assert action.status_code == 200
         action_id = action.json()["action"]["id"]
@@ -191,7 +185,7 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert ran.status_code == 200
         assert ran.json()["action"]["status"] == "verified"
         assert ran.json()["command_run"]["success"] is True
-        assert ran.json()["mutations"][0]["path"] == "operator-target.js"
+        assert ran.json()["mutations"][0]["path"] == "operator_target.py"
 
         snapshot = client.get("/execution/snapshot")
         assert snapshot.status_code == 200
@@ -253,6 +247,19 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert (execution_root / "loop-api-proof.txt").read_text(
             encoding="utf-8"
         ) == "inspected through api"
+
+        coding_loops = client.get("/execution/coding-loop/results")
+        assert coding_loops.status_code == 200
+        assert coding_loops.json()["coding_loops"][0]["id"] == coding_loop_payload["id"]
+
+        shown_coding_loop = client.get(
+            f"/execution/coding-loop/results/{coding_loop_payload['id']}"
+        )
+        assert shown_coding_loop.status_code == 200
+        assert shown_coding_loop.json()["coding_loop"]["status"] == "success"
+        assert shown_coding_loop.json()["coding_loop"]["execution_run_id"] == (
+            coding_loop_payload["execution_run_id"]
+        )
 
         unsafe_loop = client.post(
             "/execution/coding-loop",
@@ -421,6 +428,17 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             "prior_retry_execution_run_id"
         ] == second_retry_result.execution_run_id
 
+        shown_second_result = client.get(
+            f"/execution/coding-loop/results/{second_retry_result.id}"
+        )
+        assert shown_second_result.status_code == 200
+        assert shown_second_result.json()["coding_loop"]["next_retry_approval_id"] == (
+            proposed_next.json()["retry_approval"]["approval_id"]
+        )
+        assert shown_second_result.json()["coding_loop"]["post_run_review"]["status"] == (
+            "propose_retry"
+        )
+
         runs = client.get("/execution/runs")
         assert runs.status_code == 200
         assert any(
@@ -441,8 +459,8 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         context = client.get("/execution/context")
         assert context.status_code == 200
         assert context.json()["context"]["repo_root"] == str(execution_root.resolve())
-        assert "operator-target.js" in context.json()["context"]["files_sample"]
-        assert context.json()["context"]["language_summary"]["javascript"] >= 1
+        assert "operator_target.py" in context.json()["context"]["files_sample"]
+        assert context.json()["context"]["language_summary"]["python"] >= 1
 
         fallback_goal = client.post(
             "/execution/goals",

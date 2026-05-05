@@ -27,9 +27,11 @@ from .engine import (
 from .inspection import (
     get_execution_plan_preview,
     get_execution_run,
+    get_coding_loop_result,
     inspect_coding_loop_result,
     inspect_coding_loop_retry_approval,
     inspect_coding_loop_retry_execution_review,
+    list_coding_loop_results,
     list_execution_plan_previews,
     list_execution_runs,
 )
@@ -120,6 +122,20 @@ def handle_api_execution_coding_loop(args, db_path: Path = DB_PATH) -> int:
         planner_mode=args.planner,
     )
     print(json.dumps({"coding_loop": inspect_coding_loop_result(result)}))
+    return 0
+
+
+def handle_api_execution_coding_loops_list(args, db_path: Path = DB_PATH) -> int:
+    print(json.dumps({"coding_loops": list_coding_loop_results(limit=args.limit, db_path=db_path)}))
+    return 0
+
+
+def handle_api_execution_coding_loops_show(args, db_path: Path = DB_PATH) -> int:
+    result = get_coding_loop_result(args.id, db_path=db_path)
+    if result is None:
+        print(json.dumps({"error": f"Coding-loop result {args.id} not found."}))
+        return 1
+    print(json.dumps({"coding_loop": result}))
     return 0
 
 
