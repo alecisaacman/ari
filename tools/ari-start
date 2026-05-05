@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+clear
+
+if command -v figlet >/dev/null 2>&1 && command -v lolcat >/dev/null 2>&1; then
+  figlet "ARI ONLINE" | lolcat
+else
+  echo "ARI ONLINE"
+fi
+
+echo
+echo "Local time:"
+echo "  $(date '+%A, %B %d, %Y %H:%M:%S')"
+
+echo
+echo "Location:"
+echo "  $(pwd)"
+
+echo
+echo "Git:"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "  Branch: $(git branch --show-current)"
+  echo "  Modified files: $(git status --short | wc -l | tr -d ' ')"
+  echo
+  echo "Recent commits:"
+  git log --oneline -5 | sed 's/^/  /'
+else
+  echo "  Not inside a git repo."
+fi
+
+echo
+echo "Thermal:"
+pmset -g therm 2>/dev/null | sed 's/^/  /' || echo "  Thermal check unavailable."
+
+echo
+echo "Top CPU:"
+ps aux | sort -nrk 3 | head -6 | sed 's/^/  /'
+
+echo
+echo "Operator note:"
+notes=(
+  "System stable. The human, less so."
+  "Local brain online. Try not to install seventeen more toys."
+  "Execution core idle. Ambition appears active."
+  "No catastrophic failures detected. A suspicious development."
+  "ARI observes. Terminal performs. Human improvises."
+  "The machine is ready. The calendar is still judging you."
+)
+
+printf "  %s\n" "${notes[$RANDOM % ${#notes[@]}]}"
