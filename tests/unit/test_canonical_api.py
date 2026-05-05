@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -52,7 +53,12 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
 
     from ari_api import create_app
     from ari_core.core.paths import DB_PATH
-    from ari_core.modules.execution import ModelPlanner, run_one_step_coding_loop
+    from ari_core.modules.execution import (
+        ModelPlanner,
+        get_coding_loop_retry_approval,
+        run_one_step_coding_loop,
+        store_coding_loop_retry_approval,
+    )
 
     app = create_app()
     with TestClient(app) as client:
@@ -351,6 +357,69 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert retry_review.json()["review"]["status"] == "stop"
         assert retry_review.json()["review"]["retry_execution_status"] == "completed"
         assert retry_review.json()["review"]["approval_required"] is False
+
+        (execution_root / "loop-api-second-proof.txt").write_text(
+            "old",
+            encoding="utf-8",
+        )
+        second_retry_result = run_one_step_coding_loop(
+            "Create a second proof file",
+            execution_root=execution_root,
+            db_path=DB_PATH,
+            planner=ModelPlanner(
+                lambda payload: json.dumps(
+                    {
+                        "confidence": 0.9,
+                        "reason": "Write content that will fail explicit verification.",
+                        "actions": [
+                            {
+                                "type": "write_file",
+                                "path": "loop-api-second-proof.txt",
+                                "content": "wrong",
+                            }
+                        ],
+                        "verification": [
+                            {
+                                "type": "file_content",
+                                "target": "loop-api-second-proof.txt",
+                                "expected": "inspected twice through api",
+                            }
+                        ],
+                    }
+                )
+            ),
+        )
+        assert second_retry_result.retry_approval is not None
+        second_approval = get_coding_loop_retry_approval(
+            second_retry_result.retry_approval.approval_id,
+            db_path=DB_PATH,
+        )
+        assert second_approval is not None
+        store_coding_loop_retry_approval(
+            replace(
+                second_approval,
+                retry_execution_run_id=second_retry_result.execution_run_id,
+                retry_execution_status="exhausted",
+                retry_execution_reason=(
+                    "Retryable execution failed until max_cycles was exhausted."
+                ),
+                executed_at="2026-05-04T14:10:00Z",
+            ),
+            db_path=DB_PATH,
+        )
+        proposed_next = client.post(
+            "/execution/coding-loop/retry-approvals/"
+            f"{second_retry_result.retry_approval.approval_id}/propose-next"
+        )
+        assert proposed_next.status_code == 200
+        assert proposed_next.json()["retry_approval"]["approval_status"] == "pending"
+        assert (
+            proposed_next.json()["retry_approval"]["prior_retry_approval_id"]
+            == second_retry_result.retry_approval.approval_id
+        )
+        assert proposed_next.json()["retry_approval"][
+            "prior_retry_execution_run_id"
+        ] == second_retry_result.execution_run_id
 
         runs = client.get("/execution/runs")
         assert runs.status_code == 200

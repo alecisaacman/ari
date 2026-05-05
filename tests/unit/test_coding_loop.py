@@ -10,6 +10,7 @@ from ari_core.modules.execution import (
     ModelPlanner,
     approve_coding_loop_retry_approval,
     approve_stored_coding_loop_retry_approval,
+    create_coding_loop_retry_approval_from_review,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
@@ -810,6 +811,116 @@ def test_coding_loop_retry_execution_review_can_propose_next_approval_item(
     }
     assert review.approval_required is True
     assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+
+def test_propose_retry_review_creates_pending_follow_up_approval(
+    tmp_path: Path,
+) -> None:
+    result, root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+    assert result.execution_run_id is not None
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    reviewed_failed_retry = replace(
+        approved,
+        retry_execution_run_id=result.execution_run_id,
+        retry_execution_status="exhausted",
+        retry_execution_reason="Retryable execution failed until max_cycles was exhausted.",
+        executed_at="2026-05-04T14:00:00Z",
+    )
+    store_coding_loop_retry_approval(reviewed_failed_retry, db_path=db_path)
+
+    next_approval = create_coding_loop_retry_approval_from_review(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+
+    assert next_approval.approval_status == "pending"
+    assert next_approval.approval.status == "pending"
+    assert next_approval.prior_retry_approval_id == reviewed_failed_retry.approval_id
+    assert next_approval.prior_retry_execution_run_id == result.execution_run_id
+    assert next_approval.source_execution_run_id == result.execution_run_id
+    assert next_approval.original_goal == "Create a proof file"
+    assert next_approval.proposed_retry_goal == "write file proof.txt with right\n"
+    assert next_approval.proposed_retry_action == {
+        "type": "write_file",
+        "path": "proof.txt",
+        "content": "right\n",
+    }
+    assert next_approval.proposed_retry_action_description == "write_file proof.txt"
+    assert "Retry execution failed verification" in next_approval.reason
+    assert "Prior retry execution status: exhausted." in (
+        next_approval.failed_verification_summary
+    )
+    assert next_approval.retry_execution_run_id is None
+    assert next_approval.executed_at is None
+    assert (root / "proof.txt").read_text(encoding="utf-8") == "wrong\n"
+
+    fetched_next = get_coding_loop_retry_approval(
+        next_approval.approval_id,
+        db_path=db_path,
+    )
+    assert fetched_next is not None
+    assert fetched_next.prior_retry_approval_id == reviewed_failed_retry.approval_id
+    fetched_prior = get_coding_loop_retry_approval(
+        reviewed_failed_retry.approval_id,
+        db_path=db_path,
+    )
+    assert fetched_prior is not None
+    assert fetched_prior.next_retry_approval_id == next_approval.approval_id
+
+    inspected = inspect_coding_loop_retry_approval(fetched_next)
+    assert inspected["approval_status"] == "pending"
+    assert inspected["prior_retry_approval_id"] == reviewed_failed_retry.approval_id
+    assert inspected["prior_retry_execution_run_id"] == result.execution_run_id
+
+    listed_ids = [
+        approval.approval_id
+        for approval in list_coding_loop_retry_approvals(limit=5, db_path=db_path)
+    ]
+    assert next_approval.approval_id in listed_ids
+
+    with pytest.raises(ValueError, match="already produced"):
+        create_coding_loop_retry_approval_from_review(
+            reviewed_failed_retry.approval_id,
+            db_path=db_path,
+        )
+
+
+def test_non_propose_retry_review_does_not_create_follow_up_approval(
+    tmp_path: Path,
+) -> None:
+    result, _root, db_path = _retry_failure_result(tmp_path)
+    assert result.retry_approval is not None
+
+    with pytest.raises(ValueError, match="has not executed"):
+        create_coding_loop_retry_approval_from_review(
+            result.retry_approval.approval_id,
+            db_path=db_path,
+        )
+
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=db_path,
+    )
+    execute_approved_coding_loop_retry_approval(approved.approval_id, db_path=db_path)
+
+    with pytest.raises(ValueError, match="not propose_retry"):
+        create_coding_loop_retry_approval_from_review(
+            approved.approval_id,
+            db_path=db_path,
+        )
+
+    with pytest.raises(ValueError, match="not found"):
+        create_coding_loop_retry_approval_from_review(
+            "coding-loop-retry-approval-missing",
+            db_path=db_path,
+        )
 
 
 def test_one_step_coding_loop_lifecycle_is_inspectable(tmp_path: Path) -> None:

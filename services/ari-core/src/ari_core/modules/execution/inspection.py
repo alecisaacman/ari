@@ -136,6 +136,9 @@ def inspect_coding_loop_retry_approval(
         "retry_execution_run_id": payload.get("retry_execution_run_id"),
         "retry_execution_status": payload.get("retry_execution_status"),
         "retry_execution_reason": payload.get("retry_execution_reason"),
+        "prior_retry_approval_id": payload.get("prior_retry_approval_id"),
+        "prior_retry_execution_run_id": payload.get("prior_retry_execution_run_id"),
+        "next_retry_approval_id": payload.get("next_retry_approval_id"),
         "retry_execution_requires_approval": payload.get(
             "retry_execution_requires_approval"
         ),

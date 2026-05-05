@@ -114,6 +114,9 @@ class CodingLoopRetryApproval:
     retry_execution_run_id: str | None = None
     retry_execution_status: str | None = None
     retry_execution_reason: str | None = None
+    prior_retry_approval_id: str | None = None
+    prior_retry_execution_run_id: str | None = None
+    next_retry_approval_id: str | None = None
     updated_at: str | None = None
     executed_at: str | None = None
     rejected_by: str | None = None
@@ -138,6 +141,9 @@ class CodingLoopRetryApproval:
             "retry_execution_run_id": self.retry_execution_run_id,
             "retry_execution_status": self.retry_execution_status,
             "retry_execution_reason": self.retry_execution_reason,
+            "prior_retry_approval_id": self.prior_retry_approval_id,
+            "prior_retry_execution_run_id": self.prior_retry_execution_run_id,
+            "next_retry_approval_id": self.next_retry_approval_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "executed_at": self.executed_at,
@@ -518,6 +524,82 @@ def review_coding_loop_retry_execution(
     )
 
 
+def create_coding_loop_retry_approval_from_review(
+    approval_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> CodingLoopRetryApproval:
+    approval = get_coding_loop_retry_approval(approval_id, db_path=db_path)
+    if approval is None:
+        raise ValueError(f"Coding-loop retry approval {approval_id} not found.")
+    if approval.retry_execution_run_id is None:
+        raise ValueError("Coding-loop retry approval has not executed.")
+    if approval.next_retry_approval_id is not None:
+        raise ValueError(
+            "Coding-loop retry approval review already produced a next approval: "
+            f"{approval.next_retry_approval_id}."
+        )
+
+    review = review_coding_loop_retry_execution(approval_id, db_path=db_path)
+    if review.status != "propose_retry":
+        raise ValueError(
+            "Coding-loop retry execution review is not propose_retry: "
+            f"{review.status}."
+        )
+    if not review.suggested_next_goal or review.suggested_next_action is None:
+        raise ValueError("Coding-loop retry execution review has no next retry proposal.")
+
+    created_at = _now_iso()
+    next_approval = CodingLoopRetryApproval(
+        approval_id=f"coding-loop-retry-approval-{uuid4()}",
+        source_coding_loop_result_id=approval.source_coding_loop_result_id,
+        source_preview_id=approval.source_preview_id,
+        source_execution_run_id=approval.retry_execution_run_id,
+        original_goal=approval.original_goal,
+        proposed_retry_goal=review.suggested_next_goal,
+        proposed_retry_action=review.suggested_next_action,
+        proposed_retry_action_description=_describe_retry_action(
+            review.suggested_next_action
+        ),
+        reason=review.reason,
+        failed_verification_summary=_review_failure_summary(approval, review),
+        approval=ApprovalRequirement.pending(
+            reason="Approval is required before executing a follow-up retry proposal.",
+            authority_note=(
+                "ARI produced this proposal from a post-run retry review; "
+                "the follow-up retry has not been executed."
+            ),
+        ),
+        approval_status="pending",
+        retry_execution_requires_approval=True,
+        proposed_action_requires_approval=bool(review.approval_required),
+        created_at=created_at,
+        prior_retry_approval_id=approval.approval_id,
+        prior_retry_execution_run_id=approval.retry_execution_run_id,
+    )
+    stored_next = store_coding_loop_retry_approval(next_approval, db_path=db_path)
+    updated_prior = replace(
+        approval,
+        next_retry_approval_id=stored_next.approval_id,
+        updated_at=created_at,
+    )
+    store_coding_loop_retry_approval(updated_prior, db_path=db_path)
+    return stored_next
+
+
+def _review_failure_summary(
+    approval: CodingLoopRetryApproval,
+    review: CodingLoopRetryExecutionReview,
+) -> str:
+    parts = [
+        review.reason,
+        f"Prior retry execution status: {review.retry_execution_status}.",
+    ]
+    if approval.retry_execution_reason:
+        parts.append(f"Prior retry execution reason: {approval.retry_execution_reason}")
+    return " ".join(parts)
+
+
 def _validate_retry_execution_boundary(approval: CodingLoopRetryApproval) -> None:
     if approval.approval.status != "approved":
         raise ValueError(
@@ -593,6 +675,9 @@ def _retry_approval_record(approval: CodingLoopRetryApproval) -> dict[str, objec
         "retry_execution_run_id": approval.retry_execution_run_id,
         "retry_execution_status": approval.retry_execution_status,
         "retry_execution_reason": approval.retry_execution_reason,
+        "prior_retry_approval_id": approval.prior_retry_approval_id,
+        "prior_retry_execution_run_id": approval.prior_retry_execution_run_id,
+        "next_retry_approval_id": approval.next_retry_approval_id,
         "created_at": approval.created_at,
         "updated_at": approval.updated_at,
         "executed_at": approval.executed_at,
@@ -623,6 +708,9 @@ def _retry_approval_from_row(row: Any) -> CodingLoopRetryApproval:
         retry_execution_run_id=_string_or_none(row["retry_execution_run_id"]),
         retry_execution_status=_string_or_none(row["retry_execution_status"]),
         retry_execution_reason=_string_or_none(row["retry_execution_reason"]),
+        prior_retry_approval_id=_string_or_none(row["prior_retry_approval_id"]),
+        prior_retry_execution_run_id=_string_or_none(row["prior_retry_execution_run_id"]),
+        next_retry_approval_id=_string_or_none(row["next_retry_approval_id"]),
         updated_at=_string_or_none(row["updated_at"]),
         executed_at=_string_or_none(row["executed_at"]),
         rejected_by=_string_or_none(row["rejected_by"]),
@@ -1068,6 +1156,9 @@ def _retry_approval_artifact(
         retry_execution_run_id=None,
         retry_execution_status=None,
         retry_execution_reason=None,
+        prior_retry_approval_id=None,
+        prior_retry_execution_run_id=None,
+        next_retry_approval_id=None,
         updated_at=None,
         executed_at=None,
         rejected_by=None,

@@ -4,7 +4,7 @@ Date: 2026-05-04
 
 ## Position
 
-Overall ARI build estimate: 8.0/10.
+Overall ARI build estimate: 8.2/10.
 
 This slice upgrades the existing one-step coding loop seam. It does not add broad
 autonomy, approval mutation, arbitrary shell access, or multi-step execution.
@@ -45,6 +45,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   classification artifact. The review decides whether ARI should stop, block,
   mark unsafe, ask the user, or propose another bounded approval item without
   executing anything.
+- `propose_retry` post-run reviews can now be converted into a new durable
+  pending retry-approval artifact. The new approval links back to the prior
+  retry approval and prior retry execution run, while the prior approval records
+  the next approval id to prevent silent duplication.
 
 ## Boundary
 
@@ -81,7 +85,12 @@ Post-run retry execution review is also explanatory/control-only. A
 execute. It only exposes the next bounded control decision for a later approval
 slice.
 
+Creating a follow-up approval from a `propose_retry` review is still an
+approval-boundary operation. It does not approve or execute the follow-up
+retry. It only creates the next pending authority artifact.
+
 ## Next Recommended Slice
 
-Turn `propose_retry` reviews into a new pending approval artifact, preserving
-the same no-auto-execution boundary.
+Add durable coding-loop result persistence so non-executing outcomes, previews,
+reviews, and approval lineage can be inspected without reconstructing them from
+return payloads alone.

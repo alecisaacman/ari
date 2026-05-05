@@ -27,6 +27,7 @@ from .modules.execution.api import (
     handle_api_execution_retry_approvals_approve,
     handle_api_execution_retry_approvals_execute,
     handle_api_execution_retry_approvals_list,
+    handle_api_execution_retry_approvals_propose_next,
     handle_api_execution_retry_approvals_reject,
     handle_api_execution_retry_approvals_review,
     handle_api_execution_retry_approvals_show,
@@ -1002,6 +1003,15 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         help="Review the post-run state of one coding-loop retry approval.",
     )
     retry_approvals_review_parser.add_argument("--id", required=True, help="Approval id.")
+    retry_approvals_propose_next_parser = retry_approvals_subparsers.add_parser(
+        "propose-next",
+        help="Create a pending follow-up approval from a propose_retry review.",
+    )
+    retry_approvals_propose_next_parser.add_argument(
+        "--id",
+        required=True,
+        help="Approval id.",
+    )
 
     execution_subparsers.add_parser("tools", help="List canonical execution tools.")
 
@@ -1568,6 +1578,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_execution_retry_approvals_command == "review"
         ):
             return handle_api_execution_retry_approvals_review(args, db_path=db_path)
+        if (
+            args.api_command == "execution"
+            and args.api_execution_command == "retry-approvals"
+            and args.api_execution_retry_approvals_command == "propose-next"
+        ):
+            return handle_api_execution_retry_approvals_propose_next(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "snapshot":
             return handle_api_execution_snapshot(args, db_path=db_path)
         if (

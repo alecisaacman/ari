@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from contextlib import redirect_stdout
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 
@@ -22,7 +23,12 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     _purge_modules()
 
     from ari_core.ari import main
-    from ari_core.modules.execution import ModelPlanner, run_one_step_coding_loop
+    from ari_core.modules.execution import (
+        ModelPlanner,
+        get_coding_loop_retry_approval,
+        run_one_step_coding_loop,
+        store_coding_loop_retry_approval,
+    )
 
     db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
 
@@ -453,6 +459,76 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     assert retry_review["status"] == "stop"
     assert retry_review["retry_execution_status"] == "completed"
     assert retry_review["approval_required"] is False
+
+    (execution_root / "loop-second-proof.txt").write_text("old", encoding="utf-8")
+    second_retry_result = run_one_step_coding_loop(
+        "Create a second proof file",
+        execution_root=execution_root,
+        db_path=db_path,
+        planner=ModelPlanner(
+            lambda payload: json.dumps(
+                {
+                    "confidence": 0.9,
+                    "reason": "Write content that will fail explicit verification.",
+                    "actions": [
+                        {
+                            "type": "write_file",
+                            "path": "loop-second-proof.txt",
+                            "content": "wrong",
+                        }
+                    ],
+                    "verification": [
+                        {
+                            "type": "file_content",
+                            "target": "loop-second-proof.txt",
+                            "expected": "inspected twice",
+                        }
+                    ],
+                }
+            )
+        ),
+    )
+    assert second_retry_result.retry_approval is not None
+    second_approval = get_coding_loop_retry_approval(
+        second_retry_result.retry_approval.approval_id,
+        db_path=db_path,
+    )
+    assert second_approval is not None
+    store_coding_loop_retry_approval(
+        replace(
+            second_approval,
+            retry_execution_run_id=second_retry_result.execution_run_id,
+            retry_execution_status="exhausted",
+            retry_execution_reason=(
+                "Retryable execution failed until max_cycles was exhausted."
+            ),
+            executed_at="2026-05-04T14:10:00Z",
+        ),
+        db_path=db_path,
+    )
+    propose_next_output = StringIO()
+    with redirect_stdout(propose_next_output):
+        exit_code = main(
+            [
+                "api",
+                "execution",
+                "retry-approvals",
+                "propose-next",
+                "--id",
+                second_retry_result.retry_approval.approval_id,
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    next_retry_approval = json.loads(propose_next_output.getvalue())["retry_approval"]
+    assert next_retry_approval["approval_status"] == "pending"
+    assert (
+        next_retry_approval["prior_retry_approval_id"]
+        == second_retry_result.retry_approval.approval_id
+    )
+    assert next_retry_approval["prior_retry_execution_run_id"] == (
+        second_retry_result.execution_run_id
+    )
     assert db_path.exists()
 
 

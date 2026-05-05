@@ -4,6 +4,7 @@ from pathlib import Path
 from ...core.paths import DB_PATH
 from .coding_loop import (
     approve_stored_coding_loop_retry_approval,
+    create_coding_loop_retry_approval_from_review,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
@@ -202,6 +203,22 @@ def handle_api_execution_retry_approvals_review(args, db_path: Path = DB_PATH) -
             }
         )
     )
+    return 0
+
+
+def handle_api_execution_retry_approvals_propose_next(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        approval = create_coding_loop_retry_approval_from_review(
+            args.id,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
     return 0
 
 

@@ -13,6 +13,7 @@ from ari_core.modules.coordination.db import (
 )
 from ari_core.modules.execution.coding_loop import (
     approve_stored_coding_loop_retry_approval,
+    create_coding_loop_retry_approval_from_review,
     execute_approved_coding_loop_retry_approval,
     get_coding_loop_retry_approval,
     list_coding_loop_retry_approvals,
@@ -487,6 +488,16 @@ def create_app() -> FastAPI:
             lambda: {
                 "review": inspect_coding_loop_retry_execution_review(
                     review_coding_loop_retry_execution(approval_id)
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/propose-next")
+    def execution_propose_next_retry_approval(approval_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "retry_approval": inspect_coding_loop_retry_approval(
+                    create_coding_loop_retry_approval_from_review(approval_id)
                 )
             }
         )

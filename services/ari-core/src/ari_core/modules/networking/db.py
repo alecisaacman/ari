@@ -69,6 +69,9 @@ def _ensure_retry_approval_execution_columns(connection: sqlite3.Connection) -> 
         "retry_execution_run_id",
         "retry_execution_status",
         "retry_execution_reason",
+        "prior_retry_approval_id",
+        "prior_retry_execution_run_id",
+        "next_retry_approval_id",
         "executed_at",
     ):
         if column_name not in column_names:
