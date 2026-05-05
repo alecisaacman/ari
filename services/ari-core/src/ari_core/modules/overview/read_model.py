@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
+from ari_core.core.paths import DB_PATH
+from ari_core.modules.execution.coding_loop import list_coding_loop_retry_approvals
+from ari_core.modules.execution.inspection import list_coding_loop_results
+from ari_core.modules.memory.db import list_memory_blocks
 from ari_core.modules.skills import SkillManifest, list_skill_manifests
 
 
@@ -34,7 +39,11 @@ class ARIOperatingOverview:
     candidate_skills: tuple[OverviewSkill, ...]
     pending_approval_count: OverviewMetric
     recent_coding_loop_count: OverviewMetric
+    recent_lifecycle_lesson_count: OverviewMetric
     recent_memory_lesson_count: OverviewMetric
+    counts_generated_from_live_sources: bool
+    unavailable_counts: tuple[str, ...]
+    partial_counts_reason: str | None
     self_documentation_status: str
     dashboard_mode: str
     authority_warning: str
@@ -45,11 +54,26 @@ class ARIOperatingOverview:
         return asdict(self)
 
 
-def get_ari_operating_overview() -> ARIOperatingOverview:
+def get_ari_operating_overview(
+    *,
+    db_path: Path = DB_PATH,
+) -> ARIOperatingOverview:
     manifests = list_skill_manifests()
     active_skills = _skills_with_status(manifests, "active")
     prototype_skills = _skills_with_status(manifests, "prototype")
     candidate_skills = _skills_with_status(manifests, "candidate")
+    pending_approval_count = _pending_approval_count(db_path)
+    recent_coding_loop_count = _recent_coding_loop_count(db_path)
+    recent_lifecycle_lesson_count = _recent_lifecycle_lesson_count(db_path)
+    unavailable_counts = tuple(
+        name
+        for name, metric in (
+            ("pending_approval_count", pending_approval_count),
+            ("recent_coding_loop_count", recent_coding_loop_count),
+            ("recent_lifecycle_lesson_count", recent_lifecycle_lesson_count),
+        )
+        if metric.value is None
+    )
 
     return ARIOperatingOverview(
         generated_at=_now_iso(),
@@ -65,14 +89,16 @@ def get_ari_operating_overview() -> ARIOperatingOverview:
         active_skills=active_skills,
         prototype_skills=prototype_skills,
         candidate_skills=candidate_skills,
-        pending_approval_count=_unavailable_metric(
-            "Pending approval aggregation is not wired into this overview read model yet."
-        ),
-        recent_coding_loop_count=_unavailable_metric(
-            "Recent coding-loop aggregation is not wired into this overview read model yet."
-        ),
-        recent_memory_lesson_count=_unavailable_metric(
-            "Recent lifecycle lesson aggregation is not wired into this overview read model yet."
+        pending_approval_count=pending_approval_count,
+        recent_coding_loop_count=recent_coding_loop_count,
+        recent_lifecycle_lesson_count=recent_lifecycle_lesson_count,
+        recent_memory_lesson_count=recent_lifecycle_lesson_count,
+        counts_generated_from_live_sources=not unavailable_counts,
+        unavailable_counts=unavailable_counts,
+        partial_counts_reason=(
+            None
+            if not unavailable_counts
+            else f"Unavailable count sources: {', '.join(unavailable_counts)}."
         ),
         self_documentation_status=(
             "prototype: ContentSeed and ContentPackage generation are implemented; "
@@ -90,7 +116,8 @@ def get_ari_operating_overview() -> ARIOperatingOverview:
         ),
         read_model_notes=(
             "Skill counts are live from the static ARI skill catalog.",
-            "Approval, coding-loop, and memory counts are intentionally marked partial.",
+            "Approval, coding-loop, and lifecycle lesson counts are live when their "
+            "ARI-owned stores are readable.",
             "This read model performs no execution, mutation, dynamic loading, or external calls.",
         ),
     )
@@ -114,6 +141,42 @@ def _skills_with_status(
 
 def _unavailable_metric(reason: str) -> OverviewMetric:
     return OverviewMetric(value=None, status="partial_unavailable", reason=reason)
+
+
+def _live_metric(value: int, reason: str) -> OverviewMetric:
+    return OverviewMetric(value=value, status="live", reason=reason)
+
+
+def _pending_approval_count(db_path: Path) -> OverviewMetric:
+    try:
+        approvals = list_coding_loop_retry_approvals(limit=200, db_path=db_path)
+    except Exception as error:  # pragma: no cover - exercised through tests via monkeypatch.
+        return _unavailable_metric(
+            f"Pending retry approval count is unavailable: {type(error).__name__}: {error}"
+        )
+    pending = sum(1 for approval in approvals if approval.approval_status == "pending")
+    return _live_metric(pending, "Live count from durable coding-loop retry approvals.")
+
+
+def _recent_coding_loop_count(db_path: Path) -> OverviewMetric:
+    try:
+        results = list_coding_loop_results(limit=20, db_path=db_path)
+    except Exception as error:  # pragma: no cover - exercised through tests via monkeypatch.
+        return _unavailable_metric(
+            f"Recent coding-loop count is unavailable: {type(error).__name__}: {error}"
+        )
+    return _live_metric(len(results), "Live count from durable coding-loop result inspection.")
+
+
+def _recent_lifecycle_lesson_count(db_path: Path) -> OverviewMetric:
+    try:
+        blocks = list_memory_blocks(limit=50, db_path=db_path)
+    except Exception as error:  # pragma: no cover - exercised through tests via monkeypatch.
+        return _unavailable_metric(
+            f"Recent lifecycle lesson count is unavailable: {type(error).__name__}: {error}"
+        )
+    lessons = sum(1 for block in blocks if block["kind"] == "coding_loop_chain_lifecycle_summary")
+    return _live_metric(lessons, "Live count from canonical memory lifecycle blocks.")
 
 
 def _now_iso() -> str:
