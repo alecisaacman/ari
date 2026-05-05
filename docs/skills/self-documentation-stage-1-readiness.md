@@ -118,6 +118,7 @@ The first implementation now only:
 
 - read a commit range or recent build summary
 - generate a content seed
+- generate a read-only content package from an existing content seed
 - return a JSON-serializable seed object
 - avoid recording
 - avoid publishing

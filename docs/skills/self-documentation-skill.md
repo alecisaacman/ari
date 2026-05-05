@@ -67,9 +67,11 @@ The skill must reject or require clarification for goals that ask it to:
 ### Stage 1: Build-Event Summary / Content Seed Generation
 
 - Capability: turn recent commits, tests, docs, execution runs, coding-loop
-  lifecycle memory, and user-approved framing into content seeds.
+  lifecycle memory, and user-approved framing into content seeds and
+  read-only content packages.
 - Execution: read-only local git inspection and summary generation only.
-- Output examples: build-event summary, content seed, factual narrative outline.
+- Output examples: build-event summary, content seed, factual narrative
+  outline, script/shot-list package.
 
 ### Stage 2: Demo Script And Shot-List Generation
 
@@ -268,3 +270,9 @@ The first Stage 1 implementation provides a local, deterministic `ContentSeed`
 generator from a git commit range, exposed through
 `api self-doc seed from-commits --from <hash> --to <hash> --json`. It does not
 persist, record, edit, export, publish, upload, or call external services.
+
+Stage 1 also includes a deterministic `ContentPackage` generator that converts
+an existing `ContentSeed` into read-only scripts, shot lists, terminal demo
+plans, captions, thumbnail prompts, redaction checklists, and approval gates.
+It does not persist, record, edit, export, publish, upload, or call external
+services.
