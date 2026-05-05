@@ -24,6 +24,7 @@
   prototype for routing goals to known skills or missing-skill candidates
 - read-only CLI inspection for the static skill catalog
 - read-only skill-readiness evaluator for catalog promotion gates
+- read-only missing-skill proposal generation for bounded future skill slices
 
 ## Still evolving
 - autonomous coding loop

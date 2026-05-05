@@ -8,6 +8,7 @@ from .catalog import (
     get_skill_manifest,
     list_skill_manifests,
 )
+from .proposals import MissingSkillProposal, propose_missing_skill
 from .readiness import (
     READINESS_GATES,
     SkillReadinessReport,
@@ -25,6 +26,7 @@ __all__ = [
     "IMPLEMENTED_SKILL_IDS",
     "SKILL_CATALOG",
     "SkillManifest",
+    "MissingSkillProposal",
     "SkillReadinessReport",
     "SkillReadinessStatus",
     "SkillRouteStatus",
@@ -33,5 +35,6 @@ __all__ = [
     "evaluate_skill_readiness",
     "get_skill_manifest",
     "list_skill_manifests",
+    "propose_missing_skill",
     "route_goal_to_skill",
 ]

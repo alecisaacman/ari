@@ -525,6 +525,96 @@ def test_canonical_core_cli_skills_route_missing_goal_fails_safely(
     assert "--goal" in stderr.getvalue()
 
 
+def test_canonical_core_cli_skills_propose_goal_json(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "propose",
+                "--goal",
+                "organize my Downloads folder",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    proposal = json.loads(output.getvalue())["proposal"]
+    assert proposal["proposal_id"].startswith("missing-skill-proposal-")
+    assert proposal["candidate_skill_id"] == "ari.native.file_organization"
+    assert proposal["user_approval_required_before_building"] is True
+    assert proposal["proposed_first_slice"]
+
+
+def test_canonical_core_cli_skills_propose_skill_id_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "propose",
+                "--skill-id",
+                "ari.native.document_processing",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    proposal = json.loads(output.getvalue())["proposal"]
+    assert proposal["candidate_skill_id"] == "ari.native.document_processing"
+    assert proposal["verification_requirements"]
+
+
+def test_canonical_core_cli_skills_propose_unknown_goal_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "propose",
+                "--goal",
+                "make things better somehow",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    proposal = json.loads(output.getvalue())["proposal"]
+    assert proposal["candidate_skill_id"] is None
+    assert proposal["current_readiness_status"] == "ask_user"
+    assert "clarify" in proposal["proposed_first_slice"].lower()
+
+
 def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     tmp_path: Path,
     monkeypatch,

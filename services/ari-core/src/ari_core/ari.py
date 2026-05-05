@@ -98,6 +98,7 @@ from .modules.skills import (
     evaluate_skill_readiness,
     get_skill_manifest,
     list_skill_manifests,
+    propose_missing_skill,
     route_goal_to_skill,
 )
 from .modules.tasks.api import (
@@ -364,6 +365,27 @@ def _handle_api_skills_readiness(args: argparse.Namespace) -> int:
     print(f"Status: {readiness['status']}")
     print(f"Reason: {readiness['reason']}")
     print(f"Recommended next step: {readiness['recommended_next_step']}")
+    return 0
+
+
+def _handle_api_skills_propose(args: argparse.Namespace) -> int:
+    proposal = propose_missing_skill(goal=args.goal, skill_id=args.skill_id)
+    payload = {"proposal": proposal.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    proposal_payload = payload["proposal"]
+    print(f"Missing skill proposal: {proposal_payload['proposal_id']}")
+    if proposal_payload["source_goal"]:
+        print(f"Goal: {proposal_payload['source_goal']}")
+    if proposal_payload["candidate_skill_id"]:
+        print(f"Candidate skill: {proposal_payload['candidate_skill_id']}")
+    else:
+        print("Candidate skill: none selected")
+    print(f"Readiness: {proposal_payload['current_readiness_status']}")
+    print(f"First slice: {proposal_payload['proposed_first_slice']}")
+    print(f"Reason: {proposal_payload['reason_skill_is_needed']}")
     return 0
 
 
@@ -743,6 +765,15 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     skills_route_parser.add_argument("--goal", required=True, help="Goal to route.")
     skills_route_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    skills_propose_parser = skills_subparsers.add_parser(
+        "propose", help="Create a read-only missing-skill implementation proposal."
+    )
+    skills_propose_target = skills_propose_parser.add_mutually_exclusive_group(required=True)
+    skills_propose_target.add_argument("--goal", help="Goal that appears to need a skill.")
+    skills_propose_target.add_argument("--skill-id", help="Candidate skill id to propose.")
+    skills_propose_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1757,6 +1788,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return _handle_api_skills_readiness(args)
         if args.api_command == "skills" and args.api_skills_command == "route":
             return _handle_api_skills_route(args)
+        if args.api_command == "skills" and args.api_skills_command == "propose":
+            return _handle_api_skills_propose(args)
         if args.api_command == "memory" and args.api_memory_command == "remember":
             return handle_api_memory_remember(args, db_path=db_path)
         if args.api_command == "memory" and args.api_memory_command == "list":

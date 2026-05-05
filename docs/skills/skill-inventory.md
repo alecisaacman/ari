@@ -22,6 +22,13 @@ Skill readiness can be evaluated through
 `api skills readiness --id <skill_id> --json`. This reports promotion gates
 only; it does not activate, execute, persist, or dynamically load skills.
 
+Missing or candidate skills can be turned into read-only build proposals through
+`api skills propose --goal "<goal>" --json` or
+`api skills propose --skill-id <skill_id> --json`. A proposal describes the
+first bounded implementation slice, authority boundary, verification, memory,
+inspection, tests, and explicit non-goals. It does not build, activate, execute,
+persist, or dynamically load a skill.
+
 ## Current Native Skills
 
 ### `ari.native.coding_loop`
@@ -61,9 +68,9 @@ runtime-loadable.
 
 | Candidate skill id | Status | Likely purpose | Required authority boundary | Verification requirement |
 | --- | --- | --- | --- | --- |
-| `ari.native.document_pdf_processing` | candidate / not implemented | Extract, summarize, transform, and verify document or PDF files. | Approval before file mutation, export, deletion, or disclosure of private content. | Render/readback checks, file existence checks, extracted text checks, and summary evidence links. |
+| `ari.native.document_processing` | candidate / not implemented | Extract, summarize, transform, and verify document or PDF files. | Approval before file mutation, export, deletion, or disclosure of private content. | Render/readback checks, file existence checks, extracted text checks, and summary evidence links. |
 | `ari.native.research_gathering` | candidate / not implemented | Gather sources, summarize findings, and create cited research briefs. | Approval before external network access, paid services, or storing sensitive research. | Source citations, timestamped retrieval metadata, quote limits, and confidence notes. |
-| `ari.native.local_file_organization` | candidate / not implemented | Inspect local files and propose safe organization actions. | Approval before moves, renames, deletes, copies, or broad filesystem traversal. | Dry-run plans, path existence checks, before/after manifests, and reversible operation evidence. |
+| `ari.native.file_organization` | candidate / not implemented | Inspect local files and propose safe organization actions. | Approval before moves, renames, deletes, copies, or broad filesystem traversal. | Dry-run plans, path existence checks, before/after manifests, and reversible operation evidence. |
 | `ari.native.spreadsheet_analysis` | candidate / not implemented | Analyze tabular files, compute summaries, and produce verified outputs. | Approval before modifying source sheets or exporting derived files. | Formula/readback checks, row/column counts, sample validations, and chart/data consistency checks. |
 | `ari.native.email_calendar_triage` | candidate / not implemented | Summarize inbox/calendar state and propose replies, scheduling actions, or follow-ups. | Explicit approval before reading connected accounts, sending messages, modifying events, or storing private content. | Connector readback, drafted-action review, event/message ids, and no-send/no-mutate dry runs. |
 | `ari.native.browser_inspection` | candidate / not implemented | Inspect web or local browser state for evidence and debugging. | Approval before external browsing, login/session use, form submission, downloads, or state mutation. | URL/title snapshots, screenshot/evidence references, and no-click/no-submit dry runs where possible. |

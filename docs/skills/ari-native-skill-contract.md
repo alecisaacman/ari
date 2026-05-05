@@ -184,6 +184,12 @@ The read-only skill-readiness evaluator reports which promotion gates are
 satisfied or missing for a cataloged skill. It must not activate skills, promote
 skills, execute skills, load skills dynamically, or persist readiness decisions.
 
+The read-only missing-skill proposal object can describe a first bounded
+implementation slice for a candidate or missing skill. It may name authority,
+approval, validation, verification, memory, inspection, tests, docs, and
+explicit non-goals, but it must not build, activate, execute, persist, or
+dynamically load the skill.
+
 The first static manifest instance is `docs/skills/coding-loop-skill.md`.
 The first designed candidate beyond the coding loop is
 `docs/skills/self-documentation-skill.md`.
