@@ -81,6 +81,10 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   depth, approval counts, retry execution counts, final review/continuation
   state, key failure/success summaries, and durable takeaway while preserving
   references instead of duplicating full execution traces.
+- ARI now has a docs-only Native Skill Contract v0. The contract defines how
+  future skills must plug into ARI's shared memory, authority, validation,
+  execution, verification, persistence, inspection, explanation, and learning
+  spine without becoming competing brains.
 
 ## Boundary
 
@@ -152,5 +156,6 @@ bounded outcomes without copying full `ExecutionRun` payloads.
 
 ## Next Recommended Slice
 
-Draft an ARI Native Skill Contract v0 so the proven coding-loop spine can guide
-future skills without turning the coding loop into the whole architecture.
+Consolidate coding-loop module boundaries where they have grown large, starting
+with a small extraction of chain/approval helpers if it reduces coupling without
+changing behavior.

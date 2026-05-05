@@ -28,3 +28,8 @@
 
 ## Important principle
 External model providers should remain pluggable services, not the identity of the brain itself.
+
+Native skills must follow `docs/skills/ari-native-skill-contract.md`: they plug
+into ARI's shared memory, authority, validation, execution, verification,
+inspection, explanation, and learning spine rather than becoming separate
+brains.
