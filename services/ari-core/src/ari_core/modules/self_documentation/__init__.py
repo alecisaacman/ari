@@ -10,6 +10,7 @@ from .content_seed import (
     ContentSeed,
     GitCommandResult,
     SourceCommit,
+    content_seed_from_dict,
     generate_content_seed_from_commits,
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "GitCommandResult",
     "Shot",
     "SourceCommit",
+    "content_seed_from_dict",
     "generate_content_package_from_seed",
     "generate_content_seed_from_commits",
 ]

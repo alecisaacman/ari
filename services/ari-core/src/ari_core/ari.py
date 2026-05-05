@@ -89,7 +89,11 @@ from .modules.policy.api import (
     handle_api_policy_project_draft,
     handle_api_policy_project_focus,
 )
-from .modules.self_documentation import generate_content_seed_from_commits
+from .modules.self_documentation import (
+    content_seed_from_dict,
+    generate_content_package_from_seed,
+    generate_content_seed_from_commits,
+)
 from .modules.tasks.api import (
     handle_api_tasks_create,
     handle_api_tasks_get,
@@ -234,6 +238,45 @@ def _handle_api_self_doc_seed_from_commits(args: argparse.Namespace) -> int:
         for note in payload["risk_notes"]:
             print(f"- {note}")
     return 0
+
+
+def _handle_api_self_doc_package_from_seed_json(args: argparse.Namespace) -> int:
+    seed_path = Path(args.json_file)
+    try:
+        raw_payload = json.loads(seed_path.read_text(encoding="utf-8"))
+        if not isinstance(raw_payload, dict):
+            raise ValueError("ContentSeed JSON must be an object.")
+        seed = content_seed_from_dict(raw_payload)
+        package = generate_content_package_from_seed(seed)
+    except OSError as exc:
+        return _print_self_doc_package_error(f"Unable to read ContentSeed JSON file: {exc}", args)
+    except json.JSONDecodeError as exc:
+        return _print_self_doc_package_error(f"Invalid ContentSeed JSON: {exc}", args)
+    except ValueError as exc:
+        return _print_self_doc_package_error(str(exc), args)
+
+    payload = package.to_dict()
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Content package: {payload['title']}")
+    print(f"Package id: {payload['package_id']}")
+    print(f"Source seed id: {payload['source_seed_id']}")
+    print(f"Content angle: {payload['content_angle']}")
+    print(f"Shots: {len(payload['shot_list'])}")
+    print(f"Terminal demo steps: {len(payload['terminal_demo_plan'])}")
+    print("Approval required before recording: yes")
+    print("Approval required before posting: yes")
+    return 0
+
+
+def _print_self_doc_package_error(message: str, args: argparse.Namespace) -> int:
+    if args.as_json:
+        print(json.dumps({"error": message}, indent=2, sort_keys=True))
+    else:
+        print(f"Unable to generate content package: {message}", file=sys.stderr)
+    return 1
 
 
 def execute(action: dict, execution_root: Path | str | None = None) -> dict:
@@ -563,6 +606,21 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--user-framing", default=None, help="Optional user-approved narrative framing."
     )
     self_doc_from_commits_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_package_parser = self_doc_subparsers.add_parser(
+        "package", help="Generate read-only self-documentation content packages."
+    )
+    self_doc_package_subparsers = self_doc_package_parser.add_subparsers(
+        dest="api_self_doc_package_command", required=True
+    )
+    self_doc_package_from_seed_parser = self_doc_package_subparsers.add_parser(
+        "from-seed-json", help="Generate a ContentPackage from a local ContentSeed JSON file."
+    )
+    self_doc_package_from_seed_parser.add_argument(
+        "--json-file", required=True, help="Path to a local ContentSeed JSON file."
+    )
+    self_doc_package_from_seed_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1563,6 +1621,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_self_doc_seed_command == "from-commits"
         ):
             return _handle_api_self_doc_seed_from_commits(args)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "package"
+            and args.api_self_doc_package_command == "from-seed-json"
+        ):
+            return _handle_api_self_doc_package_from_seed_json(args)
         if args.api_command == "memory" and args.api_memory_command == "remember":
             return handle_api_memory_remember(args, db_path=db_path)
         if args.api_command == "memory" and args.api_memory_command == "list":

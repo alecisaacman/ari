@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,6 +58,32 @@ class GitCommandResult:
 GitRunner = Callable[[Sequence[str], Path], GitCommandResult]
 
 
+def content_seed_from_dict(payload: Mapping[str, object]) -> ContentSeed:
+    source_commits_raw = _required_sequence(payload, "source_commits")
+    source_commits = tuple(_source_commit_from_dict(commit) for commit in source_commits_raw)
+    return ContentSeed(
+        seed_id=_required_str(payload, "seed_id"),
+        source_commit_range=_required_str(payload, "source_commit_range"),
+        source_commits=source_commits,
+        source_files=_required_str_tuple(payload, "source_files"),
+        title=_required_str(payload, "title"),
+        one_sentence_summary=_required_str(payload, "one_sentence_summary"),
+        why_it_matters=_required_str(payload, "why_it_matters"),
+        proof_points=_required_str_tuple(payload, "proof_points"),
+        demo_idea=_required_str(payload, "demo_idea"),
+        hook_options=_required_str_tuple(payload, "hook_options"),
+        visual_moments=_required_str_tuple(payload, "visual_moments"),
+        suggested_voiceover=_required_str(payload, "suggested_voiceover"),
+        suggested_linkedin_post=_required_str(payload, "suggested_linkedin_post"),
+        suggested_short_caption=_required_str(payload, "suggested_short_caption"),
+        risk_notes=_required_str_tuple(payload, "risk_notes"),
+        redaction_notes=_required_str_tuple(payload, "redaction_notes"),
+        claims_to_avoid=_required_str_tuple(payload, "claims_to_avoid"),
+        next_content_angle=_required_str(payload, "next_content_angle"),
+        created_at=_required_str(payload, "created_at"),
+    )
+
+
 def generate_content_seed_from_commits(
     *,
     from_ref: str,
@@ -111,6 +137,36 @@ def generate_content_seed_from_commits(
         claims_to_avoid=claims_to_avoid,
         next_content_angle=next_content_angle,
     )
+
+
+def _source_commit_from_dict(payload: object) -> SourceCommit:
+    if not isinstance(payload, Mapping):
+        raise ValueError("source_commits must contain objects.")
+    return SourceCommit(
+        hash=_required_str(payload, "hash"),
+        subject=_required_str(payload, "subject"),
+    )
+
+
+def _required_str(payload: Mapping[str, object], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"ContentSeed field {key!r} is required and must be a string.")
+    return value
+
+
+def _required_sequence(payload: Mapping[str, object], key: str) -> tuple[object, ...]:
+    value = payload.get(key)
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise ValueError(f"ContentSeed field {key!r} is required and must be a list.")
+    return tuple(value)
+
+
+def _required_str_tuple(payload: Mapping[str, object], key: str) -> tuple[str, ...]:
+    values = _required_sequence(payload, key)
+    if not all(isinstance(value, str) for value in values):
+        raise ValueError(f"ContentSeed field {key!r} must contain only strings.")
+    return tuple(values)
 
 
 def _run_git(args: Sequence[str], cwd: Path) -> GitCommandResult:

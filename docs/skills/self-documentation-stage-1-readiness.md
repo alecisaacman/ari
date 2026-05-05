@@ -132,6 +132,7 @@ publish publicly, or call external integrations.
 Implemented read-only CLI:
 
 - `api self-doc seed from-commits --from <hash> --to <hash> --json`
+- `api self-doc package from-seed-json --json-file <path> --json`
 
 Possible future commands:
 

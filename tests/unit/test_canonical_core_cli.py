@@ -149,6 +149,179 @@ def test_canonical_core_cli_self_doc_seed_from_commits_invalid_range(
     assert "Unable to inspect git commits" in payload["error"]
 
 
+def _content_seed_payload() -> dict[str, object]:
+    return {
+        "seed_id": "content-seed-cli-test",
+        "source_commit_range": "abc123..def456",
+        "source_commits": [
+            {
+                "hash": "def456789abc",
+                "subject": "Generate self-documentation content seeds",
+            }
+        ],
+        "source_files": [
+            "services/ari-core/src/ari_core/modules/self_documentation/content_seed.py",
+            "tests/unit/test_self_documentation_content_seed.py",
+        ],
+        "title": "ARI starts turning its own build history into content seeds",
+        "one_sentence_summary": "This seed summarizes 1 commit touching 2 files.",
+        "why_it_matters": "It keeps ARI content grounded in actual build evidence.",
+        "proof_points": [
+            "Commit def456789abc: Generate self-documentation content seeds",
+            "Changed 2 file(s): content_seed.py and tests.",
+        ],
+        "demo_idea": "Show a commit range becoming a factual content seed.",
+        "hook_options": ["ARI is learning to document itself without making things up."],
+        "visual_moments": ["Show the commit range and generated seed JSON."],
+        "suggested_voiceover": "ARI is turning real build evidence into content seeds.",
+        "suggested_linkedin_post": "ARI is grounding self-documentation in commits.",
+        "suggested_short_caption": "ARI self-doc, backed by commits.",
+        "risk_notes": [],
+        "redaction_notes": ["No sensitive-looking input was detected."],
+        "claims_to_avoid": [
+            "Do not claim this feature records, edits, exports, or publishes media."
+        ],
+        "next_content_angle": "Show package generation from a seed JSON file.",
+        "created_at": "2026-05-05T00:00:00Z",
+    }
+
+
+def test_canonical_core_cli_self_doc_package_from_seed_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    seed_file = tmp_path / "seed.json"
+    seed_file.write_text(json.dumps(_content_seed_payload()), encoding="utf-8")
+    before_paths = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "package",
+                "from-seed-json",
+                "--json-file",
+                str(seed_file),
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    package = json.loads(output.getvalue())
+    assert package["package_id"].startswith("content-package-")
+    assert package["source_seed_id"] == "content-seed-cli-test"
+    assert package["shot_list"]
+    assert package["terminal_demo_plan"]
+    assert package["claims_to_avoid"] == [
+        "Do not claim this feature records, edits, exports, or publishes media."
+    ]
+    after_paths = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+    assert after_paths == before_paths
+
+
+def test_canonical_core_cli_self_doc_package_from_missing_seed_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "package",
+                "from-seed-json",
+                "--json-file",
+                str(tmp_path / "missing.json"),
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert "Unable to read ContentSeed JSON file" in payload["error"]
+
+
+def test_canonical_core_cli_self_doc_package_from_invalid_seed_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    invalid_file = tmp_path / "invalid.json"
+    invalid_file.write_text("{not json", encoding="utf-8")
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "package",
+                "from-seed-json",
+                "--json-file",
+                str(invalid_file),
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert "Invalid ContentSeed JSON" in payload["error"]
+
+
+def test_canonical_core_cli_self_doc_package_from_incomplete_seed_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    incomplete_file = tmp_path / "incomplete.json"
+    incomplete_file.write_text(json.dumps({"seed_id": "content-seed-bad"}), encoding="utf-8")
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "package",
+                "from-seed-json",
+                "--json-file",
+                str(incomplete_file),
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert "source_commits" in payload["error"]
+
+
 def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
     tmp_path: Path,
     monkeypatch,

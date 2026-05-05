@@ -274,5 +274,6 @@ persist, record, edit, export, publish, upload, or call external services.
 Stage 1 also includes a deterministic `ContentPackage` generator that converts
 an existing `ContentSeed` into read-only scripts, shot lists, terminal demo
 plans, captions, thumbnail prompts, redaction checklists, and approval gates.
-It does not persist, record, edit, export, publish, upload, or call external
-services.
+It is exposed through
+`api self-doc package from-seed-json --json-file <path> --json`. It does not
+persist, record, edit, export, publish, upload, or call external services.
