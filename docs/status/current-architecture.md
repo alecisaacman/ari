@@ -17,6 +17,7 @@
 - policy / derivation
 - execution layer for bounded coding actions
 - compact lifecycle memory for bounded coding-loop chains
+- docs-only skill design for future self-documentation/content creation
 
 ## Still evolving
 - autonomous coding loop

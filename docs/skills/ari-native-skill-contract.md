@@ -174,6 +174,8 @@ the coding loop. Until then, this contract is the boundary: future skills plug
 into ARI; they do not become ARI.
 
 The first static manifest instance is `docs/skills/coding-loop-skill.md`.
+The first designed candidate beyond the coding loop is
+`docs/skills/self-documentation-skill.md`.
 The current docs-only skill inventory is `docs/skills/skill-inventory.md`.
 ACE read-only dashboard consumption is bounded by
 `docs/ace/read-only-dashboard-contract.md`.

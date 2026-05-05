@@ -31,6 +31,7 @@ The read-only dashboard may show:
 - latest execution runs
 - recent memory summaries
 - recent lifecycle lessons
+- future self-documentation content seeds and demo plans
 - next safe action candidates
 - blocked or ask-user items
 - system health and warnings
@@ -159,6 +160,7 @@ stable and tested.
 - Skill inventory: `docs/skills/skill-inventory.md`.
 - Skill contract: `docs/skills/ari-native-skill-contract.md`.
 - Coding-loop manifest: `docs/skills/coding-loop-skill.md`.
+- Self-documentation manifest: `docs/skills/self-documentation-skill.md`.
 - Coding-loop result inspection: `/execution/coding-loop/results`.
 - Retry approval inspection: `/execution/coding-loop/retry-approvals`.
 - Chain inspection: `/execution/coding-loop/results/{result_id}/chain`.

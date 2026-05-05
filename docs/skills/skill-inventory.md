@@ -56,6 +56,7 @@ runtime-loadable.
 | `ari.native.browser_inspection` | candidate / not implemented | Inspect web or local browser state for evidence and debugging. | Approval before external browsing, login/session use, form submission, downloads, or state mutation. | URL/title snapshots, screenshot/evidence references, and no-click/no-submit dry runs where possible. |
 | `ari.native.self_improvement_task_generation` | candidate / not implemented | Convert repeated failures or capability gaps into inspectable improvement tasks. | Approval before queueing implementation work or dispatching a builder. | Deduped improvement records, evidence links, priority rationale, and completion criteria. |
 | `ari.native.planner_quality_goal_decomposition` | candidate / not implemented | Break broad goals into bounded skill invocations and safe next actions. | Approval before invoking skills with side effects or escalating to external models. | Bounded decomposition records, skill-fit rationale, rejected alternatives, and stop conditions. |
+| `ari.native.self_documentation` | designed / not implemented | Convert ARI activity into factual build summaries, content seeds, demo scripts, shot lists, voiceover drafts, and future approval-gated media packages. | Approval before recording, exporting public-facing media, publishing, using external services, or including sensitive data. | Commit/test/doc/run evidence, current capability checks, no-secret/no-private-data review, and no false-claim validation. |
 
 ## Imported Or Wrapped Skills
 
