@@ -444,6 +444,66 @@ def test_canonical_core_cli_skills_show_unknown_id_fails_safely(
     assert "Unknown skill id" in payload["error"]
 
 
+def test_canonical_core_cli_skills_readiness_json(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "readiness",
+                "--id",
+                "ari.native.coding_loop",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    readiness = json.loads(output.getvalue())["readiness"]
+    assert readiness["skill_id"] == "ari.native.coding_loop"
+    assert readiness["status"] == "active"
+    assert readiness["required_authority_boundary"]
+    assert readiness["required_verification"]
+    assert readiness["satisfied_gates"]
+
+
+def test_canonical_core_cli_skills_readiness_unknown_id_fails_safely(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "readiness",
+                "--id",
+                "ari.native.nope",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 1
+    payload = json.loads(output.getvalue())
+    assert "Unknown skill id" in payload["error"]
+    assert payload["readiness"]["status"] == "unknown_skill"
+
+
 def test_canonical_core_cli_skills_route_missing_goal_fails_safely(
     tmp_path: Path,
     monkeypatch,

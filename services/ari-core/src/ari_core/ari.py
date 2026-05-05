@@ -94,7 +94,12 @@ from .modules.self_documentation import (
     generate_content_package_from_seed,
     generate_content_seed_from_commits,
 )
-from .modules.skills import get_skill_manifest, list_skill_manifests, route_goal_to_skill
+from .modules.skills import (
+    evaluate_skill_readiness,
+    get_skill_manifest,
+    list_skill_manifests,
+    route_goal_to_skill,
+)
 from .modules.tasks.api import (
     handle_api_tasks_create,
     handle_api_tasks_get,
@@ -336,6 +341,29 @@ def _handle_api_skills_show(args: argparse.Namespace) -> int:
     print(f"Implementation: {skill['implementation_status']}")
     print(f"Purpose: {skill['purpose']}")
     print(f"Authority: {skill['authority_boundary']}")
+    return 0
+
+
+def _handle_api_skills_readiness(args: argparse.Namespace) -> int:
+    report = evaluate_skill_readiness(args.skill_id)
+    if report.status.value == "unknown_skill":
+        message = f"Unknown skill id: {args.skill_id}"
+        if args.as_json:
+            print(json.dumps({"error": message, "readiness": report.to_dict()}, indent=2, sort_keys=True))
+        else:
+            print(message, file=sys.stderr)
+        return 1
+
+    payload = {"readiness": report.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    readiness = payload["readiness"]
+    print(f"Skill readiness: {readiness['skill_id']}")
+    print(f"Status: {readiness['status']}")
+    print(f"Reason: {readiness['reason']}")
+    print(f"Recommended next step: {readiness['recommended_next_step']}")
     return 0
 
 
@@ -699,6 +727,15 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     skills_show_parser.add_argument("--id", dest="skill_id", required=True, help="Skill id.")
     skills_show_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    skills_readiness_parser = skills_subparsers.add_parser(
+        "readiness", help="Evaluate read-only readiness gates for one skill."
+    )
+    skills_readiness_parser.add_argument(
+        "--id", dest="skill_id", required=True, help="Skill id."
+    )
+    skills_readiness_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
     skills_route_parser = skills_subparsers.add_parser(
@@ -1716,6 +1753,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return _handle_api_skills_list(args)
         if args.api_command == "skills" and args.api_skills_command == "show":
             return _handle_api_skills_show(args)
+        if args.api_command == "skills" and args.api_skills_command == "readiness":
+            return _handle_api_skills_readiness(args)
         if args.api_command == "skills" and args.api_skills_command == "route":
             return _handle_api_skills_route(args)
         if args.api_command == "memory" and args.api_memory_command == "remember":

@@ -180,6 +180,10 @@ It uses a static machine-readable catalog for skill metadata, but it must not
 execute skills, load skills dynamically, persist routing decisions, or become a
 separate planner.
 
+The read-only skill-readiness evaluator reports which promotion gates are
+satisfied or missing for a cataloged skill. It must not activate skills, promote
+skills, execute skills, load skills dynamically, or persist readiness decisions.
+
 The first static manifest instance is `docs/skills/coding-loop-skill.md`.
 The first designed candidate beyond the coding loop is
 `docs/skills/self-documentation-skill.md`.

@@ -18,6 +18,10 @@ decisions.
 The static catalog can be inspected through `api skills list --json` and
 `api skills show --id <skill_id> --json`.
 
+Skill readiness can be evaluated through
+`api skills readiness --id <skill_id> --json`. This reports promotion gates
+only; it does not activate, execute, persist, or dynamically load skills.
+
 ## Current Native Skills
 
 ### `ari.native.coding_loop`
