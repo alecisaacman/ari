@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+
+import pytest
 
 
 def _purge_modules() -> None:
@@ -320,6 +322,56 @@ def test_canonical_core_cli_self_doc_package_from_incomplete_seed_json(
     assert exit_code == 1
     payload = json.loads(output.getvalue())
     assert "source_commits" in payload["error"]
+
+
+def test_canonical_core_cli_skills_route_json(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "skills",
+                "route",
+                "--goal",
+                "make a content seed from recent commits",
+                "--json",
+            ],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    route = json.loads(output.getvalue())
+    assert route["status"] == "route_to_skill"
+    assert route["recommended_skill_id"] == "ari.native.self_documentation"
+    assert route["required_authority_boundary"]
+    assert route["verification_expectation"]
+
+
+def test_canonical_core_cli_skills_route_missing_goal_fails_safely(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    stderr = StringIO()
+    with redirect_stderr(stderr), pytest.raises(SystemExit) as exc:
+        main(
+            ["api", "skills", "route", "--json"],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exc.value.code == 2
+    assert "--goal" in stderr.getvalue()
 
 
 def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(

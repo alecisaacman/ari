@@ -94,6 +94,7 @@ from .modules.self_documentation import (
     generate_content_package_from_seed,
     generate_content_seed_from_commits,
 )
+from .modules.skills import route_goal_to_skill
 from .modules.tasks.api import (
     handle_api_tasks_create,
     handle_api_tasks_get,
@@ -277,6 +278,26 @@ def _print_self_doc_package_error(message: str, args: argparse.Namespace) -> int
     else:
         print(f"Unable to generate content package: {message}", file=sys.stderr)
     return 1
+
+
+def _handle_api_skills_route(args: argparse.Namespace) -> int:
+    recommendation = route_goal_to_skill(args.goal)
+    payload = recommendation.to_dict()
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Skill route: {payload['status']}")
+    print(f"Route id: {payload['route_id']}")
+    print(f"Goal: {payload['goal']}")
+    if payload["recommended_skill_id"]:
+        print(f"Recommended skill: {payload['recommended_skill_id']}")
+    if payload["missing_skill_candidate_id"]:
+        print(f"Missing skill candidate: {payload['missing_skill_candidate_id']}")
+    if payload["clarification_question"]:
+        print(f"Clarification: {payload['clarification_question']}")
+    print(f"Reason: {payload['reason']}")
+    return 0
 
 
 def execute(action: dict, execution_root: Path | str | None = None) -> dict:
@@ -621,6 +642,18 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--json-file", required=True, help="Path to a local ContentSeed JSON file."
     )
     self_doc_package_from_seed_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+
+    skills_parser = api_subparsers.add_parser(
+        "skills", help="Read-only ARI skill inventory and routing commands."
+    )
+    skills_subparsers = skills_parser.add_subparsers(dest="api_skills_command", required=True)
+    skills_route_parser = skills_subparsers.add_parser(
+        "route", help="Classify a goal and recommend a native skill route."
+    )
+    skills_route_parser.add_argument("--goal", required=True, help="Goal to route.")
+    skills_route_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1627,6 +1660,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_self_doc_package_command == "from-seed-json"
         ):
             return _handle_api_self_doc_package_from_seed_json(args)
+        if args.api_command == "skills" and args.api_skills_command == "route":
+            return _handle_api_skills_route(args)
         if args.api_command == "memory" and args.api_memory_command == "remember":
             return handle_api_memory_remember(args, db_path=db_path)
         if args.api_command == "memory" and args.api_memory_command == "list":

@@ -163,6 +163,7 @@ Reject these patterns:
 This contract should guide:
 
 - a future skill registry
+- the current read-only skill-selection prototype
 - future skill manifests
 - future local and open-source tool wrapping
 - shared result and inspection vocabulary
@@ -172,6 +173,11 @@ This contract should guide:
 The next code work should extract only the smallest reusable pieces proven by
 the coding loop. Until then, this contract is the boundary: future skills plug
 into ARI; they do not become ARI.
+
+The read-only skill-selection prototype may recommend an existing skill, ask
+for clarification, identify a missing candidate skill, or block unsafe goals.
+It must not execute skills, load skills dynamically, or become a separate
+planner.
 
 The first static manifest instance is `docs/skills/coding-loop-skill.md`.
 The first designed candidate beyond the coding loop is
