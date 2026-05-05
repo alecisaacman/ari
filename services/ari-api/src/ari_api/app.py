@@ -46,6 +46,7 @@ from ari_core.modules.execution.inspection import (
 from ari_core.modules.execution.models import ExecutionGoal
 from ari_core.modules.execution.tools import get_execution_tool_registry
 from ari_core.modules.memory.capture import (
+    capture_coding_loop_retry_approval_memory,
     capture_execution_run_memory,
     capture_recent_execution_run_memories,
 )
@@ -61,7 +62,10 @@ from ari_core.modules.memory.db import (
     search_ari_memories,
     search_memory_blocks,
 )
-from ari_core.modules.memory.explain import explain_execution_run
+from ari_core.modules.memory.explain import (
+    explain_coding_loop_retry_approval,
+    explain_execution_run,
+)
 from ari_core.modules.memory.self_model import ensure_self_model_memory, get_self_model_memory
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 from ari_core.modules.policy.engine import (
@@ -236,9 +240,19 @@ def create_app() -> FastAPI:
             return {"block": capture_execution_run_memory(payload.runId)}
         return {"blocks": capture_recent_execution_run_memories(limit=payload.limit)}
 
+    @app.post("/memory/capture/coding-loop-retry-approvals/{approval_id}")
+    def capture_retry_approval_memory(approval_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: {"block": capture_coding_loop_retry_approval_memory(approval_id)}
+        )
+
     @app.get("/explain/execution/{run_id}")
     def explain_execution(run_id: str) -> dict[str, Any]:
         return explain_execution_run(run_id)
+
+    @app.get("/explain/coding-loop-retry-approvals/{approval_id}")
+    def explain_retry_approval(approval_id: str) -> dict[str, Any]:
+        return guard(lambda: explain_coding_loop_retry_approval(approval_id))
 
     @app.post("/memory/self-model/ensure")
     def ensure_self_model() -> dict[str, Any]:

@@ -20,6 +20,59 @@ def _purge_modules() -> None:
             sys.modules.pop(module_name, None)
 
 
+def _executed_retry_approval(tmp_path: Path, *, db_path: Path | None = None):
+    from ari_core.modules.execution import (
+        ModelPlanner,
+        approve_stored_coding_loop_retry_approval,
+        execute_approved_coding_loop_retry_approval,
+        run_one_step_coding_loop,
+    )
+
+    state_path = db_path or tmp_path / "state" / "networking.db"
+    root = tmp_path / "repo"
+    root.mkdir(exist_ok=True)
+    (root / "proof.txt").write_text("old\n", encoding="utf-8")
+    result = run_one_step_coding_loop(
+        "Create a proof file",
+        execution_root=root,
+        db_path=state_path,
+        planner=ModelPlanner(
+            lambda payload: json.dumps(
+                {
+                    "confidence": 0.9,
+                    "reason": "Write content that will fail explicit verification.",
+                    "actions": [
+                        {
+                            "type": "write_file",
+                            "path": "proof.txt",
+                            "content": "wrong",
+                        }
+                    ],
+                    "verification": [
+                        {
+                            "type": "file_content",
+                            "target": "proof.txt",
+                            "expected": "right",
+                        }
+                    ],
+                }
+            )
+        ),
+    )
+    assert result.retry_approval is not None
+    approved = approve_stored_coding_loop_retry_approval(
+        result.retry_approval.approval_id,
+        approved_by="alec",
+        db_path=state_path,
+    )
+    executed, execution_run = execute_approved_coding_loop_retry_approval(
+        approved.approval_id,
+        db_path=state_path,
+    )
+    assert execution_run["status"] == "completed"
+    return executed, execution_run, root, state_path
+
+
 def test_memory_block_persistence_and_search(tmp_path: Path) -> None:
     from ari_core.modules.memory import (
         create_memory_block,
@@ -303,6 +356,50 @@ def test_capture_execution_run_memory_is_idempotent(tmp_path: Path) -> None:
     assert any("Final status reason" in reason for reason in explanation["why"])
 
 
+def test_capture_coding_loop_retry_approval_memory_is_explainable(
+    tmp_path: Path,
+) -> None:
+    from ari_core.modules.memory.capture import (
+        capture_coding_loop_retry_approval_memory,
+    )
+    from ari_core.modules.memory.db import list_memory_blocks, memory_block_to_payload
+    from ari_core.modules.memory.explain import explain_coding_loop_retry_approval
+
+    approval, execution_run, _root, db_path = _executed_retry_approval(tmp_path)
+
+    first = capture_coding_loop_retry_approval_memory(
+        approval.approval_id,
+        db_path=db_path,
+    )
+    second = capture_coding_loop_retry_approval_memory(
+        approval.approval_id,
+        db_path=db_path,
+    )
+    blocks = [
+        memory_block_to_payload(row) for row in list_memory_blocks(layer="session", db_path=db_path)
+    ]
+
+    assert first["id"] == second["id"]
+    assert first["kind"] == "coding_loop_retry_execution_summary"
+    assert first["source"] == approval.approval_id
+    assert "Original goal: Create a proof file" in str(first["body"])
+    assert "Retry execution status: completed" in str(first["body"])
+    assert approval.retry_execution_run_id in first["subject_ids"]
+    assert execution_run["id"] in first["subject_ids"]
+    assert len(blocks) == 1
+
+    explanation = explain_coding_loop_retry_approval(
+        approval.approval_id,
+        db_path=db_path,
+    )
+    assert explanation["subject"]["id"] == approval.approval_id
+    assert explanation["approval_status"] == "approved"
+    assert explanation["retry_execution_status"] == "completed"
+    assert explanation["evidence"]["retry_execution_run"]["id"] == execution_run["id"]
+    assert explanation["memory_blocks"][0]["id"] == first["id"]
+    assert any("Retry execution run" in reason for reason in explanation["why"])
+
+
 def test_memory_capture_execution_cli(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
@@ -357,6 +454,60 @@ def test_memory_capture_execution_cli(tmp_path: Path, monkeypatch) -> None:
     assert explanation["memory_blocks"][0]["source"] == run_id
 
 
+def test_memory_capture_retry_approval_cli(tmp_path: Path, monkeypatch) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+    approval, _execution_run, _root, _state_path = _executed_retry_approval(
+        tmp_path,
+        db_path=db_path,
+    )
+
+    capture_output = StringIO()
+    with redirect_stdout(capture_output):
+        exit_code = main(
+            [
+                "api",
+                "memory",
+                "capture",
+                "retry-approval",
+                "--id",
+                approval.approval_id,
+                "--json",
+            ],
+            db_path=db_path,
+        )
+
+    assert exit_code == 0
+    block = json.loads(capture_output.getvalue())["block"]
+    assert block["source"] == approval.approval_id
+    assert block["kind"] == "coding_loop_retry_execution_summary"
+
+    explain_output = StringIO()
+    with redirect_stdout(explain_output):
+        exit_code = main(
+            [
+                "api",
+                "memory",
+                "explain",
+                "retry-approval",
+                "--id",
+                approval.approval_id,
+                "--json",
+            ],
+            db_path=db_path,
+        )
+    assert exit_code == 0
+    explanation = json.loads(explain_output.getvalue())
+    assert explanation["subject"]["id"] == approval.approval_id
+    assert explanation["retry_execution_status"] == "completed"
+    assert explanation["memory_blocks"][0]["source"] == approval.approval_id
+
+
 def test_memory_capture_execution_api(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
     monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "repo"))
@@ -386,3 +537,34 @@ def test_memory_capture_execution_api(tmp_path: Path, monkeypatch) -> None:
         assert explained.status_code == 200
         assert explained.json()["subject"]["id"] == run_id
         assert explained.json()["memory_blocks"][0]["source"] == run_id
+
+
+def test_memory_capture_retry_approval_api(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
+    _purge_modules()
+
+    from ari_api import create_app
+    from ari_core.core.paths import DB_PATH
+
+    approval, execution_run, _root, _db_path = _executed_retry_approval(
+        tmp_path,
+        db_path=DB_PATH,
+    )
+
+    app = create_app()
+    with TestClient(app) as client:
+        captured = client.post(
+            f"/memory/capture/coding-loop-retry-approvals/{approval.approval_id}"
+        )
+        assert captured.status_code == 200
+        assert captured.json()["block"]["source"] == approval.approval_id
+        assert captured.json()["block"]["kind"] == "coding_loop_retry_execution_summary"
+
+        explained = client.get(
+            f"/explain/coding-loop-retry-approvals/{approval.approval_id}"
+        )
+        assert explained.status_code == 200
+        assert explained.json()["subject"]["id"] == approval.approval_id
+        assert explained.json()["retry_execution_status"] == "completed"
+        assert explained.json()["evidence"]["retry_execution_run"]["id"] == execution_run["id"]
+        assert explained.json()["memory_blocks"][0]["source"] == approval.approval_id

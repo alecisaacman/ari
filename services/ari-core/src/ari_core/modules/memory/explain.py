@@ -43,6 +43,48 @@ def explain_execution_run(
     }
 
 
+def explain_coding_loop_retry_approval(
+    approval_id: str,
+    *,
+    db_path: Path = DB_PATH,
+) -> dict[str, object]:
+    from ..execution.coding_loop import get_coding_loop_retry_approval
+    from ..execution.inspection import inspect_coding_loop_retry_approval
+
+    approval = get_coding_loop_retry_approval(approval_id, db_path=db_path)
+    if approval is None:
+        raise ValueError(f"Coding-loop retry approval {approval_id} was not found.")
+    payload = inspect_coding_loop_retry_approval(approval)
+    source_run_id = _string_or_none(payload.get("source_execution_run_id"))
+    retry_run_id = _string_or_none(payload.get("retry_execution_run_id"))
+    source_run = (
+        None if source_run_id is None else get_execution_run(source_run_id, db_path=db_path)
+    )
+    retry_run = None if retry_run_id is None else get_execution_run(retry_run_id, db_path=db_path)
+    related_memory = _related_retry_memory(payload, db_path=db_path)
+    return {
+        "subject": {
+            "type": "coding_loop_retry_approval",
+            "id": approval_id,
+        },
+        "summary": _retry_summary(payload, related_memory),
+        "why": _retry_why(payload),
+        "approval_status": payload.get("approval_status"),
+        "retry_execution_status": payload.get("retry_execution_status"),
+        "original_goal": payload.get("original_goal"),
+        "proposed_retry_goal": payload.get("proposed_retry_goal"),
+        "proposed_retry_action": payload.get("proposed_retry_action"),
+        "failed_verification_summary": payload.get("failed_verification_summary"),
+        "memory_blocks": related_memory,
+        "evidence": {
+            "retry_approval": payload,
+            "source_execution_run": source_run,
+            "retry_execution_run": retry_run,
+            "memory_block_ids": [block["id"] for block in related_memory],
+        },
+    }
+
+
 def _related_memory_blocks(run_id: str, *, db_path: Path) -> list[dict[str, object]]:
     blocks = [
         memory_block_to_payload(row)
@@ -52,6 +94,34 @@ def _related_memory_blocks(run_id: str, *, db_path: Path) -> list[dict[str, obje
         block
         for block in blocks
         if block.get("source") == run_id or run_id in set(block.get("subject_ids", []))
+    ]
+
+
+def _related_retry_memory(
+    approval: dict[str, Any],
+    *,
+    db_path: Path,
+) -> list[dict[str, object]]:
+    subject_ids = {
+        str(value)
+        for value in (
+            approval.get("approval_id"),
+            approval.get("source_coding_loop_result_id"),
+            approval.get("source_preview_id"),
+            approval.get("source_execution_run_id"),
+            approval.get("retry_execution_run_id"),
+        )
+        if value
+    }
+    blocks = [
+        memory_block_to_payload(row)
+        for row in list_memory_blocks(layer="session", limit=200, db_path=db_path)
+    ]
+    return [
+        block
+        for block in blocks
+        if block.get("source") in subject_ids
+        or bool(subject_ids.intersection(set(block.get("subject_ids", []))))
     ]
 
 
@@ -132,3 +202,45 @@ def _why(
             f"with confidence {decision.get('confidence')}: {decision.get('reason')}"
         )
     return reasons
+
+
+def _retry_summary(
+    approval: dict[str, Any],
+    related_memory: list[dict[str, object]],
+) -> str:
+    execution_status = approval.get("retry_execution_status") or "not_executed"
+    return (
+        f"Coding-loop retry approval {approval.get('approval_id')} is "
+        f"{approval.get('approval_status')} with retry execution {execution_status}. "
+        f"{len(related_memory)} linked memory block(s) are available."
+    )
+
+
+def _retry_why(approval: dict[str, Any]) -> list[str]:
+    reasons = [
+        f"Original goal: {approval.get('original_goal')}",
+        f"Failure that produced retry: {approval.get('failed_verification_summary')}",
+        f"Proposed retry goal: {approval.get('proposed_retry_goal')}",
+        f"Approval status: {approval.get('approval_status')}",
+    ]
+    approval_payload = approval.get("approval")
+    if isinstance(approval_payload, dict):
+        if approval_payload.get("approved_by"):
+            reasons.append(f"Approved by: {approval_payload['approved_by']}")
+        if approval_payload.get("approved_at"):
+            reasons.append(f"Approved at: {approval_payload['approved_at']}")
+        if approval_payload.get("rejected_reason"):
+            reasons.append(f"Rejected reason: {approval_payload['rejected_reason']}")
+
+    execution_run_id = approval.get("retry_execution_run_id")
+    if execution_run_id:
+        reasons.append(f"Retry execution run: {execution_run_id}")
+        reasons.append(f"Retry execution status: {approval.get('retry_execution_status')}")
+        reasons.append(f"Retry execution reason: {approval.get('retry_execution_reason')}")
+    else:
+        reasons.append("Retry execution has not run.")
+    return reasons
+
+
+def _string_or_none(raw: object) -> str | None:
+    return raw if isinstance(raw, str) else None

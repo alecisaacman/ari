@@ -4,7 +4,7 @@ Date: 2026-05-04
 
 ## Position
 
-Overall ARI build estimate: 7.6/10.
+Overall ARI build estimate: 7.8/10.
 
 This slice upgrades the existing one-step coding loop seam. It does not add broad
 autonomy, approval mutation, arbitrary shell access, or multi-step execution.
@@ -36,6 +36,11 @@ autonomy, approval mutation, arbitrary shell access, or multi-step execution.
   through the existing bounded execution controller. Execution records the
   retry `ExecutionRun` id, execution status, reason, and timestamp back onto
   the durable approval artifact.
+- Approved retry execution can now be captured into session memory and
+  explained through the existing memory explanation spine. The explanation
+  links the original failed execution, approval artifact, retry execution run,
+  failed verification summary, proposed retry, authority state, and final retry
+  status.
 
 ## Boundary
 
@@ -63,7 +68,12 @@ not execute. Already executed approvals do not execute again. Unsafe retry
 goals still fail closed through the existing planner, validation, and command
 policy path.
 
+Retry-execution memory capture is explanatory only. It does not execute,
+approve, reject, or mutate retry proposals beyond creating an idempotent
+session memory block for the already-existing retry approval.
+
 ## Next Recommended Slice
 
-Tighten retry execution explainability by linking retry execution traces into
-the broader memory/explanation layer without adding multi-step autonomy.
+Add the next control boundary for approved retry execution review: structured
+post-run classification that can decide whether ARI should stop, ask, or
+propose another bounded approval item without executing it.

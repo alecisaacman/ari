@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
-from .capture import capture_execution_run_memory, capture_recent_execution_run_memories
+from .capture import (
+    capture_coding_loop_retry_approval_memory,
+    capture_execution_run_memory,
+    capture_recent_execution_run_memories,
+)
 from .context import build_memory_context
 from .db import (
     create_memory_block,
@@ -17,7 +21,7 @@ from .db import (
     search_ari_memories,
     search_memory_blocks,
 )
-from .explain import explain_execution_run
+from .explain import explain_coding_loop_retry_approval, explain_execution_run
 from .self_model import ensure_self_model_memory, get_self_model_memory
 
 
@@ -223,8 +227,28 @@ def handle_api_memory_capture_execution(args, db_path: Path = DB_PATH) -> int:
     return 0
 
 
+def handle_api_memory_capture_retry_approval(args, db_path: Path = DB_PATH) -> int:
+    payload = {
+        "block": capture_coding_loop_retry_approval_memory(args.id, db_path=db_path)
+    }
+    if getattr(args, "as_json", False):
+        print(json.dumps(payload))
+    else:
+        print(f"Captured coding-loop retry approval memory block for {args.id}.")
+    return 0
+
+
 def handle_api_memory_explain_execution(args, db_path: Path = DB_PATH) -> int:
     payload = explain_execution_run(args.id, db_path=db_path)
+    if getattr(args, "as_json", False):
+        print(json.dumps(payload))
+    else:
+        print(payload["summary"])
+    return 0
+
+
+def handle_api_memory_explain_retry_approval(args, db_path: Path = DB_PATH) -> int:
+    payload = explain_coding_loop_retry_approval(args.id, db_path=db_path)
     if getattr(args, "as_json", False):
         print(json.dumps(payload))
     else:

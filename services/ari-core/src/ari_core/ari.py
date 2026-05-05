@@ -42,8 +42,10 @@ from .modules.memory.api import (
     handle_api_memory_block_list,
     handle_api_memory_block_search,
     handle_api_memory_capture_execution,
+    handle_api_memory_capture_retry_approval,
     handle_api_memory_context,
     handle_api_memory_explain_execution,
+    handle_api_memory_explain_retry_approval,
     handle_api_memory_get,
     handle_api_memory_list,
     handle_api_memory_remember,
@@ -627,6 +629,14 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     memory_capture_execution.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
+    memory_capture_retry = memory_capture_subparsers.add_parser(
+        "retry-approval",
+        help="Capture coding-loop retry approval traces into session memory blocks.",
+    )
+    memory_capture_retry.add_argument("--id", required=True, help="Retry approval id.")
+    memory_capture_retry.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
 
     memory_explain_parser = memory_subparsers.add_parser(
         "explain", help="Explain canonical ARI memory and runtime traces."
@@ -640,6 +650,14 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     memory_explain_execution.add_argument("--id", required=True, help="Execution run id.")
     memory_explain_execution.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    memory_explain_retry = memory_explain_subparsers.add_parser(
+        "retry-approval",
+        help="Explain a coding-loop retry approval from trace and memory.",
+    )
+    memory_explain_retry.add_argument("--id", required=True, help="Retry approval id.")
+    memory_explain_retry.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1376,10 +1394,22 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_memory_capture_execution(args, db_path=db_path)
         if (
             args.api_command == "memory"
+            and args.api_memory_command == "capture"
+            and args.api_memory_capture_command == "retry-approval"
+        ):
+            return handle_api_memory_capture_retry_approval(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
             and args.api_memory_command == "explain"
             and args.api_memory_explain_command == "execution"
         ):
             return handle_api_memory_explain_execution(args, db_path=db_path)
+        if (
+            args.api_command == "memory"
+            and args.api_memory_command == "explain"
+            and args.api_memory_explain_command == "retry-approval"
+        ):
+            return handle_api_memory_explain_retry_approval(args, db_path=db_path)
         if (
             args.api_command == "memory"
             and args.api_memory_command == "self-model"
