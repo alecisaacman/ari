@@ -1,5 +1,10 @@
 """ARI-native self-documentation skill helpers."""
 
+from .content_ideas import (
+    ContentIdea,
+    ContentIdeaBank,
+    generate_content_idea_bank,
+)
 from .content_package import (
     ContentPackage,
     DemoStep,
@@ -26,12 +31,15 @@ from .storage import (
 __all__ = [
     "ContentPackage",
     "ContentSeed",
+    "ContentIdea",
+    "ContentIdeaBank",
     "DemoStep",
     "GitCommandResult",
     "Shot",
     "content_package_from_dict",
     "SourceCommit",
     "content_seed_from_dict",
+    "generate_content_idea_bank",
     "generate_content_package_from_seed",
     "generate_content_seed_from_commits",
     "get_content_package",

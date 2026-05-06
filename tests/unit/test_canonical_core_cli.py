@@ -372,6 +372,61 @@ def test_canonical_core_cli_self_doc_package_persist_list_and_show(
     ]
 
 
+def test_canonical_core_cli_self_doc_ideas_list_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    seed_file = tmp_path / "seed.json"
+    seed_file.write_text(json.dumps(_content_seed_payload()), encoding="utf-8")
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+
+    package_output = StringIO()
+    with redirect_stdout(package_output):
+        package_exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "package",
+                "from-seed-json",
+                "--json-file",
+                str(seed_file),
+                "--persist",
+                "--json",
+            ],
+            db_path=db_path,
+        )
+
+    assert package_exit_code == 0
+
+    ideas_output = StringIO()
+    with redirect_stdout(ideas_output):
+        ideas_exit_code = main(
+            ["api", "self-doc", "ideas", "list", "--json"],
+            db_path=db_path,
+        )
+
+    assert ideas_exit_code == 0
+    idea_bank = json.loads(ideas_output.getvalue())["content_idea_bank"]
+    assert idea_bank["total_idea_count"] >= 1
+    assert idea_bank["unavailable_reason"] is None
+    assert "persisted self-documentation" in idea_bank["source_of_truth"]
+    assert "must not record, edit, upload, publish" in idea_bank["authority_warning"]
+    idea = idea_bank["ideas"][0]
+    assert idea["idea_id"].startswith("content-idea-")
+    assert idea["title"]
+    assert idea["hook"]
+    assert idea["visual_plan"]
+    assert idea["platform_fit"]
+    assert idea["proof_points"]
+    assert idea["claims_to_avoid"]
+
+
 def test_canonical_core_cli_self_doc_show_unknown_artifact_ids(
     tmp_path: Path,
     monkeypatch,

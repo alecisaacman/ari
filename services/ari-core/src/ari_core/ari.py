@@ -98,6 +98,7 @@ from .modules.policy.api import (
 )
 from .modules.self_documentation import (
     content_seed_from_dict,
+    generate_content_idea_bank,
     generate_content_package_from_seed,
     generate_content_seed_from_commits,
     get_content_package,
@@ -384,6 +385,26 @@ def _handle_api_self_doc_packages_show(
     print(f"Content package: {payload['title']}")
     print(f"Package id: {payload['package_id']}")
     print(f"Source seed id: {payload['source_seed_id']}")
+    return 0
+
+
+def _handle_api_self_doc_ideas_list(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
+    idea_bank = generate_content_idea_bank(limit=args.limit, db_path=db_path)
+    payload = {"content_idea_bank": idea_bank.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    bank_payload = payload["content_idea_bank"]
+    print(f"Content ideas: {bank_payload['total_idea_count']}")
+    if bank_payload["unavailable_reason"]:
+        print(f"Unavailable: {bank_payload['unavailable_reason']}")
+    print(f"Source: {bank_payload['source_of_truth']}")
+    print(f"Authority: {bank_payload['authority_warning']}")
     return 0
 
 
@@ -1078,6 +1099,21 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--id", required=True, help="ContentPackage id."
     )
     self_doc_packages_show_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_ideas_parser = self_doc_subparsers.add_parser(
+        "ideas", help="Inspect read-only self-documentation content idea bank."
+    )
+    self_doc_ideas_subparsers = self_doc_ideas_parser.add_subparsers(
+        dest="api_self_doc_ideas_command", required=True
+    )
+    self_doc_ideas_list_parser = self_doc_ideas_subparsers.add_parser(
+        "list", help="List deterministic content ideas from persisted artifacts."
+    )
+    self_doc_ideas_list_parser.add_argument(
+        "--limit", type=int, default=20, help="Maximum number of content ideas to list."
+    )
+    self_doc_ideas_list_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -2173,6 +2209,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_self_doc_packages_command == "show"
         ):
             return _handle_api_self_doc_packages_show(args, db_path=db_path)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "ideas"
+            and args.api_self_doc_ideas_command == "list"
+        ):
+            return _handle_api_self_doc_ideas_list(args, db_path=db_path)
         if args.api_command == "skills" and args.api_skills_command == "list":
             return _handle_api_skills_list(args)
         if args.api_command == "skills" and args.api_skills_command == "show":
