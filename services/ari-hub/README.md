@@ -11,7 +11,9 @@ doctrine, skill status, readiness surfaces, pending authority surfaces,
 coding-loop chain surfaces, memory surfaces, self-documentation surfaces, and
 system-health gaps. Summary counts for pending approvals, recent coding-loop
 results, and lifecycle lessons are shown only from the ARI-owned overview model;
-unavailable counts are labeled as partial.
+unavailable counts are labeled as partial. The pending approval detail panel reads
+the ARI-owned `/overview/pending-approvals` model and displays approval ids,
+source, reason, proposed goal/action summary, and created time when available.
 
 The shell does not approve, reject, execute, advance chains, mutate memory,
 create skills, call external services, or own independent state. Future controls

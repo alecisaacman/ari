@@ -1,5 +1,11 @@
 import { getDashboardOverview } from "@/src/core/ari-spine/overview-bridge";
-import type { AriOperatingOverview, OverviewMetric, OverviewSkill } from "@/src/core/ari-spine/overview-bridge";
+import type {
+  AriOperatingOverview,
+  OverviewMetric,
+  OverviewSkill,
+  PendingApprovalSummary,
+  PendingApprovalsReadModel,
+} from "@/src/core/ari-spine/overview-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +30,8 @@ const disabledControls = [
 export default async function HomePage() {
   const result = await getDashboardOverview();
   const overview = result.overview;
-  const panels = buildPanels(overview, result.source);
+  const pendingApprovals = result.pendingApprovals;
+  const panels = buildPanels(overview, pendingApprovals, result.source);
   const skills = [
     ...overview.active_skills,
     ...overview.prototype_skills,
@@ -39,8 +46,14 @@ export default async function HomePage() {
           <h1 id="dashboard-title">ARI remains the brain. ACE displays state.</h1>
           <p className="ace-readonly-summary">{overview.doctrine_summary}</p>
           {result.source === "static-fallback" ? (
-            <p className="ace-readonly-warning">
+          <p className="ace-readonly-warning">
               Static fallback active: {result.error ?? "ARI overview unavailable."}
+            </p>
+          ) : null}
+          {result.pendingApprovalsSource === "static-fallback" ? (
+            <p className="ace-readonly-warning">
+              Pending approvals fallback active:{" "}
+              {result.pendingApprovalsError ?? pendingApprovals.unavailable_reason}
             </p>
           ) : null}
         </div>
@@ -107,6 +120,41 @@ export default async function HomePage() {
         ))}
       </section>
 
+      <section className="ace-readonly-section" aria-labelledby="pending-approvals-title">
+        <div className="ace-readonly-section-heading">
+          <div>
+            <p className="ace-readonly-kicker">Read-only approval queue</p>
+            <h2 id="pending-approvals-title">Pending retry approvals</h2>
+          </div>
+          <span className="ace-readonly-status ace-readonly-status-disabled">
+            controls disabled
+          </span>
+        </div>
+        <p className="ace-readonly-source">
+          {pendingApprovals.source_of_truth} / source: {result.pendingApprovalsSource}
+        </p>
+        {pendingApprovals.unavailable_reason ? (
+          <p className="ace-readonly-warning">{pendingApprovals.unavailable_reason}</p>
+        ) : null}
+        {pendingApprovals.approvals.length ? (
+          <div className="ace-readonly-approval-list">
+            {pendingApprovals.approvals.map((approval) => (
+              <PendingApprovalRow
+                approval={approval}
+                key={approval.approval_id}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="ace-readonly-empty">
+            No pending approvals are available in the ARI-owned read model.
+          </p>
+        )}
+        <p className="ace-readonly-authority-note">
+          {pendingApprovals.authority_warning}
+        </p>
+      </section>
+
       <section className="ace-readonly-section" aria-labelledby="skills-title">
         <div className="ace-readonly-section-heading">
           <p className="ace-readonly-kicker">Skill inventory</p>
@@ -140,6 +188,38 @@ export default async function HomePage() {
   );
 }
 
+function PendingApprovalRow({ approval }: { approval: PendingApprovalSummary }) {
+  return (
+    <article className="ace-readonly-approval-row">
+      <div className="ace-readonly-approval-meta">
+        <span>{approval.status}</span>
+        <span>{approval.source}</span>
+        <span>{approval.created_at || "created time unavailable"}</span>
+      </div>
+      <h3>{approval.approval_id}</h3>
+      <div className="ace-readonly-approval-body">
+        <p>
+          <strong>Reason</strong>
+          {approval.reason || "No reason provided."}
+        </p>
+        <p>
+          <strong>Proposed goal</strong>
+          {approval.proposed_goal || "No proposed goal available."}
+        </p>
+        <p>
+          <strong>Action</strong>
+          {approval.proposed_action_summary || "No proposed action available."}
+        </p>
+        <p>
+          <strong>Failed verification</strong>
+          {approval.failed_verification_summary || "No failed verification summary."}
+        </p>
+      </div>
+      <p className="ace-readonly-source">{approval.inspection_hint}</p>
+    </article>
+  );
+}
+
 function SkillRow({ skill }: { skill: OverviewSkill }) {
   return (
     <article className="ace-readonly-skill-row">
@@ -157,6 +237,7 @@ function SkillRow({ skill }: { skill: OverviewSkill }) {
 
 function buildPanels(
   overview: AriOperatingOverview,
+  pendingApprovals: PendingApprovalsReadModel,
   source: "ari-api" | "static-fallback",
 ): DashboardPanel[] {
   return [
@@ -210,9 +291,13 @@ function buildPanels(
     },
     {
       title: "Pending approvals",
-      status: metricPanelStatus(overview.pending_approval_count),
-      source: "api execution retry-approvals list",
-      lines: metricLines(overview.pending_approval_count),
+      status: pendingApprovals.unavailable_reason ? "partial" : "ready",
+      source: "api overview pending-approvals --json / GET /overview/pending-approvals",
+      lines: [
+        `Total pending: ${pendingApprovals.total_pending_count}`,
+        pendingApprovals.unavailable_reason ?? "Pending approvals are live from ARI.",
+        "Approval and rejection controls are intentionally disabled in ACE.",
+      ],
     },
     {
       title: "Memory / lifecycle lessons",

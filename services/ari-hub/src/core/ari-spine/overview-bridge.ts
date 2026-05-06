@@ -37,26 +37,88 @@ export type AriOperatingOverview = {
   read_model_notes: string[];
 };
 
+export type PendingApprovalSummary = {
+  approval_id: string;
+  approval_type: string;
+  status: string;
+  source: string;
+  original_goal: string;
+  proposed_goal: string;
+  proposed_action_summary: string;
+  reason: string;
+  failed_verification_summary: string;
+  created_at: string;
+  linked_coding_loop_result_id: string | null;
+  linked_execution_run_id: string | null;
+  requires_user_authority: boolean;
+  inspection_hint: string;
+};
+
+export type PendingApprovalsReadModel = {
+  generated_at: string;
+  total_pending_count: number;
+  approvals: PendingApprovalSummary[];
+  unavailable_reason: string | null;
+  source_of_truth: string;
+  authority_warning: string;
+};
+
 export type DashboardOverviewResult = {
   overview: AriOperatingOverview;
+  pendingApprovals: PendingApprovalsReadModel;
   source: "ari-api" | "static-fallback";
+  pendingApprovalsSource: "ari-api" | "static-fallback";
   error?: string;
+  pendingApprovalsError?: string;
 };
 
 type OverviewResponse = {
   overview: AriOperatingOverview;
 };
 
+type PendingApprovalsResponse = {
+  pending_approvals: PendingApprovalsReadModel;
+};
+
 export async function getDashboardOverview(): Promise<DashboardOverviewResult> {
   try {
     const response = await requestAriApi<OverviewResponse>("GET", "/overview");
+    const pendingApprovals = await getPendingApprovals();
     return {
       overview: response.overview,
-      source: "ari-api"
+      pendingApprovals: pendingApprovals.pendingApprovals,
+      source: "ari-api",
+      pendingApprovalsSource: pendingApprovals.source,
+      pendingApprovalsError: pendingApprovals.error
     };
   } catch (error) {
     return {
       overview: fallbackOverview(error),
+      pendingApprovals: fallbackPendingApprovals(error),
+      source: "static-fallback",
+      pendingApprovalsSource: "static-fallback",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function getPendingApprovals(): Promise<{
+  pendingApprovals: PendingApprovalsReadModel;
+  source: "ari-api" | "static-fallback";
+  error?: string;
+}> {
+  try {
+    const response = await requestAriApi<PendingApprovalsResponse>(
+      "GET",
+      "/overview/pending-approvals"
+    );
+    return {
+      pendingApprovals: response.pending_approvals,
+      source: "ari-api"
+    };
+  } catch (error) {
+    return {
+      pendingApprovals: fallbackPendingApprovals(error),
       source: "static-fallback",
       error: error instanceof Error ? error.message : String(error)
     };
@@ -102,6 +164,23 @@ function fallbackOverview(error: unknown): AriOperatingOverview {
       "ACE did not compute ARI state.",
       message
     ]
+  };
+}
+
+function fallbackPendingApprovals(error: unknown): PendingApprovalsReadModel {
+  const message =
+    error instanceof AriApiError || error instanceof Error
+      ? error.message
+      : "ARI pending approvals are unavailable.";
+
+  return {
+    generated_at: "unavailable",
+    total_pending_count: 0,
+    approvals: [],
+    unavailable_reason: message,
+    source_of_truth: "static fallback; connect to ARI-owned pending approvals read model.",
+    authority_warning:
+      "ACE fallback may display pending approval placeholders but must not approve, reject, execute, or own approval state."
   };
 }
 
