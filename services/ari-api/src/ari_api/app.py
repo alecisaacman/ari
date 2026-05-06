@@ -88,6 +88,7 @@ from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 from ari_core.modules.overview import (
     get_ari_operating_overview,
     get_coding_loop_chains_read_model,
+    get_lifecycle_lessons_read_model,
     get_pending_approvals_read_model,
 )
 from ari_core.modules.policy.engine import (
@@ -173,6 +174,16 @@ def create_app() -> FastAPI:
             "coding_loop_chains": get_coding_loop_chains_read_model(
                 limit=limit,
                 max_depth=max_depth,
+            ).to_dict()
+        }
+
+    @app.get("/overview/lifecycle-lessons")
+    def overview_lifecycle_lessons(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "lifecycle_lessons": get_lifecycle_lessons_read_model(
+                limit=limit
             ).to_dict()
         }
 

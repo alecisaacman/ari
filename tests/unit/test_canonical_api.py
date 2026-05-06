@@ -305,6 +305,24 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             chains_payload["authority_warning"]
         )
 
+        captured_lesson = client.post(
+            f"/memory/capture/coding-loop-chains/{coding_loop_payload['id']}"
+        )
+        assert captured_lesson.status_code == 200
+
+        overview_lifecycle_lessons = client.get("/overview/lifecycle-lessons")
+        assert overview_lifecycle_lessons.status_code == 200
+        lessons_payload = overview_lifecycle_lessons.json()["lifecycle_lessons"]
+        assert lessons_payload["total_recent_count"] >= 1
+        assert lessons_payload["lessons"][0]["related_coding_loop_result_id"] == (
+            coding_loop_payload["id"]
+        )
+        assert lessons_payload["lessons"][0]["availability_status"] == "available"
+        assert lessons_payload["unavailable_reason"] is None
+        assert "must not create, edit, delete, mutate" in (
+            lessons_payload["authority_warning"]
+        )
+
         unsafe_loop = client.post(
             "/execution/coding-loop",
             json={

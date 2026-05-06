@@ -433,6 +433,34 @@ def test_canonical_core_cli_overview_coding_loop_chains_json(
     )
 
 
+def test_canonical_core_cli_overview_lifecycle_lessons_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            ["api", "overview", "lifecycle-lessons", "--json"],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())["lifecycle_lessons"]
+    assert payload["total_recent_count"] == 0
+    assert payload["lessons"] == []
+    assert payload["unavailable_reason"] is None
+    assert payload["source_of_truth"] == (
+        "canonical memory blocks with coding-loop chain lifecycle summaries"
+    )
+    assert "must not create, edit, delete, mutate" in payload["authority_warning"]
+
+
 def test_canonical_core_cli_skills_route_json(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
