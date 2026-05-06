@@ -21,6 +21,11 @@ from .read_model import (
     OverviewSkill,
     get_ari_operating_overview,
 )
+from .self_documentation import (
+    SelfDocumentationArtifactSummary,
+    SelfDocumentationReadModel,
+    get_self_documentation_read_model,
+)
 
 __all__ = [
     "ARIOperatingOverview",
@@ -32,8 +37,11 @@ __all__ = [
     "OverviewSkill",
     "PendingApprovalSummary",
     "PendingApprovalsReadModel",
+    "SelfDocumentationArtifactSummary",
+    "SelfDocumentationReadModel",
     "get_coding_loop_chains_read_model",
     "get_ari_operating_overview",
     "get_lifecycle_lessons_read_model",
     "get_pending_approvals_read_model",
+    "get_self_documentation_read_model",
 ]
