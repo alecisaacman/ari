@@ -77,6 +77,15 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert overview_payload["partial_counts_reason"] is None
         assert "ACE may display" in overview_payload["authority_warning"]
 
+        overview_self_documentation = client.get("/overview/self-documentation")
+        assert overview_self_documentation.status_code == 200
+        self_doc_payload = overview_self_documentation.json()["self_documentation"]
+        assert self_doc_payload["total_seed_count"] == 0
+        assert self_doc_payload["total_package_count"] == 0
+        assert self_doc_payload["recent_artifacts"] == []
+        assert self_doc_payload["unavailable_reason"] is None
+        assert "must not generate content" in self_doc_payload["authority_warning"]
+
         memory = client.post(
             "/memory",
             json={

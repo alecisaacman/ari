@@ -644,6 +644,35 @@ def test_canonical_core_cli_overview_lifecycle_lessons_json(
     assert "must not create, edit, delete, mutate" in payload["authority_warning"]
 
 
+def test_canonical_core_cli_overview_self_documentation_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            ["api", "overview", "self-documentation", "--json"],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())["self_documentation"]
+    assert payload["total_seed_count"] == 0
+    assert payload["total_package_count"] == 0
+    assert payload["recent_artifacts"] == []
+    assert payload["unavailable_reason"] is None
+    assert payload["source_of_truth"] == (
+        "durable self-documentation ContentSeed and ContentPackage storage"
+    )
+    assert "must not generate content" in payload["authority_warning"]
+
+
 def test_canonical_core_cli_skills_route_json(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))

@@ -84,6 +84,7 @@ from .modules.overview import (
     get_coding_loop_chains_read_model,
     get_lifecycle_lessons_read_model,
     get_pending_approvals_read_model,
+    get_self_documentation_read_model,
 )
 from .modules.policy.api import (
     handle_api_policy_awareness_derive,
@@ -584,6 +585,30 @@ def _handle_api_overview_lifecycle_lessons(
     return 0
 
 
+def _handle_api_overview_self_documentation(
+    args: argparse.Namespace,
+    *,
+    db_path: Path = DB_PATH,
+) -> int:
+    self_documentation = get_self_documentation_read_model(
+        db_path=db_path,
+        limit=args.limit,
+    )
+    payload = {"self_documentation": self_documentation.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    self_doc_payload = payload["self_documentation"]
+    print(f"Self-documentation seeds: {self_doc_payload['total_seed_count']}")
+    print(f"Self-documentation packages: {self_doc_payload['total_package_count']}")
+    if self_doc_payload["unavailable_reason"]:
+        print(f"Unavailable: {self_doc_payload['unavailable_reason']}")
+    print(f"Source: {self_doc_payload['source_of_truth']}")
+    print(f"Authority: {self_doc_payload['authority_warning']}")
+    return 0
+
+
 def execute(action: dict, execution_root: Path | str | None = None) -> dict:
     """Run a minimal bounded execution action through canonical ARI."""
 
@@ -935,6 +960,19 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         help="Maximum number of memory blocks to inspect.",
     )
     overview_lessons_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    overview_self_doc_parser = overview_subparsers.add_parser(
+        "self-documentation",
+        help="Show read-only self-documentation artifacts for dashboard inspection.",
+    )
+    overview_self_doc_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of persisted self-documentation artifacts to inspect.",
+    )
+    overview_self_doc_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -2094,6 +2132,11 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_overview_command == "lifecycle-lessons"
         ):
             return _handle_api_overview_lifecycle_lessons(args, db_path=db_path)
+        if (
+            args.api_command == "overview"
+            and args.api_overview_command == "self-documentation"
+        ):
+            return _handle_api_overview_self_documentation(args, db_path=db_path)
         if (
             args.api_command == "self-doc"
             and args.api_self_doc_command == "seed"

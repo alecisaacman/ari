@@ -90,6 +90,7 @@ from ari_core.modules.overview import (
     get_coding_loop_chains_read_model,
     get_lifecycle_lessons_read_model,
     get_pending_approvals_read_model,
+    get_self_documentation_read_model,
 )
 from ari_core.modules.policy.engine import (
     build_project_draft,
@@ -183,6 +184,16 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         return {
             "lifecycle_lessons": get_lifecycle_lessons_read_model(
+                limit=limit
+            ).to_dict()
+        }
+
+    @app.get("/overview/self-documentation")
+    def overview_self_documentation(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "self_documentation": get_self_documentation_read_model(
                 limit=limit
             ).to_dict()
         }
