@@ -117,19 +117,56 @@ export type LifecycleLessonsReadModel = {
   authority_warning: string;
 };
 
+export type SelfDocumentationArtifactSummary = {
+  artifact_id: string;
+  artifact_type: "content_seed" | "content_package";
+  title: string;
+  summary: string;
+  source_commit_range: string | null;
+  source_seed_id: string | null;
+  proof_point_count: number;
+  visual_moment_count: number;
+  redaction_note_count: number;
+  claims_to_avoid_count: number;
+  has_voiceover_draft: boolean;
+  has_shot_list: boolean;
+  has_terminal_demo_plan: boolean;
+  has_caption: boolean;
+  created_at: string;
+  inspection_hint: string;
+  readiness_status:
+    | "ready_for_review"
+    | "needs_redaction_review"
+    | "partial"
+    | "unavailable";
+};
+
+export type SelfDocumentationReadModel = {
+  generated_at: string;
+  total_seed_count: number;
+  total_package_count: number;
+  recent_artifacts: SelfDocumentationArtifactSummary[];
+  unavailable_reason: string | null;
+  source_of_truth: string;
+  authority_warning: string;
+};
+
 export type DashboardOverviewResult = {
   overview: AriOperatingOverview;
   pendingApprovals: PendingApprovalsReadModel;
   codingLoopChains: CodingLoopChainsReadModel;
   lifecycleLessons: LifecycleLessonsReadModel;
+  selfDocumentation: SelfDocumentationReadModel;
   source: "ari-api" | "static-fallback";
   pendingApprovalsSource: "ari-api" | "static-fallback";
   codingLoopChainsSource: "ari-api" | "static-fallback";
   lifecycleLessonsSource: "ari-api" | "static-fallback";
+  selfDocumentationSource: "ari-api" | "static-fallback";
   error?: string;
   pendingApprovalsError?: string;
   codingLoopChainsError?: string;
   lifecycleLessonsError?: string;
+  selfDocumentationError?: string;
 };
 
 type OverviewResponse = {
@@ -148,24 +185,32 @@ type LifecycleLessonsResponse = {
   lifecycle_lessons: LifecycleLessonsReadModel;
 };
 
+type SelfDocumentationResponse = {
+  self_documentation: SelfDocumentationReadModel;
+};
+
 export async function getDashboardOverview(): Promise<DashboardOverviewResult> {
   try {
     const response = await requestAriApi<OverviewResponse>("GET", "/overview");
     const pendingApprovals = await getPendingApprovals();
     const codingLoopChains = await getCodingLoopChains();
     const lifecycleLessons = await getLifecycleLessons();
+    const selfDocumentation = await getSelfDocumentation();
     return {
       overview: response.overview,
       pendingApprovals: pendingApprovals.pendingApprovals,
       codingLoopChains: codingLoopChains.codingLoopChains,
       lifecycleLessons: lifecycleLessons.lifecycleLessons,
+      selfDocumentation: selfDocumentation.selfDocumentation,
       source: "ari-api",
       pendingApprovalsSource: pendingApprovals.source,
       codingLoopChainsSource: codingLoopChains.source,
       lifecycleLessonsSource: lifecycleLessons.source,
+      selfDocumentationSource: selfDocumentation.source,
       pendingApprovalsError: pendingApprovals.error,
       codingLoopChainsError: codingLoopChains.error,
-      lifecycleLessonsError: lifecycleLessons.error
+      lifecycleLessonsError: lifecycleLessons.error,
+      selfDocumentationError: selfDocumentation.error
     };
   } catch (error) {
     return {
@@ -173,10 +218,12 @@ export async function getDashboardOverview(): Promise<DashboardOverviewResult> {
       pendingApprovals: fallbackPendingApprovals(error),
       codingLoopChains: fallbackCodingLoopChains(error),
       lifecycleLessons: fallbackLifecycleLessons(error),
+      selfDocumentation: fallbackSelfDocumentation(error),
       source: "static-fallback",
       pendingApprovalsSource: "static-fallback",
       codingLoopChainsSource: "static-fallback",
       lifecycleLessonsSource: "static-fallback",
+      selfDocumentationSource: "static-fallback",
       error: error instanceof Error ? error.message : String(error)
     };
   }
@@ -251,6 +298,29 @@ async function getLifecycleLessons(): Promise<{
   }
 }
 
+async function getSelfDocumentation(): Promise<{
+  selfDocumentation: SelfDocumentationReadModel;
+  source: "ari-api" | "static-fallback";
+  error?: string;
+}> {
+  try {
+    const response = await requestAriApi<SelfDocumentationResponse>(
+      "GET",
+      "/overview/self-documentation"
+    );
+    return {
+      selfDocumentation: response.self_documentation,
+      source: "ari-api"
+    };
+  } catch (error) {
+    return {
+      selfDocumentation: fallbackSelfDocumentation(error),
+      source: "static-fallback",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 function fallbackOverview(error: unknown): AriOperatingOverview {
   const message =
     error instanceof AriApiError || error instanceof Error
@@ -290,6 +360,25 @@ function fallbackOverview(error: unknown): AriOperatingOverview {
       "ACE did not compute ARI state.",
       message
     ]
+  };
+}
+
+function fallbackSelfDocumentation(error: unknown): SelfDocumentationReadModel {
+  const message =
+    error instanceof AriApiError || error instanceof Error
+      ? error.message
+      : "ARI self-documentation artifacts are unavailable.";
+
+  return {
+    generated_at: "unavailable",
+    total_seed_count: 0,
+    total_package_count: 0,
+    recent_artifacts: [],
+    unavailable_reason: message,
+    source_of_truth:
+      "static fallback; connect to ARI-owned self-documentation artifact read model.",
+    authority_warning:
+      "ACE fallback may display self-documentation placeholders but must not generate, mutate, record, edit, upload, publish, or own content truth."
   };
 }
 

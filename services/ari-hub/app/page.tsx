@@ -9,6 +9,8 @@ import type {
   OverviewSkill,
   PendingApprovalSummary,
   PendingApprovalsReadModel,
+  SelfDocumentationArtifactSummary,
+  SelfDocumentationReadModel,
 } from "@/src/core/ari-spine/overview-bridge";
 
 export const dynamic = "force-dynamic";
@@ -37,11 +39,13 @@ export default async function HomePage() {
   const pendingApprovals = result.pendingApprovals;
   const codingLoopChains = result.codingLoopChains;
   const lifecycleLessons = result.lifecycleLessons;
+  const selfDocumentation = result.selfDocumentation;
   const panels = buildPanels(
     overview,
     pendingApprovals,
     codingLoopChains,
     lifecycleLessons,
+    selfDocumentation,
     result.source,
   );
   const skills = [
@@ -78,6 +82,12 @@ export default async function HomePage() {
             <p className="ace-readonly-warning">
               Lifecycle lessons fallback active:{" "}
               {result.lifecycleLessonsError ?? lifecycleLessons.unavailable_reason}
+            </p>
+          ) : null}
+          {result.selfDocumentationSource === "static-fallback" ? (
+            <p className="ace-readonly-warning">
+              Self-documentation fallback active:{" "}
+              {result.selfDocumentationError ?? selfDocumentation.unavailable_reason}
             </p>
           ) : null}
         </div>
@@ -142,6 +152,60 @@ export default async function HomePage() {
             </ul>
           </article>
         ))}
+      </section>
+
+      <section
+        className="ace-readonly-section"
+        aria-labelledby="self-documentation-title"
+      >
+        <div className="ace-readonly-section-heading">
+          <div>
+            <p className="ace-readonly-kicker">Read-only creator workflow</p>
+            <h2 id="self-documentation-title">Self-documentation artifacts</h2>
+          </div>
+          <span className="ace-readonly-status ace-readonly-status-disabled">
+            controls disabled
+          </span>
+        </div>
+        <p className="ace-readonly-source">
+          {selfDocumentation.source_of_truth} / source:{" "}
+          {result.selfDocumentationSource}
+        </p>
+        {selfDocumentation.unavailable_reason ? (
+          <p className="ace-readonly-warning">{selfDocumentation.unavailable_reason}</p>
+        ) : null}
+        <dl className="ace-readonly-chain-stats">
+          <div>
+            <dt>Content seeds</dt>
+            <dd>{selfDocumentation.total_seed_count}</dd>
+          </div>
+          <div>
+            <dt>Content packages</dt>
+            <dd>{selfDocumentation.total_package_count}</dd>
+          </div>
+          <div>
+            <dt>Mode</dt>
+            <dd>read-only</dd>
+          </div>
+        </dl>
+        {selfDocumentation.recent_artifacts.length ? (
+          <div className="ace-readonly-artifact-list">
+            {selfDocumentation.recent_artifacts.map((artifact) => (
+              <SelfDocumentationArtifactRow
+                artifact={artifact}
+                key={artifact.artifact_id}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="ace-readonly-empty">
+            No persisted self-documentation artifacts are available in the ARI-owned
+            read model.
+          </p>
+        )}
+        <p className="ace-readonly-authority-note">
+          {selfDocumentation.authority_warning}
+        </p>
       </section>
 
       <section className="ace-readonly-section" aria-labelledby="lifecycle-lessons-title">
@@ -282,6 +346,58 @@ export default async function HomePage() {
   );
 }
 
+function SelfDocumentationArtifactRow({
+  artifact,
+}: {
+  artifact: SelfDocumentationArtifactSummary;
+}) {
+  return (
+    <article className="ace-readonly-artifact-row">
+      <div className="ace-readonly-approval-meta">
+        <span>{artifact.artifact_type}</span>
+        <span>{artifact.readiness_status}</span>
+        <span>{artifact.created_at || "created time unavailable"}</span>
+      </div>
+      <h3>{artifact.title || artifact.artifact_id}</h3>
+      <p className="ace-readonly-chain-goal">
+        {artifact.summary || "Artifact summary unavailable."}
+      </p>
+      <dl className="ace-readonly-chain-stats">
+        <div>
+          <dt>Proof points</dt>
+          <dd>{artifact.proof_point_count}</dd>
+        </div>
+        <div>
+          <dt>Visuals</dt>
+          <dd>{artifact.visual_moment_count}</dd>
+        </div>
+        <div>
+          <dt>Redaction notes</dt>
+          <dd>{artifact.redaction_note_count}</dd>
+        </div>
+        <div>
+          <dt>Claims to avoid</dt>
+          <dd>{artifact.claims_to_avoid_count}</dd>
+        </div>
+        <div>
+          <dt>Voiceover</dt>
+          <dd>{artifact.has_voiceover_draft ? "present" : "missing"}</dd>
+        </div>
+        <div>
+          <dt>Demo plan</dt>
+          <dd>{artifact.has_terminal_demo_plan ? "present" : "missing"}</dd>
+        </div>
+      </dl>
+      <p className="ace-readonly-chain-reason">
+        {artifact.source_commit_range
+          ? `Commit range: ${artifact.source_commit_range}`
+          : `Source seed: ${artifact.source_seed_id ?? "unknown"}`}
+      </p>
+      <p className="ace-readonly-source">{artifact.inspection_hint}</p>
+    </article>
+  );
+}
+
 function LifecycleLessonRow({ lesson }: { lesson: LifecycleLessonSummary }) {
   return (
     <article className="ace-readonly-lesson-row">
@@ -418,6 +534,7 @@ function buildPanels(
   pendingApprovals: PendingApprovalsReadModel,
   codingLoopChains: CodingLoopChainsReadModel,
   lifecycleLessons: LifecycleLessonsReadModel,
+  selfDocumentation: SelfDocumentationReadModel,
   source: "ari-api" | "static-fallback",
 ): DashboardPanel[] {
   return [
@@ -495,9 +612,17 @@ function buildPanels(
     },
     {
       title: "Self-documentation content",
-      status: source === "ari-api" ? "partial" : "missing",
-      source: "api self-doc seed/package",
-      lines: [overview.self_documentation_status],
+      status: selfDocumentation.unavailable_reason ? "partial" : "ready",
+      source:
+        "api overview self-documentation --json / GET /overview/self-documentation",
+      lines: [
+        `Content seeds: ${selfDocumentation.total_seed_count}`,
+        `Content packages: ${selfDocumentation.total_package_count}`,
+        selfDocumentation.unavailable_reason ??
+          "Self-documentation artifacts are live from ARI storage.",
+        overview.self_documentation_status,
+        "Recording, editing, upload, and publishing controls are intentionally disabled.",
+      ],
     },
     {
       title: "System health",

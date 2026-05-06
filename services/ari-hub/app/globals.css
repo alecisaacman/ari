@@ -957,12 +957,14 @@ button {
   text-transform: uppercase;
 }
 
+.ace-readonly-artifact-list,
 .ace-readonly-chain-list {
   display: grid;
   gap: 10px;
   margin-top: 16px;
 }
 
+.ace-readonly-artifact-row,
 .ace-readonly-chain-row {
   min-width: 0;
   padding: 16px;
@@ -971,6 +973,7 @@ button {
   background: rgba(248, 250, 252, 0.78);
 }
 
+.ace-readonly-artifact-row h3,
 .ace-readonly-chain-row h3 {
   margin: 10px 0 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

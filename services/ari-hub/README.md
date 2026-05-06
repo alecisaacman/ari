@@ -19,12 +19,15 @@ displays recent result ids, goals, terminal statuses, chain depth, approval
 counts, retry execution counts, and inspection hints. The lifecycle lessons
 panel reads `/overview/lifecycle-lessons` and displays compact lesson summaries,
 source ids, confidence, importance, tags, and inspection hints from ARI-owned
-memory blocks.
+memory blocks. The self-documentation artifact panel reads
+`/overview/self-documentation` and displays persisted ContentSeed and
+ContentPackage summaries, readiness status, proof/redaction counts, and
+inspection hints from ARI-owned storage.
 
 The shell does not approve, reject, execute, advance chains, mutate memory,
-create skills, call external services, or own independent state. Future controls
-must call ARI backend authority surfaces; this page only establishes the
-read-only product surface.
+create skills, generate content, record, edit, upload, publish, call external
+services, or own independent state. Future controls must call ARI backend
+authority surfaces; this page only establishes the read-only product surface.
 
 ## What ships in v1
 
