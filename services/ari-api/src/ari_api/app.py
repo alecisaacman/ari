@@ -87,6 +87,7 @@ from ari_core.modules.memory.self_model import ensure_self_model_memory, get_sel
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 from ari_core.modules.overview import (
     get_ari_operating_overview,
+    get_coding_loop_chains_read_model,
     get_pending_approvals_read_model,
 )
 from ari_core.modules.policy.engine import (
@@ -160,6 +161,18 @@ def create_app() -> FastAPI:
         return {
             "pending_approvals": get_pending_approvals_read_model(
                 limit=limit
+            ).to_dict()
+        }
+
+    @app.get("/overview/coding-loop-chains")
+    def overview_coding_loop_chains(
+        limit: int = Query(default=10, ge=1, le=100),
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {
+            "coding_loop_chains": get_coding_loop_chains_read_model(
+                limit=limit,
+                max_depth=max_depth,
             ).to_dict()
         }
 

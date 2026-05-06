@@ -291,6 +291,20 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert coding_loop_chain.json()["chain"]["terminal_status"] == "stopped"
         assert coding_loop_chain.json()["chain"]["chain_depth"] == 0
 
+        overview_coding_loop_chains = client.get("/overview/coding-loop-chains")
+        assert overview_coding_loop_chains.status_code == 200
+        chains_payload = overview_coding_loop_chains.json()["coding_loop_chains"]
+        assert chains_payload["total_recent_count"] >= 1
+        assert chains_payload["chains"][0]["coding_loop_result_id"]
+        assert chains_payload["chains"][0]["terminal_status"]
+        assert chains_payload["chains"][0]["inspection_hint"].startswith(
+            "api execution coding-loops chain --id "
+        )
+        assert chains_payload["unavailable_reason"] is None
+        assert "must not approve, reject, execute, advance chains" in (
+            chains_payload["authority_warning"]
+        )
+
         unsafe_loop = client.post(
             "/execution/coding-loop",
             json={
