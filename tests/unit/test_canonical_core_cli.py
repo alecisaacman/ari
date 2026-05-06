@@ -113,6 +113,84 @@ def test_canonical_core_cli_self_doc_seed_from_commits_json(
     assert after_files == before_files
 
 
+def test_canonical_core_cli_self_doc_seed_persist_list_and_show(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "ari@example.com")
+    _git(repo, "config", "user.name", "ARI Test")
+    (repo / "README.md").write_text("ARI\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "Initial ARI baseline")
+    base_ref = _git(repo, "rev-parse", "HEAD")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "self-documentation.md").write_text(
+        "Persist content seeds.\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "Persist self-documentation content artifacts")
+    head_ref = _git(repo, "rev-parse", "HEAD")
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "seed",
+                "from-commits",
+                "--from",
+                base_ref,
+                "--to",
+                head_ref,
+                "--repo-root",
+                str(repo),
+                "--persist",
+                "--json",
+            ],
+            db_path=db_path,
+        )
+
+    assert exit_code == 0
+    seed = json.loads(output.getvalue())
+    assert seed["persisted"] is True
+    seed_id = seed["seed_id"]
+
+    list_output = StringIO()
+    with redirect_stdout(list_output):
+        list_exit_code = main(
+            ["api", "self-doc", "seeds", "list", "--json"],
+            db_path=db_path,
+        )
+
+    assert list_exit_code == 0
+    seed_ids = [item["seed_id"] for item in json.loads(list_output.getvalue())["content_seeds"]]
+    assert seed_id in seed_ids
+
+    show_output = StringIO()
+    with redirect_stdout(show_output):
+        show_exit_code = main(
+            ["api", "self-doc", "seeds", "show", "--id", seed_id, "--json"],
+            db_path=db_path,
+        )
+
+    assert show_exit_code == 0
+    shown_seed = json.loads(show_output.getvalue())
+    assert shown_seed["seed_id"] == seed_id
+    assert shown_seed["claims_to_avoid"]
+
+
 def test_canonical_core_cli_self_doc_seed_from_commits_invalid_range(
     tmp_path: Path,
     monkeypatch,
@@ -228,6 +306,111 @@ def test_canonical_core_cli_self_doc_package_from_seed_json(
     ]
     after_paths = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
     assert after_paths == before_paths
+
+
+def test_canonical_core_cli_self_doc_package_persist_list_and_show(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    seed_file = tmp_path / "seed.json"
+    seed_file.write_text(json.dumps(_content_seed_payload()), encoding="utf-8")
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "package",
+                "from-seed-json",
+                "--json-file",
+                str(seed_file),
+                "--persist",
+                "--json",
+            ],
+            db_path=db_path,
+        )
+
+    assert exit_code == 0
+    package = json.loads(output.getvalue())
+    assert package["persisted"] is True
+    package_id = package["package_id"]
+
+    list_output = StringIO()
+    with redirect_stdout(list_output):
+        list_exit_code = main(
+            ["api", "self-doc", "packages", "list", "--json"],
+            db_path=db_path,
+        )
+
+    assert list_exit_code == 0
+    packages = json.loads(list_output.getvalue())["content_packages"]
+    assert [item["package_id"] for item in packages] == [package_id]
+    assert packages[0]["shot_list"]
+    assert packages[0]["terminal_demo_plan"]
+
+    show_output = StringIO()
+    with redirect_stdout(show_output):
+        show_exit_code = main(
+            ["api", "self-doc", "packages", "show", "--id", package_id, "--json"],
+            db_path=db_path,
+        )
+
+    assert show_exit_code == 0
+    shown_package = json.loads(show_output.getvalue())
+    assert shown_package["package_id"] == package_id
+    assert shown_package["voiceover_draft"]
+    assert shown_package["claims_to_avoid"] == [
+        "Do not claim this feature records, edits, exports, or publishes media."
+    ]
+
+
+def test_canonical_core_cli_self_doc_show_unknown_artifact_ids(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+
+    seed_output = StringIO()
+    with redirect_stdout(seed_output):
+        seed_exit_code = main(
+            ["api", "self-doc", "seeds", "show", "--id", "missing-seed", "--json"],
+            db_path=db_path,
+        )
+
+    assert seed_exit_code == 1
+    assert "not found" in json.loads(seed_output.getvalue())["error"]
+
+    package_output = StringIO()
+    with redirect_stdout(package_output):
+        package_exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "packages",
+                "show",
+                "--id",
+                "missing-package",
+                "--json",
+            ],
+            db_path=db_path,
+        )
+
+    assert package_exit_code == 1
+    assert "not found" in json.loads(package_output.getvalue())["error"]
 
 
 def test_canonical_core_cli_self_doc_package_from_missing_seed_json(

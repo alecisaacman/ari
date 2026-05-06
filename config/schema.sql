@@ -481,3 +481,23 @@ create table if not exists ari_runtime_coding_loop_retry_approvals (
     rejected_by text,
     rejected_at text
 );
+
+create table if not exists ari_self_documentation_content_seeds (
+    seed_id text primary key,
+    source_commit_range text not null,
+    title text not null,
+    summary text not null,
+    payload_json text not null,
+    created_at text not null,
+    updated_at text not null
+);
+
+create table if not exists ari_self_documentation_content_packages (
+    package_id text primary key,
+    source_seed_id text not null,
+    title text not null,
+    content_angle text not null,
+    payload_json text not null,
+    created_at text not null,
+    updated_at text not null
+);

@@ -268,12 +268,18 @@ Stage 1 readiness is defined in
 
 The first Stage 1 implementation provides a local, deterministic `ContentSeed`
 generator from a git commit range, exposed through
-`api self-doc seed from-commits --from <hash> --to <hash> --json`. It does not
-persist, record, edit, export, publish, upload, or call external services.
+`api self-doc seed from-commits --from <hash> --to <hash> --json`. Seeds can be
+persisted explicitly with `--persist` and inspected with
+`api self-doc seeds list --json` and
+`api self-doc seeds show --id <seed_id> --json`. It does not record, edit,
+export, publish, upload, or call external services.
 
 Stage 1 also includes a deterministic `ContentPackage` generator that converts
 an existing `ContentSeed` into read-only scripts, shot lists, terminal demo
 plans, captions, thumbnail prompts, redaction checklists, and approval gates.
 It is exposed through
-`api self-doc package from-seed-json --json-file <path> --json`. It does not
-persist, record, edit, export, publish, upload, or call external services.
+`api self-doc package from-seed-json --json-file <path> --json`. Packages can be
+persisted explicitly with `--persist` and inspected with
+`api self-doc packages list --json` and
+`api self-doc packages show --id <package_id> --json`. It does not record, edit,
+export, publish, upload, or call external services.

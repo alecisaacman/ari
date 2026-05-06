@@ -422,6 +422,34 @@ ENTITY_CONFIG: dict[str, dict[str, Any]] = {
         ],
         "order_by": "coalesce(updated_at, created_at) desc",
     },
+    "self_documentation_content_seed": {
+        "table": "ari_self_documentation_content_seeds",
+        "primary_key": "seed_id",
+        "columns": [
+            "seed_id",
+            "source_commit_range",
+            "title",
+            "summary",
+            "payload_json",
+            "created_at",
+            "updated_at",
+        ],
+        "order_by": "updated_at desc",
+    },
+    "self_documentation_content_package": {
+        "table": "ari_self_documentation_content_packages",
+        "primary_key": "package_id",
+        "columns": [
+            "package_id",
+            "source_seed_id",
+            "title",
+            "content_angle",
+            "payload_json",
+            "created_at",
+            "updated_at",
+        ],
+        "order_by": "updated_at desc",
+    },
 }
 
 

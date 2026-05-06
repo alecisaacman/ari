@@ -132,15 +132,22 @@ publish publicly, or call external integrations.
 Implemented read-only CLI:
 
 - `api self-doc seed from-commits --from <hash> --to <hash> --json`
+- `api self-doc seed from-commits --from <hash> --to <hash> --persist --json`
+- `api self-doc seeds list --json`
+- `api self-doc seeds show --id <seed_id> --json`
 - `api self-doc package from-seed-json --json-file <path> --json`
+- `api self-doc package from-seed-json --json-file <path> --persist --json`
+- `api self-doc packages list --json`
+- `api self-doc packages show --id <package_id> --json`
 
 Possible future commands:
 
 - `api self-doc seed latest --limit <n>`
-- `api self-doc seed show --id <seed_id>`
+- `api self-doc package from-seed-id --id <seed_id> --persist --json`
 
-The future commands require persistence first and are not implemented by this
-readiness doc.
+Content artifact persistence is now available for explicit local storage and
+read-only inspection. Recording, editing, exporting, uploading, and publishing
+remain unimplemented and approval-gated future work.
 
 ## Relationship To ACE
 

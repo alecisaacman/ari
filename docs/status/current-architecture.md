@@ -17,9 +17,11 @@
 - policy / derivation
 - execution layer for bounded coding actions
 - compact lifecycle memory for bounded coding-loop chains
-- docs-only skill design for future self-documentation/content creation
-- docs-only readiness checklist for self-documentation content seeds
+- self-documentation/content creation skill design and readiness docs
 - read-only self-documentation content seed generator from git commit ranges
+- read-only self-documentation content package generator from ContentSeed JSON
+- durable local persistence and CLI inspection for self-documentation
+  ContentSeed and ContentPackage artifacts
 - static machine-readable skill catalog plus read-only skill-selection
   prototype for routing goals to known skills or missing-skill candidates
 - read-only CLI inspection for the static skill catalog

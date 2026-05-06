@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -77,6 +78,89 @@ def generate_content_package_from_seed(seed: ContentSeed) -> ContentPackage:
         approval_required_before_recording=True,
         approval_required_before_posting=True,
     )
+
+
+def content_package_from_dict(payload: Mapping[str, object]) -> ContentPackage:
+    return ContentPackage(
+        package_id=_required_str(payload, "package_id"),
+        source_seed_id=_required_str(payload, "source_seed_id"),
+        title=_required_str(payload, "title"),
+        content_angle=_required_str(payload, "content_angle"),
+        thirty_second_vertical_script=_required_str(
+            payload, "thirty_second_vertical_script"
+        ),
+        sixty_second_linkedin_script=_required_str(
+            payload, "sixty_second_linkedin_script"
+        ),
+        shot_list=tuple(_shot_from_dict(shot) for shot in _required_sequence(payload, "shot_list")),
+        terminal_demo_plan=tuple(
+            _demo_step_from_dict(step)
+            for step in _required_sequence(payload, "terminal_demo_plan")
+        ),
+        voiceover_draft=_required_str(payload, "voiceover_draft"),
+        linkedin_post=_required_str(payload, "linkedin_post"),
+        short_caption=_required_str(payload, "short_caption"),
+        thumbnail_prompt=_required_str(payload, "thumbnail_prompt"),
+        redaction_checklist=_required_str_tuple(payload, "redaction_checklist"),
+        claims_to_avoid=_required_str_tuple(payload, "claims_to_avoid"),
+        approval_required_before_recording=_required_bool(
+            payload, "approval_required_before_recording"
+        ),
+        approval_required_before_posting=_required_bool(
+            payload, "approval_required_before_posting"
+        ),
+        created_at=_required_str(payload, "created_at"),
+    )
+
+
+def _shot_from_dict(payload: object) -> Shot:
+    if not isinstance(payload, Mapping):
+        raise ValueError("shot_list must contain objects.")
+    return Shot(
+        label=_required_str(payload, "label"),
+        purpose=_required_str(payload, "purpose"),
+        suggested_visual=_required_str(payload, "suggested_visual"),
+        narration=_required_str(payload, "narration"),
+    )
+
+
+def _demo_step_from_dict(payload: object) -> DemoStep:
+    if not isinstance(payload, Mapping):
+        raise ValueError("terminal_demo_plan must contain objects.")
+    return DemoStep(
+        command_or_action=_required_str(payload, "command_or_action"),
+        purpose=_required_str(payload, "purpose"),
+        expected_result=_required_str(payload, "expected_result"),
+        safety_note=_required_str(payload, "safety_note"),
+    )
+
+
+def _required_str(payload: Mapping[str, object], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"ContentPackage field {key!r} is required and must be a string.")
+    return value
+
+
+def _required_bool(payload: Mapping[str, object], key: str) -> bool:
+    value = payload.get(key)
+    if not isinstance(value, bool):
+        raise ValueError(f"ContentPackage field {key!r} is required and must be a bool.")
+    return value
+
+
+def _required_sequence(payload: Mapping[str, object], key: str) -> tuple[object, ...]:
+    value = payload.get(key)
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise ValueError(f"ContentPackage field {key!r} is required and must be a list.")
+    return tuple(value)
+
+
+def _required_str_tuple(payload: Mapping[str, object], key: str) -> tuple[str, ...]:
+    values = _required_sequence(payload, key)
+    if not all(isinstance(value, str) for value in values):
+        raise ValueError(f"ContentPackage field {key!r} must contain only strings.")
+    return tuple(values)
 
 
 def _select_proof_points(seed: ContentSeed) -> tuple[str, ...]:

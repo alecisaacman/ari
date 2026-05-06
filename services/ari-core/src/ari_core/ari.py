@@ -99,6 +99,12 @@ from .modules.self_documentation import (
     content_seed_from_dict,
     generate_content_package_from_seed,
     generate_content_seed_from_commits,
+    get_content_package,
+    get_content_seed,
+    list_content_packages,
+    list_content_seeds,
+    store_content_package,
+    store_content_seed,
 )
 from .modules.skills import (
     evaluate_skill_readiness,
@@ -219,7 +225,11 @@ TOP_LEVEL_COMMANDS = {
 }
 
 
-def _handle_api_self_doc_seed_from_commits(args: argparse.Namespace) -> int:
+def _handle_api_self_doc_seed_from_commits(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
     try:
         seed = generate_content_seed_from_commits(
             from_ref=args.from_ref,
@@ -235,7 +245,12 @@ def _handle_api_self_doc_seed_from_commits(args: argparse.Namespace) -> int:
             print(f"Unable to generate content seed: {exc}", file=sys.stderr)
         return 1
 
+    if args.persist:
+        seed = store_content_seed(seed, db_path=db_path)
+
     payload = seed.to_dict()
+    if args.persist:
+        payload["persisted"] = True
     if args.as_json:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -246,6 +261,8 @@ def _handle_api_self_doc_seed_from_commits(args: argparse.Namespace) -> int:
     print(f"Commits: {len(payload['source_commits'])}")
     print(f"Files: {len(payload['source_files'])}")
     print(f"Demo idea: {payload['demo_idea']}")
+    if args.persist:
+        print("Persisted: yes")
     if payload["risk_notes"]:
         print("Risk notes:")
         for note in payload["risk_notes"]:
@@ -253,7 +270,48 @@ def _handle_api_self_doc_seed_from_commits(args: argparse.Namespace) -> int:
     return 0
 
 
-def _handle_api_self_doc_package_from_seed_json(args: argparse.Namespace) -> int:
+def _handle_api_self_doc_seeds_list(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
+    seeds = list_content_seeds(limit=args.limit, db_path=db_path)
+    payload = {"content_seeds": [seed.to_dict() for seed in seeds]}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Content seeds: {len(seeds)}")
+    for seed in seeds:
+        print(f"- {seed.seed_id}: {seed.title}")
+    return 0
+
+
+def _handle_api_self_doc_seeds_show(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
+    seed = get_content_seed(args.id, db_path=db_path)
+    if seed is None:
+        return _print_self_doc_error(f"ContentSeed {args.id!r} was not found.", args)
+
+    payload = seed.to_dict()
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Content seed: {payload['title']}")
+    print(f"Seed id: {payload['seed_id']}")
+    print(f"Source range: {payload['source_commit_range']}")
+    return 0
+
+
+def _handle_api_self_doc_package_from_seed_json(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
     seed_path = Path(args.json_file)
     try:
         raw_payload = json.loads(seed_path.read_text(encoding="utf-8"))
@@ -262,13 +320,18 @@ def _handle_api_self_doc_package_from_seed_json(args: argparse.Namespace) -> int
         seed = content_seed_from_dict(raw_payload)
         package = generate_content_package_from_seed(seed)
     except OSError as exc:
-        return _print_self_doc_package_error(f"Unable to read ContentSeed JSON file: {exc}", args)
+        return _print_self_doc_error(f"Unable to read ContentSeed JSON file: {exc}", args)
     except json.JSONDecodeError as exc:
-        return _print_self_doc_package_error(f"Invalid ContentSeed JSON: {exc}", args)
+        return _print_self_doc_error(f"Invalid ContentSeed JSON: {exc}", args)
     except ValueError as exc:
-        return _print_self_doc_package_error(str(exc), args)
+        return _print_self_doc_error(str(exc), args)
+
+    if args.persist:
+        package = store_content_package(package, db_path=db_path)
 
     payload = package.to_dict()
+    if args.persist:
+        payload["persisted"] = True
     if args.as_json:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -281,14 +344,53 @@ def _handle_api_self_doc_package_from_seed_json(args: argparse.Namespace) -> int
     print(f"Terminal demo steps: {len(payload['terminal_demo_plan'])}")
     print("Approval required before recording: yes")
     print("Approval required before posting: yes")
+    if args.persist:
+        print("Persisted: yes")
     return 0
 
 
-def _print_self_doc_package_error(message: str, args: argparse.Namespace) -> int:
+def _handle_api_self_doc_packages_list(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
+    packages = list_content_packages(limit=args.limit, db_path=db_path)
+    payload = {"content_packages": [package.to_dict() for package in packages]}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Content packages: {len(packages)}")
+    for package in packages:
+        print(f"- {package.package_id}: {package.title}")
+    return 0
+
+
+def _handle_api_self_doc_packages_show(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
+    package = get_content_package(args.id, db_path=db_path)
+    if package is None:
+        return _print_self_doc_error(f"ContentPackage {args.id!r} was not found.", args)
+
+    payload = package.to_dict()
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Content package: {payload['title']}")
+    print(f"Package id: {payload['package_id']}")
+    print(f"Source seed id: {payload['source_seed_id']}")
+    return 0
+
+
+def _print_self_doc_error(message: str, args: argparse.Namespace) -> int:
     if args.as_json:
         print(json.dumps({"error": message}, indent=2, sort_keys=True))
     else:
-        print(f"Unable to generate content package: {message}", file=sys.stderr)
+        print(f"Self-documentation command failed: {message}", file=sys.stderr)
     return 1
 
 
@@ -867,6 +969,33 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--user-framing", default=None, help="Optional user-approved narrative framing."
     )
     self_doc_from_commits_parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Persist the generated ContentSeed in ARI-owned local storage.",
+    )
+    self_doc_from_commits_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_seeds_parser = self_doc_subparsers.add_parser(
+        "seeds", help="Inspect persisted self-documentation ContentSeed artifacts."
+    )
+    self_doc_seeds_subparsers = self_doc_seeds_parser.add_subparsers(
+        dest="api_self_doc_seeds_command", required=True
+    )
+    self_doc_seeds_list_parser = self_doc_seeds_subparsers.add_parser(
+        "list", help="List recent persisted ContentSeed artifacts."
+    )
+    self_doc_seeds_list_parser.add_argument(
+        "--limit", type=int, default=20, help="Maximum number of ContentSeeds to list."
+    )
+    self_doc_seeds_list_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_seeds_show_parser = self_doc_seeds_subparsers.add_parser(
+        "show", help="Show one persisted ContentSeed artifact."
+    )
+    self_doc_seeds_show_parser.add_argument("--id", required=True, help="ContentSeed id.")
+    self_doc_seeds_show_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
     self_doc_package_parser = self_doc_subparsers.add_parser(
@@ -882,6 +1011,35 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--json-file", required=True, help="Path to a local ContentSeed JSON file."
     )
     self_doc_package_from_seed_parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Persist the generated ContentPackage in ARI-owned local storage.",
+    )
+    self_doc_package_from_seed_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_packages_parser = self_doc_subparsers.add_parser(
+        "packages", help="Inspect persisted self-documentation ContentPackage artifacts."
+    )
+    self_doc_packages_subparsers = self_doc_packages_parser.add_subparsers(
+        dest="api_self_doc_packages_command", required=True
+    )
+    self_doc_packages_list_parser = self_doc_packages_subparsers.add_parser(
+        "list", help="List recent persisted ContentPackage artifacts."
+    )
+    self_doc_packages_list_parser.add_argument(
+        "--limit", type=int, default=20, help="Maximum number of ContentPackages to list."
+    )
+    self_doc_packages_list_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_packages_show_parser = self_doc_packages_subparsers.add_parser(
+        "show", help="Show one persisted ContentPackage artifact."
+    )
+    self_doc_packages_show_parser.add_argument(
+        "--id", required=True, help="ContentPackage id."
+    )
+    self_doc_packages_show_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1941,13 +2099,37 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_self_doc_command == "seed"
             and args.api_self_doc_seed_command == "from-commits"
         ):
-            return _handle_api_self_doc_seed_from_commits(args)
+            return _handle_api_self_doc_seed_from_commits(args, db_path=db_path)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "seeds"
+            and args.api_self_doc_seeds_command == "list"
+        ):
+            return _handle_api_self_doc_seeds_list(args, db_path=db_path)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "seeds"
+            and args.api_self_doc_seeds_command == "show"
+        ):
+            return _handle_api_self_doc_seeds_show(args, db_path=db_path)
         if (
             args.api_command == "self-doc"
             and args.api_self_doc_command == "package"
             and args.api_self_doc_package_command == "from-seed-json"
         ):
-            return _handle_api_self_doc_package_from_seed_json(args)
+            return _handle_api_self_doc_package_from_seed_json(args, db_path=db_path)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "packages"
+            and args.api_self_doc_packages_command == "list"
+        ):
+            return _handle_api_self_doc_packages_list(args, db_path=db_path)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "packages"
+            and args.api_self_doc_packages_command == "show"
+        ):
+            return _handle_api_self_doc_packages_show(args, db_path=db_path)
         if args.api_command == "skills" and args.api_skills_command == "list":
             return _handle_api_skills_list(args)
         if args.api_command == "skills" and args.api_skills_command == "show":
