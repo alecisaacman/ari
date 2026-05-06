@@ -85,7 +85,10 @@ from ari_core.modules.memory.explain import (
 )
 from ari_core.modules.memory.self_model import ensure_self_model_memory, get_self_model_memory
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
-from ari_core.modules.overview import get_ari_operating_overview
+from ari_core.modules.overview import (
+    get_ari_operating_overview,
+    get_pending_approvals_read_model,
+)
 from ari_core.modules.policy.engine import (
     build_project_draft,
     classify_builder_output,
@@ -149,6 +152,16 @@ def create_app() -> FastAPI:
     @app.get("/overview")
     def overview() -> dict[str, Any]:
         return {"overview": get_ari_operating_overview().to_dict()}
+
+    @app.get("/overview/pending-approvals")
+    def overview_pending_approvals(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "pending_approvals": get_pending_approvals_read_model(
+                limit=limit
+            ).to_dict()
+        }
 
     @app.post("/notes")
     def create_note(payload: NoteCreateRequest) -> dict[str, Any]:

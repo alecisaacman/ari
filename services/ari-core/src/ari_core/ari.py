@@ -79,7 +79,10 @@ from .modules.networking.cli import (
     handle_today,
 )
 from .modules.notes.api import handle_api_notes_save, handle_api_notes_search
-from .modules.overview import get_ari_operating_overview
+from .modules.overview import (
+    get_ari_operating_overview,
+    get_pending_approvals_read_model,
+)
 from .modules.policy.api import (
     handle_api_policy_awareness_derive,
     handle_api_policy_awareness_latest,
@@ -407,6 +410,29 @@ def _handle_api_overview_show(args: argparse.Namespace, *, db_path: Path = DB_PA
     return 0
 
 
+def _handle_api_overview_pending_approvals(
+    args: argparse.Namespace,
+    *,
+    db_path: Path = DB_PATH,
+) -> int:
+    pending_approvals = get_pending_approvals_read_model(
+        db_path=db_path,
+        limit=args.limit,
+    )
+    payload = {"pending_approvals": pending_approvals.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    pending_payload = payload["pending_approvals"]
+    print(f"Pending approvals: {pending_payload['total_pending_count']}")
+    if pending_payload["unavailable_reason"]:
+        print(f"Unavailable: {pending_payload['unavailable_reason']}")
+    print(f"Source: {pending_payload['source_of_truth']}")
+    print(f"Authority: {pending_payload['authority_warning']}")
+    return 0
+
+
 def execute(action: dict, execution_root: Path | str | None = None) -> dict:
     """Run a minimal bounded execution action through canonical ARI."""
 
@@ -713,6 +739,19 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "show", help="Show the ARI-owned dashboard overview read model."
     )
     overview_show_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    overview_pending_parser = overview_subparsers.add_parser(
+        "pending-approvals",
+        help="Show read-only pending approvals for dashboard inspection.",
+    )
+    overview_pending_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of retry approval records to inspect.",
+    )
+    overview_pending_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -1801,6 +1840,11 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
     if args.command == "api":
         if args.api_command == "overview" and args.api_overview_command == "show":
             return _handle_api_overview_show(args, db_path=db_path)
+        if (
+            args.api_command == "overview"
+            and args.api_overview_command == "pending-approvals"
+        ):
+            return _handle_api_overview_pending_approvals(args, db_path=db_path)
         if (
             args.api_command == "self-doc"
             and args.api_self_doc_command == "seed"

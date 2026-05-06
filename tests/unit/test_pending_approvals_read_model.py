@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+import importlib
 import json
 
 from ari_core.modules.execution.coding_loop import CodingLoopRetryApproval
 from ari_core.modules.execution.models import ApprovalRequirement
-from ari_core.modules.overview.pending_approvals import get_pending_approvals_read_model
 
 
 def test_pending_approvals_read_model_is_json_serializable(monkeypatch) -> None:
+    pending_approvals = _pending_approvals_module()
     monkeypatch.setattr(
-        "ari_core.modules.overview.pending_approvals.list_coding_loop_retry_approvals",
+        pending_approvals,
+        "list_coding_loop_retry_approvals",
         lambda *, limit, db_path: (_pending_retry_approval(),),
     )
 
-    model = get_pending_approvals_read_model()
+    model = pending_approvals.get_pending_approvals_read_model()
 
     payload = model.to_dict()
     assert payload["total_pending_count"] == 1
@@ -21,15 +23,17 @@ def test_pending_approvals_read_model_is_json_serializable(monkeypatch) -> None:
 
 
 def test_pending_approvals_read_model_includes_approval_summaries(monkeypatch) -> None:
+    pending_approvals = _pending_approvals_module()
     monkeypatch.setattr(
-        "ari_core.modules.overview.pending_approvals.list_coding_loop_retry_approvals",
+        pending_approvals,
+        "list_coding_loop_retry_approvals",
         lambda *, limit, db_path: (
             _pending_retry_approval(),
             _approved_retry_approval(),
         ),
     )
 
-    payload = get_pending_approvals_read_model().to_dict()
+    payload = pending_approvals.get_pending_approvals_read_model().to_dict()
 
     assert payload["total_pending_count"] == 1
     approval = payload["approvals"][0]
@@ -49,15 +53,18 @@ def test_pending_approvals_read_model_includes_approval_summaries(monkeypatch) -
 
 
 def test_pending_approvals_read_model_represents_unavailable_source(monkeypatch) -> None:
+    pending_approvals = _pending_approvals_module()
+
     def raise_unavailable(*, limit, db_path):
         raise RuntimeError("store offline")
 
     monkeypatch.setattr(
-        "ari_core.modules.overview.pending_approvals.list_coding_loop_retry_approvals",
+        pending_approvals,
+        "list_coding_loop_retry_approvals",
         raise_unavailable,
     )
 
-    payload = get_pending_approvals_read_model().to_dict()
+    payload = pending_approvals.get_pending_approvals_read_model().to_dict()
 
     assert payload["total_pending_count"] == 0
     assert payload["approvals"] == ()
@@ -66,6 +73,7 @@ def test_pending_approvals_read_model_represents_unavailable_source(monkeypatch)
 
 
 def test_pending_approvals_read_model_is_read_only(monkeypatch) -> None:
+    pending_approvals = _pending_approvals_module()
     calls: list[tuple[int, object]] = []
 
     def list_only(*, limit, db_path):
@@ -73,15 +81,20 @@ def test_pending_approvals_read_model_is_read_only(monkeypatch) -> None:
         return (_pending_retry_approval(),)
 
     monkeypatch.setattr(
-        "ari_core.modules.overview.pending_approvals.list_coding_loop_retry_approvals",
+        pending_approvals,
+        "list_coding_loop_retry_approvals",
         list_only,
     )
 
-    payload = get_pending_approvals_read_model().to_dict()
+    payload = pending_approvals.get_pending_approvals_read_model().to_dict()
 
     assert calls
     assert "inspection-only" in payload["authority_warning"]
     assert "must not approve, reject, execute" in payload["authority_warning"]
+
+
+def _pending_approvals_module():
+    return importlib.import_module("ari_core.modules.overview.pending_approvals")
 
 
 def _pending_retry_approval() -> CodingLoopRetryApproval:

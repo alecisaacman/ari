@@ -352,6 +352,19 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert retry_approvals.json()["retry_approvals"][0]["approval_id"] == retry_approval_id
         assert retry_approvals.json()["retry_approvals"][0]["approval_status"] == "pending"
 
+        overview_pending_approvals = client.get("/overview/pending-approvals")
+        assert overview_pending_approvals.status_code == 200
+        pending_payload = overview_pending_approvals.json()["pending_approvals"]
+        assert pending_payload["total_pending_count"] >= 1
+        assert pending_payload["approvals"][0]["approval_id"] == retry_approval_id
+        assert pending_payload["approvals"][0]["status"] == "pending"
+        assert pending_payload["approvals"][0]["source"] == "coding_loop_retry_approval"
+        assert pending_payload["approvals"][0]["proposed_goal"] == (
+            "write file loop-api-proof.txt with inspected through api"
+        )
+        assert pending_payload["unavailable_reason"] is None
+        assert "must not approve, reject, execute" in pending_payload["authority_warning"]
+
         retry_approval = client.get(
             f"/execution/coding-loop/retry-approvals/{retry_approval_id}"
         )
