@@ -3,6 +3,8 @@ import type {
   AriOperatingOverview,
   CodingLoopChainsReadModel,
   CodingLoopChainSummary,
+  LifecycleLessonsReadModel,
+  LifecycleLessonSummary,
   OverviewMetric,
   OverviewSkill,
   PendingApprovalSummary,
@@ -34,10 +36,12 @@ export default async function HomePage() {
   const overview = result.overview;
   const pendingApprovals = result.pendingApprovals;
   const codingLoopChains = result.codingLoopChains;
+  const lifecycleLessons = result.lifecycleLessons;
   const panels = buildPanels(
     overview,
     pendingApprovals,
     codingLoopChains,
+    lifecycleLessons,
     result.source,
   );
   const skills = [
@@ -68,6 +72,12 @@ export default async function HomePage() {
             <p className="ace-readonly-warning">
               Coding-loop chains fallback active:{" "}
               {result.codingLoopChainsError ?? codingLoopChains.unavailable_reason}
+            </p>
+          ) : null}
+          {result.lifecycleLessonsSource === "static-fallback" ? (
+            <p className="ace-readonly-warning">
+              Lifecycle lessons fallback active:{" "}
+              {result.lifecycleLessonsError ?? lifecycleLessons.unavailable_reason}
             </p>
           ) : null}
         </div>
@@ -132,6 +142,41 @@ export default async function HomePage() {
             </ul>
           </article>
         ))}
+      </section>
+
+      <section className="ace-readonly-section" aria-labelledby="lifecycle-lessons-title">
+        <div className="ace-readonly-section-heading">
+          <div>
+            <p className="ace-readonly-kicker">Read-only learning memory</p>
+            <h2 id="lifecycle-lessons-title">Lifecycle lessons</h2>
+          </div>
+          <span className="ace-readonly-status ace-readonly-status-disabled">
+            controls disabled
+          </span>
+        </div>
+        <p className="ace-readonly-source">
+          {lifecycleLessons.source_of_truth} / source: {result.lifecycleLessonsSource}
+        </p>
+        {lifecycleLessons.unavailable_reason ? (
+          <p className="ace-readonly-warning">{lifecycleLessons.unavailable_reason}</p>
+        ) : null}
+        {lifecycleLessons.lessons.length ? (
+          <div className="ace-readonly-lesson-list">
+            {lifecycleLessons.lessons.map((lesson) => (
+              <LifecycleLessonRow
+                key={lesson.lesson_id}
+                lesson={lesson}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="ace-readonly-empty">
+            No lifecycle lessons are available in the ARI-owned read model.
+          </p>
+        )}
+        <p className="ace-readonly-authority-note">
+          {lifecycleLessons.authority_warning}
+        </p>
       </section>
 
       <section className="ace-readonly-section" aria-labelledby="coding-loop-chains-title">
@@ -237,6 +282,44 @@ export default async function HomePage() {
   );
 }
 
+function LifecycleLessonRow({ lesson }: { lesson: LifecycleLessonSummary }) {
+  return (
+    <article className="ace-readonly-lesson-row">
+      <div className="ace-readonly-approval-meta">
+        <span>{lesson.availability_status}</span>
+        <span>importance {lesson.importance ?? "n/a"}</span>
+        <span>confidence {lesson.confidence ?? "n/a"}</span>
+      </div>
+      <h3>{lesson.summary || lesson.lesson_id}</h3>
+      <p className="ace-readonly-chain-goal">
+        {lesson.lesson_text || "Lesson text unavailable."}
+      </p>
+      <dl className="ace-readonly-chain-stats">
+        <div>
+          <dt>Source</dt>
+          <dd>{lesson.source_type}</dd>
+        </div>
+        <div>
+          <dt>Chain</dt>
+          <dd>{lesson.related_chain_id ?? "unknown"}</dd>
+        </div>
+        <div>
+          <dt>Updated</dt>
+          <dd>{lesson.updated_at ?? lesson.created_at ?? "unknown"}</dd>
+        </div>
+      </dl>
+      {lesson.tags.length ? (
+        <div className="ace-readonly-lesson-tags">
+          {lesson.tags.map((tag) => (
+            <span key={tag}>{tag}</span>
+          ))}
+        </div>
+      ) : null}
+      <p className="ace-readonly-source">{lesson.inspection_hint}</p>
+    </article>
+  );
+}
+
 function CodingLoopChainRow({ chain }: { chain: CodingLoopChainSummary }) {
   return (
     <article className="ace-readonly-chain-row">
@@ -334,6 +417,7 @@ function buildPanels(
   overview: AriOperatingOverview,
   pendingApprovals: PendingApprovalsReadModel,
   codingLoopChains: CodingLoopChainsReadModel,
+  lifecycleLessons: LifecycleLessonsReadModel,
   source: "ari-api" | "static-fallback",
 ): DashboardPanel[] {
   return [
@@ -401,9 +485,13 @@ function buildPanels(
     },
     {
       title: "Memory / lifecycle lessons",
-      status: metricPanelStatus(overview.recent_lifecycle_lesson_count),
-      source: "api memory explain coding-loop-chain",
-      lines: metricLines(overview.recent_lifecycle_lesson_count),
+      status: lifecycleLessons.unavailable_reason ? "partial" : "ready",
+      source: "api overview lifecycle-lessons --json / GET /overview/lifecycle-lessons",
+      lines: [
+        `Recent lessons: ${lifecycleLessons.total_recent_count}`,
+        lifecycleLessons.unavailable_reason ?? "Lifecycle lessons are live from ARI memory.",
+        "Memory mutation controls are intentionally disabled in ACE.",
+      ],
     },
     {
       title: "Self-documentation content",

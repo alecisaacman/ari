@@ -90,16 +90,46 @@ export type CodingLoopChainsReadModel = {
   authority_warning: string;
 };
 
+export type LifecycleLessonSummary = {
+  lesson_id: string;
+  source_type: string;
+  source_id: string | null;
+  related_coding_loop_result_id: string | null;
+  related_chain_id: string | null;
+  summary: string;
+  lesson_text: string;
+  confidence: number | null;
+  importance: number | null;
+  tags: string[];
+  created_at: string | null;
+  updated_at: string | null;
+  inspection_hint: string;
+  availability_status: string;
+  unavailable_reason: string | null;
+};
+
+export type LifecycleLessonsReadModel = {
+  generated_at: string;
+  total_recent_count: number;
+  lessons: LifecycleLessonSummary[];
+  unavailable_reason: string | null;
+  source_of_truth: string;
+  authority_warning: string;
+};
+
 export type DashboardOverviewResult = {
   overview: AriOperatingOverview;
   pendingApprovals: PendingApprovalsReadModel;
   codingLoopChains: CodingLoopChainsReadModel;
+  lifecycleLessons: LifecycleLessonsReadModel;
   source: "ari-api" | "static-fallback";
   pendingApprovalsSource: "ari-api" | "static-fallback";
   codingLoopChainsSource: "ari-api" | "static-fallback";
+  lifecycleLessonsSource: "ari-api" | "static-fallback";
   error?: string;
   pendingApprovalsError?: string;
   codingLoopChainsError?: string;
+  lifecycleLessonsError?: string;
 };
 
 type OverviewResponse = {
@@ -114,29 +144,39 @@ type CodingLoopChainsResponse = {
   coding_loop_chains: CodingLoopChainsReadModel;
 };
 
+type LifecycleLessonsResponse = {
+  lifecycle_lessons: LifecycleLessonsReadModel;
+};
+
 export async function getDashboardOverview(): Promise<DashboardOverviewResult> {
   try {
     const response = await requestAriApi<OverviewResponse>("GET", "/overview");
     const pendingApprovals = await getPendingApprovals();
     const codingLoopChains = await getCodingLoopChains();
+    const lifecycleLessons = await getLifecycleLessons();
     return {
       overview: response.overview,
       pendingApprovals: pendingApprovals.pendingApprovals,
       codingLoopChains: codingLoopChains.codingLoopChains,
+      lifecycleLessons: lifecycleLessons.lifecycleLessons,
       source: "ari-api",
       pendingApprovalsSource: pendingApprovals.source,
       codingLoopChainsSource: codingLoopChains.source,
+      lifecycleLessonsSource: lifecycleLessons.source,
       pendingApprovalsError: pendingApprovals.error,
-      codingLoopChainsError: codingLoopChains.error
+      codingLoopChainsError: codingLoopChains.error,
+      lifecycleLessonsError: lifecycleLessons.error
     };
   } catch (error) {
     return {
       overview: fallbackOverview(error),
       pendingApprovals: fallbackPendingApprovals(error),
       codingLoopChains: fallbackCodingLoopChains(error),
+      lifecycleLessons: fallbackLifecycleLessons(error),
       source: "static-fallback",
       pendingApprovalsSource: "static-fallback",
       codingLoopChainsSource: "static-fallback",
+      lifecycleLessonsSource: "static-fallback",
       error: error instanceof Error ? error.message : String(error)
     };
   }
@@ -188,6 +228,29 @@ async function getCodingLoopChains(): Promise<{
   }
 }
 
+async function getLifecycleLessons(): Promise<{
+  lifecycleLessons: LifecycleLessonsReadModel;
+  source: "ari-api" | "static-fallback";
+  error?: string;
+}> {
+  try {
+    const response = await requestAriApi<LifecycleLessonsResponse>(
+      "GET",
+      "/overview/lifecycle-lessons"
+    );
+    return {
+      lifecycleLessons: response.lifecycle_lessons,
+      source: "ari-api"
+    };
+  } catch (error) {
+    return {
+      lifecycleLessons: fallbackLifecycleLessons(error),
+      source: "static-fallback",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 function fallbackOverview(error: unknown): AriOperatingOverview {
   const message =
     error instanceof AriApiError || error instanceof Error
@@ -227,6 +290,23 @@ function fallbackOverview(error: unknown): AriOperatingOverview {
       "ACE did not compute ARI state.",
       message
     ]
+  };
+}
+
+function fallbackLifecycleLessons(error: unknown): LifecycleLessonsReadModel {
+  const message =
+    error instanceof AriApiError || error instanceof Error
+      ? error.message
+      : "ARI lifecycle lessons are unavailable.";
+
+  return {
+    generated_at: "unavailable",
+    total_recent_count: 0,
+    lessons: [],
+    unavailable_reason: message,
+    source_of_truth: "static fallback; connect to ARI-owned lifecycle lessons read model.",
+    authority_warning:
+      "ACE fallback may display lifecycle lesson placeholders but must not create, edit, delete, mutate, or own memory."
   };
 }
 
