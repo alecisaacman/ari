@@ -63,13 +63,43 @@ export type PendingApprovalsReadModel = {
   authority_warning: string;
 };
 
+export type CodingLoopChainSummary = {
+  coding_loop_result_id: string;
+  original_goal: string;
+  initial_status: string;
+  terminal_status: string;
+  chain_depth: number;
+  approval_count: number;
+  retry_execution_count: number;
+  latest_approval_status: string | null;
+  latest_retry_execution_status: string | null;
+  latest_review_decision: string | null;
+  continuation_decision: string | null;
+  stop_reason: string | null;
+  created_at: string;
+  updated_at: string | null;
+  inspection_hint: string;
+};
+
+export type CodingLoopChainsReadModel = {
+  generated_at: string;
+  total_recent_count: number;
+  chains: CodingLoopChainSummary[];
+  unavailable_reason: string | null;
+  source_of_truth: string;
+  authority_warning: string;
+};
+
 export type DashboardOverviewResult = {
   overview: AriOperatingOverview;
   pendingApprovals: PendingApprovalsReadModel;
+  codingLoopChains: CodingLoopChainsReadModel;
   source: "ari-api" | "static-fallback";
   pendingApprovalsSource: "ari-api" | "static-fallback";
+  codingLoopChainsSource: "ari-api" | "static-fallback";
   error?: string;
   pendingApprovalsError?: string;
+  codingLoopChainsError?: string;
 };
 
 type OverviewResponse = {
@@ -80,23 +110,33 @@ type PendingApprovalsResponse = {
   pending_approvals: PendingApprovalsReadModel;
 };
 
+type CodingLoopChainsResponse = {
+  coding_loop_chains: CodingLoopChainsReadModel;
+};
+
 export async function getDashboardOverview(): Promise<DashboardOverviewResult> {
   try {
     const response = await requestAriApi<OverviewResponse>("GET", "/overview");
     const pendingApprovals = await getPendingApprovals();
+    const codingLoopChains = await getCodingLoopChains();
     return {
       overview: response.overview,
       pendingApprovals: pendingApprovals.pendingApprovals,
+      codingLoopChains: codingLoopChains.codingLoopChains,
       source: "ari-api",
       pendingApprovalsSource: pendingApprovals.source,
-      pendingApprovalsError: pendingApprovals.error
+      codingLoopChainsSource: codingLoopChains.source,
+      pendingApprovalsError: pendingApprovals.error,
+      codingLoopChainsError: codingLoopChains.error
     };
   } catch (error) {
     return {
       overview: fallbackOverview(error),
       pendingApprovals: fallbackPendingApprovals(error),
+      codingLoopChains: fallbackCodingLoopChains(error),
       source: "static-fallback",
       pendingApprovalsSource: "static-fallback",
+      codingLoopChainsSource: "static-fallback",
       error: error instanceof Error ? error.message : String(error)
     };
   }
@@ -119,6 +159,29 @@ async function getPendingApprovals(): Promise<{
   } catch (error) {
     return {
       pendingApprovals: fallbackPendingApprovals(error),
+      source: "static-fallback",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function getCodingLoopChains(): Promise<{
+  codingLoopChains: CodingLoopChainsReadModel;
+  source: "ari-api" | "static-fallback";
+  error?: string;
+}> {
+  try {
+    const response = await requestAriApi<CodingLoopChainsResponse>(
+      "GET",
+      "/overview/coding-loop-chains"
+    );
+    return {
+      codingLoopChains: response.coding_loop_chains,
+      source: "ari-api"
+    };
+  } catch (error) {
+    return {
+      codingLoopChains: fallbackCodingLoopChains(error),
       source: "static-fallback",
       error: error instanceof Error ? error.message : String(error)
     };
@@ -164,6 +227,23 @@ function fallbackOverview(error: unknown): AriOperatingOverview {
       "ACE did not compute ARI state.",
       message
     ]
+  };
+}
+
+function fallbackCodingLoopChains(error: unknown): CodingLoopChainsReadModel {
+  const message =
+    error instanceof AriApiError || error instanceof Error
+      ? error.message
+      : "ARI coding-loop chains are unavailable.";
+
+  return {
+    generated_at: "unavailable",
+    total_recent_count: 0,
+    chains: [],
+    unavailable_reason: message,
+    source_of_truth: "static fallback; connect to ARI-owned coding-loop chains read model.",
+    authority_warning:
+      "ACE fallback may display coding-loop chain placeholders but must not execute, advance, or own chain state."
   };
 }
 

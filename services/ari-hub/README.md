@@ -14,6 +14,9 @@ results, and lifecycle lessons are shown only from the ARI-owned overview model;
 unavailable counts are labeled as partial. The pending approval detail panel reads
 the ARI-owned `/overview/pending-approvals` model and displays approval ids,
 source, reason, proposed goal/action summary, and created time when available.
+The coding-loop chain detail panel reads `/overview/coding-loop-chains` and
+displays recent result ids, goals, terminal statuses, chain depth, approval
+counts, retry execution counts, and inspection hints.
 
 The shell does not approve, reject, execute, advance chains, mutate memory,
 create skills, call external services, or own independent state. Future controls

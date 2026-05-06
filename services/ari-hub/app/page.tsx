@@ -1,6 +1,8 @@
 import { getDashboardOverview } from "@/src/core/ari-spine/overview-bridge";
 import type {
   AriOperatingOverview,
+  CodingLoopChainsReadModel,
+  CodingLoopChainSummary,
   OverviewMetric,
   OverviewSkill,
   PendingApprovalSummary,
@@ -31,7 +33,13 @@ export default async function HomePage() {
   const result = await getDashboardOverview();
   const overview = result.overview;
   const pendingApprovals = result.pendingApprovals;
-  const panels = buildPanels(overview, pendingApprovals, result.source);
+  const codingLoopChains = result.codingLoopChains;
+  const panels = buildPanels(
+    overview,
+    pendingApprovals,
+    codingLoopChains,
+    result.source,
+  );
   const skills = [
     ...overview.active_skills,
     ...overview.prototype_skills,
@@ -46,7 +54,7 @@ export default async function HomePage() {
           <h1 id="dashboard-title">ARI remains the brain. ACE displays state.</h1>
           <p className="ace-readonly-summary">{overview.doctrine_summary}</p>
           {result.source === "static-fallback" ? (
-          <p className="ace-readonly-warning">
+            <p className="ace-readonly-warning">
               Static fallback active: {result.error ?? "ARI overview unavailable."}
             </p>
           ) : null}
@@ -54,6 +62,12 @@ export default async function HomePage() {
             <p className="ace-readonly-warning">
               Pending approvals fallback active:{" "}
               {result.pendingApprovalsError ?? pendingApprovals.unavailable_reason}
+            </p>
+          ) : null}
+          {result.codingLoopChainsSource === "static-fallback" ? (
+            <p className="ace-readonly-warning">
+              Coding-loop chains fallback active:{" "}
+              {result.codingLoopChainsError ?? codingLoopChains.unavailable_reason}
             </p>
           ) : null}
         </div>
@@ -118,6 +132,41 @@ export default async function HomePage() {
             </ul>
           </article>
         ))}
+      </section>
+
+      <section className="ace-readonly-section" aria-labelledby="coding-loop-chains-title">
+        <div className="ace-readonly-section-heading">
+          <div>
+            <p className="ace-readonly-kicker">Read-only execution spine</p>
+            <h2 id="coding-loop-chains-title">Recent coding-loop chains</h2>
+          </div>
+          <span className="ace-readonly-status ace-readonly-status-disabled">
+            controls disabled
+          </span>
+        </div>
+        <p className="ace-readonly-source">
+          {codingLoopChains.source_of_truth} / source: {result.codingLoopChainsSource}
+        </p>
+        {codingLoopChains.unavailable_reason ? (
+          <p className="ace-readonly-warning">{codingLoopChains.unavailable_reason}</p>
+        ) : null}
+        {codingLoopChains.chains.length ? (
+          <div className="ace-readonly-chain-list">
+            {codingLoopChains.chains.map((chain) => (
+              <CodingLoopChainRow
+                chain={chain}
+                key={chain.coding_loop_result_id}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="ace-readonly-empty">
+            No recent coding-loop chains are available in the ARI-owned read model.
+          </p>
+        )}
+        <p className="ace-readonly-authority-note">
+          {codingLoopChains.authority_warning}
+        </p>
       </section>
 
       <section className="ace-readonly-section" aria-labelledby="pending-approvals-title">
@@ -188,6 +237,52 @@ export default async function HomePage() {
   );
 }
 
+function CodingLoopChainRow({ chain }: { chain: CodingLoopChainSummary }) {
+  return (
+    <article className="ace-readonly-chain-row">
+      <div className="ace-readonly-approval-meta">
+        <span>{chain.terminal_status}</span>
+        <span>depth {chain.chain_depth}</span>
+        <span>{chain.updated_at ?? chain.created_at}</span>
+      </div>
+      <h3>{chain.coding_loop_result_id}</h3>
+      <p className="ace-readonly-chain-goal">
+        {chain.original_goal || "Original goal unavailable."}
+      </p>
+      <dl className="ace-readonly-chain-stats">
+        <div>
+          <dt>Initial</dt>
+          <dd>{chain.initial_status || "unknown"}</dd>
+        </div>
+        <div>
+          <dt>Approvals</dt>
+          <dd>{chain.approval_count}</dd>
+        </div>
+        <div>
+          <dt>Retry runs</dt>
+          <dd>{chain.retry_execution_count}</dd>
+        </div>
+        <div>
+          <dt>Latest approval</dt>
+          <dd>{chain.latest_approval_status ?? "none"}</dd>
+        </div>
+        <div>
+          <dt>Latest retry</dt>
+          <dd>{chain.latest_retry_execution_status ?? "not executed"}</dd>
+        </div>
+        <div>
+          <dt>Review</dt>
+          <dd>{chain.latest_review_decision ?? "none"}</dd>
+        </div>
+      </dl>
+      {chain.stop_reason ? (
+        <p className="ace-readonly-chain-reason">{chain.stop_reason}</p>
+      ) : null}
+      <p className="ace-readonly-source">{chain.inspection_hint}</p>
+    </article>
+  );
+}
+
 function PendingApprovalRow({ approval }: { approval: PendingApprovalSummary }) {
   return (
     <article className="ace-readonly-approval-row">
@@ -238,6 +333,7 @@ function SkillRow({ skill }: { skill: OverviewSkill }) {
 function buildPanels(
   overview: AriOperatingOverview,
   pendingApprovals: PendingApprovalsReadModel,
+  codingLoopChains: CodingLoopChainsReadModel,
   source: "ari-api" | "static-fallback",
 ): DashboardPanel[] {
   return [
@@ -285,9 +381,13 @@ function buildPanels(
     },
     {
       title: "Coding-loop chains",
-      status: metricPanelStatus(overview.recent_coding_loop_count),
-      source: "api execution coding-loops chain --id <result_id>",
-      lines: metricLines(overview.recent_coding_loop_count),
+      status: codingLoopChains.unavailable_reason ? "partial" : "ready",
+      source: "api overview coding-loop-chains --json / GET /overview/coding-loop-chains",
+      lines: [
+        `Recent chains: ${codingLoopChains.total_recent_count}`,
+        codingLoopChains.unavailable_reason ?? "Coding-loop chains are live from ARI.",
+        "Execution and chain advancement controls are intentionally disabled in ACE.",
+      ],
     },
     {
       title: "Pending approvals",
