@@ -86,6 +86,16 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert self_doc_payload["unavailable_reason"] is None
         assert "must not generate content" in self_doc_payload["authority_warning"]
 
+        overview_content_ideas = client.get("/overview/content-ideas")
+        assert overview_content_ideas.status_code == 200
+        content_ideas_payload = overview_content_ideas.json()["content_ideas"]
+        assert content_ideas_payload["total_idea_count"] == 0
+        assert content_ideas_payload["recent_ideas"] == []
+        assert content_ideas_payload["unavailable_reason"] is None
+        assert "must not generate ideas independently" in (
+            content_ideas_payload["authority_warning"]
+        )
+
         memory = client.post(
             "/memory",
             json={

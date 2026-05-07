@@ -88,6 +88,7 @@ from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 from ari_core.modules.overview import (
     get_ari_operating_overview,
     get_coding_loop_chains_read_model,
+    get_content_ideas_read_model,
     get_lifecycle_lessons_read_model,
     get_pending_approvals_read_model,
     get_self_documentation_read_model,
@@ -194,6 +195,16 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         return {
             "self_documentation": get_self_documentation_read_model(
+                limit=limit
+            ).to_dict()
+        }
+
+    @app.get("/overview/content-ideas")
+    def overview_content_ideas(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "content_ideas": get_content_ideas_read_model(
                 limit=limit
             ).to_dict()
         }

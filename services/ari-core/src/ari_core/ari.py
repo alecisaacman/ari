@@ -82,6 +82,7 @@ from .modules.notes.api import handle_api_notes_save, handle_api_notes_search
 from .modules.overview import (
     get_ari_operating_overview,
     get_coding_loop_chains_read_model,
+    get_content_ideas_read_model,
     get_lifecycle_lessons_read_model,
     get_pending_approvals_read_model,
     get_self_documentation_read_model,
@@ -630,6 +631,29 @@ def _handle_api_overview_self_documentation(
     return 0
 
 
+def _handle_api_overview_content_ideas(
+    args: argparse.Namespace,
+    *,
+    db_path: Path = DB_PATH,
+) -> int:
+    content_ideas = get_content_ideas_read_model(
+        db_path=db_path,
+        limit=args.limit,
+    )
+    payload = {"content_ideas": content_ideas.to_dict()}
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    content_ideas_payload = payload["content_ideas"]
+    print(f"Content ideas: {content_ideas_payload['total_idea_count']}")
+    if content_ideas_payload["unavailable_reason"]:
+        print(f"Unavailable: {content_ideas_payload['unavailable_reason']}")
+    print(f"Source: {content_ideas_payload['source_of_truth']}")
+    print(f"Authority: {content_ideas_payload['authority_warning']}")
+    return 0
+
+
 def execute(action: dict, execution_root: Path | str | None = None) -> dict:
     """Run a minimal bounded execution action through canonical ARI."""
 
@@ -994,6 +1018,19 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         help="Maximum number of persisted self-documentation artifacts to inspect.",
     )
     overview_self_doc_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    overview_content_ideas_parser = overview_subparsers.add_parser(
+        "content-ideas",
+        help="Show read-only self-documentation content ideas for dashboard inspection.",
+    )
+    overview_content_ideas_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of content ideas to inspect.",
+    )
+    overview_content_ideas_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -2173,6 +2210,11 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_overview_command == "self-documentation"
         ):
             return _handle_api_overview_self_documentation(args, db_path=db_path)
+        if (
+            args.api_command == "overview"
+            and args.api_overview_command == "content-ideas"
+        ):
+            return _handle_api_overview_content_ideas(args, db_path=db_path)
         if (
             args.api_command == "self-doc"
             and args.api_self_doc_command == "seed"

@@ -728,6 +728,32 @@ def test_canonical_core_cli_overview_self_documentation_json(
     assert "must not generate content" in payload["authority_warning"]
 
 
+def test_canonical_core_cli_overview_content_ideas_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            ["api", "overview", "content-ideas", "--json"],
+            db_path=ari_home / "modules" / "networking-crm" / "state" / "networking.db",
+        )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())["content_ideas"]
+    assert payload["total_idea_count"] == 0
+    assert payload["recent_ideas"] == []
+    assert payload["unavailable_reason"] is None
+    assert payload["source_of_truth"] == "ARI-owned self-documentation ContentIdeaBank"
+    assert "must not generate ideas independently" in payload["authority_warning"]
+
+
 def test_canonical_core_cli_skills_route_json(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
