@@ -19,6 +19,10 @@ from .content_seed import (
     content_seed_from_dict,
     generate_content_seed_from_commits,
 )
+from .recording_plan import (
+    RecordingPlan,
+    generate_recording_plan_from_idea,
+)
 from .storage import (
     get_content_package,
     get_content_seed,
@@ -33,6 +37,7 @@ __all__ = [
     "ContentSeed",
     "ContentIdea",
     "ContentIdeaBank",
+    "RecordingPlan",
     "DemoStep",
     "GitCommandResult",
     "Shot",
@@ -42,6 +47,7 @@ __all__ = [
     "generate_content_idea_bank",
     "generate_content_package_from_seed",
     "generate_content_seed_from_commits",
+    "generate_recording_plan_from_idea",
     "get_content_package",
     "get_content_seed",
     "list_content_packages",

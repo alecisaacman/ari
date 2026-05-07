@@ -427,6 +427,69 @@ def test_canonical_core_cli_self_doc_ideas_list_json(
     assert idea["claims_to_avoid"]
 
 
+def test_canonical_core_cli_self_doc_recording_plan_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ari_home = tmp_path / "ari-home"
+    monkeypatch.setenv("ARI_HOME", str(ari_home))
+    _purge_modules()
+
+    from ari_core.ari import main
+
+    seed_file = tmp_path / "seed.json"
+    seed_file.write_text(json.dumps(_content_seed_payload()), encoding="utf-8")
+    db_path = ari_home / "modules" / "networking-crm" / "state" / "networking.db"
+
+    package_output = StringIO()
+    with redirect_stdout(package_output):
+        package_exit_code = main(
+            [
+                "api",
+                "self-doc",
+                "package",
+                "from-seed-json",
+                "--json-file",
+                str(seed_file),
+                "--persist",
+                "--json",
+            ],
+            db_path=db_path,
+        )
+
+    assert package_exit_code == 0
+
+    latest_output = StringIO()
+    with redirect_stdout(latest_output):
+        latest_exit_code = main(
+            ["api", "self-doc", "recording-plan", "from-latest", "--index", "0", "--json"],
+            db_path=db_path,
+        )
+
+    assert latest_exit_code == 0
+    latest_plan = json.loads(latest_output.getvalue())
+    assert latest_plan["plan_id"].startswith("recording-plan-")
+    assert latest_plan["hook"]
+    assert latest_plan["shot_list"]
+    assert latest_plan["narration_script"]
+    assert latest_plan["terminal_commands_to_show"]
+    assert latest_plan["dashboard_panels_to_show"]
+    assert latest_plan["claims_to_avoid"]
+    assert "must not record, edit" in latest_plan["approval_warning"]
+
+    idea_id = latest_plan["source_idea_id"]
+    idea_output = StringIO()
+    with redirect_stdout(idea_output):
+        idea_exit_code = main(
+            ["api", "self-doc", "recording-plan", "from-idea", "--id", idea_id, "--json"],
+            db_path=db_path,
+        )
+
+    assert idea_exit_code == 0
+    idea_plan = json.loads(idea_output.getvalue())
+    assert idea_plan["source_idea_id"] == idea_id
+
+
 def test_canonical_core_cli_self_doc_show_unknown_artifact_ids(
     tmp_path: Path,
     monkeypatch,

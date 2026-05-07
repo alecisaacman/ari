@@ -102,6 +102,7 @@ from .modules.self_documentation import (
     generate_content_idea_bank,
     generate_content_package_from_seed,
     generate_content_seed_from_commits,
+    generate_recording_plan_from_idea,
     get_content_package,
     get_content_seed,
     list_content_packages,
@@ -406,6 +407,53 @@ def _handle_api_self_doc_ideas_list(
         print(f"Unavailable: {bank_payload['unavailable_reason']}")
     print(f"Source: {bank_payload['source_of_truth']}")
     print(f"Authority: {bank_payload['authority_warning']}")
+    return 0
+
+
+def _handle_api_self_doc_recording_plan_from_latest(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
+    idea_bank = generate_content_idea_bank(limit=max(args.index + 1, 20), db_path=db_path)
+    if idea_bank.unavailable_reason:
+        return _print_self_doc_error(idea_bank.unavailable_reason, args)
+    if args.index < 0 or args.index >= len(idea_bank.ideas):
+        return _print_self_doc_error(
+            f"Content idea index {args.index} is unavailable.",
+            args,
+        )
+    plan = generate_recording_plan_from_idea(idea_bank.ideas[args.index])
+    return _print_recording_plan(plan, args)
+
+
+def _handle_api_self_doc_recording_plan_from_idea(
+    args: argparse.Namespace,
+    *,
+    db_path: Path,
+) -> int:
+    idea_bank = generate_content_idea_bank(limit=args.limit, db_path=db_path)
+    if idea_bank.unavailable_reason:
+        return _print_self_doc_error(idea_bank.unavailable_reason, args)
+    idea = next((item for item in idea_bank.ideas if item.idea_id == args.id), None)
+    if idea is None:
+        return _print_self_doc_error(f"Content idea {args.id!r} was not found.", args)
+    plan = generate_recording_plan_from_idea(idea)
+    return _print_recording_plan(plan, args)
+
+
+def _print_recording_plan(plan, args: argparse.Namespace) -> int:
+    payload = plan.to_dict()
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"Recording plan: {payload['title']}")
+    print(f"Plan id: {payload['plan_id']}")
+    print(f"Source idea id: {payload['source_idea_id']}")
+    print(f"Format: {payload['recording_format']}")
+    print(f"Estimated duration: {payload['estimated_duration_seconds']} seconds")
+    print(f"Approval: {payload['approval_warning']}")
     return 0
 
 
@@ -1151,6 +1199,43 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--limit", type=int, default=20, help="Maximum number of content ideas to list."
     )
     self_doc_ideas_list_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_recording_plan_parser = self_doc_subparsers.add_parser(
+        "recording-plan",
+        help="Generate read-only manual recording plans from content ideas.",
+    )
+    self_doc_recording_plan_subparsers = self_doc_recording_plan_parser.add_subparsers(
+        dest="api_self_doc_recording_plan_command",
+        required=True,
+    )
+    self_doc_recording_plan_latest_parser = self_doc_recording_plan_subparsers.add_parser(
+        "from-latest",
+        help="Generate a RecordingPlan from a zero-based ContentIdeaBank index.",
+    )
+    self_doc_recording_plan_latest_parser.add_argument(
+        "--index",
+        type=int,
+        required=True,
+        help="Zero-based index into api self-doc ideas list output.",
+    )
+    self_doc_recording_plan_latest_parser.add_argument(
+        "--json", dest="as_json", action="store_true", help="Render JSON output."
+    )
+    self_doc_recording_plan_idea_parser = self_doc_recording_plan_subparsers.add_parser(
+        "from-idea",
+        help="Generate a RecordingPlan from a stable content idea id.",
+    )
+    self_doc_recording_plan_idea_parser.add_argument(
+        "--id", required=True, help="ContentIdea id to plan from."
+    )
+    self_doc_recording_plan_idea_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Maximum number of content ideas to inspect while resolving the id.",
+    )
+    self_doc_recording_plan_idea_parser.add_argument(
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
@@ -2257,6 +2342,18 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             and args.api_self_doc_ideas_command == "list"
         ):
             return _handle_api_self_doc_ideas_list(args, db_path=db_path)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "recording-plan"
+            and args.api_self_doc_recording_plan_command == "from-latest"
+        ):
+            return _handle_api_self_doc_recording_plan_from_latest(args, db_path=db_path)
+        if (
+            args.api_command == "self-doc"
+            and args.api_self_doc_command == "recording-plan"
+            and args.api_self_doc_recording_plan_command == "from-idea"
+        ):
+            return _handle_api_self_doc_recording_plan_from_idea(args, db_path=db_path)
         if args.api_command == "skills" and args.api_skills_command == "list":
             return _handle_api_skills_list(args)
         if args.api_command == "skills" and args.api_skills_command == "show":
