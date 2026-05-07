@@ -5,6 +5,11 @@ from .coding_loop_chains import (
     CodingLoopChainSummary,
     get_coding_loop_chains_read_model,
 )
+from .content_ideas import (
+    ContentIdeasReadModel,
+    ContentIdeaSummary,
+    get_content_ideas_read_model,
+)
 from .lifecycle_lessons import (
     LifecycleLessonsReadModel,
     LifecycleLessonSummary,
@@ -31,6 +36,8 @@ __all__ = [
     "ARIOperatingOverview",
     "CodingLoopChainSummary",
     "CodingLoopChainsReadModel",
+    "ContentIdeaSummary",
+    "ContentIdeasReadModel",
     "LifecycleLessonSummary",
     "LifecycleLessonsReadModel",
     "OverviewMetric",
@@ -40,6 +47,7 @@ __all__ = [
     "SelfDocumentationArtifactSummary",
     "SelfDocumentationReadModel",
     "get_coding_loop_chains_read_model",
+    "get_content_ideas_read_model",
     "get_ari_operating_overview",
     "get_lifecycle_lessons_read_model",
     "get_pending_approvals_read_model",
