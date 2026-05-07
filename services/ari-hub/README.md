@@ -22,7 +22,10 @@ source ids, confidence, importance, tags, and inspection hints from ARI-owned
 memory blocks. The self-documentation artifact panel reads
 `/overview/self-documentation` and displays persisted ContentSeed and
 ContentPackage summaries, readiness status, proof/redaction counts, and
-inspection hints from ARI-owned storage.
+inspection hints from ARI-owned storage. The content ideas panel reads
+`/overview/content-ideas` and displays ARI-owned creator-content options,
+priority, risk, platform fit, proof counts, redaction counts, and inspection
+hints without generating, recording, editing, or publishing anything.
 
 The shell does not approve, reject, execute, advance chains, mutate memory,
 create skills, generate content, record, edit, upload, publish, call external

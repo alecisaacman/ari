@@ -3,6 +3,8 @@ import type {
   AriOperatingOverview,
   CodingLoopChainsReadModel,
   CodingLoopChainSummary,
+  ContentIdeasReadModel,
+  ContentIdeaSummary,
   LifecycleLessonsReadModel,
   LifecycleLessonSummary,
   OverviewMetric,
@@ -40,12 +42,14 @@ export default async function HomePage() {
   const codingLoopChains = result.codingLoopChains;
   const lifecycleLessons = result.lifecycleLessons;
   const selfDocumentation = result.selfDocumentation;
+  const contentIdeas = result.contentIdeas;
   const panels = buildPanels(
     overview,
     pendingApprovals,
     codingLoopChains,
     lifecycleLessons,
     selfDocumentation,
+    contentIdeas,
     result.source,
   );
   const skills = [
@@ -88,6 +92,12 @@ export default async function HomePage() {
             <p className="ace-readonly-warning">
               Self-documentation fallback active:{" "}
               {result.selfDocumentationError ?? selfDocumentation.unavailable_reason}
+            </p>
+          ) : null}
+          {result.contentIdeasSource === "static-fallback" ? (
+            <p className="ace-readonly-warning">
+              Content ideas fallback active:{" "}
+              {result.contentIdeasError ?? contentIdeas.unavailable_reason}
             </p>
           ) : null}
         </div>
@@ -152,6 +162,52 @@ export default async function HomePage() {
             </ul>
           </article>
         ))}
+      </section>
+
+      <section className="ace-readonly-section" aria-labelledby="content-ideas-title">
+        <div className="ace-readonly-section-heading">
+          <div>
+            <p className="ace-readonly-kicker">Read-only creator selection</p>
+            <h2 id="content-ideas-title">Content ideas</h2>
+          </div>
+          <span className="ace-readonly-status ace-readonly-status-disabled">
+            recording disabled
+          </span>
+        </div>
+        <p className="ace-readonly-source">
+          {contentIdeas.source_of_truth} / source: {result.contentIdeasSource}
+        </p>
+        {contentIdeas.unavailable_reason ? (
+          <p className="ace-readonly-warning">{contentIdeas.unavailable_reason}</p>
+        ) : null}
+        <dl className="ace-readonly-chain-stats">
+          <div>
+            <dt>Total ideas</dt>
+            <dd>{contentIdeas.total_idea_count}</dd>
+          </div>
+          <div>
+            <dt>Mode</dt>
+            <dd>read-only</dd>
+          </div>
+          <div>
+            <dt>Controls</dt>
+            <dd>disabled</dd>
+          </div>
+        </dl>
+        {contentIdeas.recent_ideas.length ? (
+          <div className="ace-readonly-artifact-list">
+            {contentIdeas.recent_ideas.map((idea) => (
+              <ContentIdeaRow idea={idea} key={idea.idea_id} />
+            ))}
+          </div>
+        ) : (
+          <p className="ace-readonly-empty">
+            No content ideas are available in the ARI-owned read model.
+          </p>
+        )}
+        <p className="ace-readonly-authority-note">
+          {contentIdeas.authority_warning}
+        </p>
       </section>
 
       <section
@@ -398,6 +454,51 @@ function SelfDocumentationArtifactRow({
   );
 }
 
+function ContentIdeaRow({ idea }: { idea: ContentIdeaSummary }) {
+  return (
+    <article className="ace-readonly-artifact-row">
+      <div className="ace-readonly-approval-meta">
+        <span>{idea.readiness_status}</span>
+        <span>priority {idea.recommended_priority}</span>
+        <span>risk {idea.risk_level}</span>
+      </div>
+      <h3>{idea.title || idea.idea_id}</h3>
+      <p className="ace-readonly-chain-goal">
+        {idea.hook || "Hook unavailable."}
+      </p>
+      <dl className="ace-readonly-chain-stats">
+        <div>
+          <dt>Platforms</dt>
+          <dd>{idea.platform_fit.join(", ") || "unknown"}</dd>
+        </div>
+        <div>
+          <dt>Proof</dt>
+          <dd>{idea.proof_point_count}</dd>
+        </div>
+        <div>
+          <dt>Recording</dt>
+          <dd>{idea.recording_difficulty}</dd>
+        </div>
+        <div>
+          <dt>Edit</dt>
+          <dd>{idea.edit_complexity}</dd>
+        </div>
+        <div>
+          <dt>Redaction notes</dt>
+          <dd>{idea.redaction_note_count}</dd>
+        </div>
+        <div>
+          <dt>Claims to avoid</dt>
+          <dd>{idea.claims_to_avoid_count}</dd>
+        </div>
+      </dl>
+      <p className="ace-readonly-chain-reason">{idea.visual_plan}</p>
+      <p className="ace-readonly-chain-reason">{idea.script_angle}</p>
+      <p className="ace-readonly-source">{idea.inspection_hint}</p>
+    </article>
+  );
+}
+
 function LifecycleLessonRow({ lesson }: { lesson: LifecycleLessonSummary }) {
   return (
     <article className="ace-readonly-lesson-row">
@@ -535,6 +636,7 @@ function buildPanels(
   codingLoopChains: CodingLoopChainsReadModel,
   lifecycleLessons: LifecycleLessonsReadModel,
   selfDocumentation: SelfDocumentationReadModel,
+  contentIdeas: ContentIdeasReadModel,
   source: "ari-api" | "static-fallback",
 ): DashboardPanel[] {
   return [
@@ -622,6 +724,17 @@ function buildPanels(
           "Self-documentation artifacts are live from ARI storage.",
         overview.self_documentation_status,
         "Recording, editing, upload, and publishing controls are intentionally disabled.",
+      ],
+    },
+    {
+      title: "Content ideas",
+      status: contentIdeas.unavailable_reason ? "partial" : "ready",
+      source: "api overview content-ideas --json / GET /overview/content-ideas",
+      lines: [
+        `Total ideas: ${contentIdeas.total_idea_count}`,
+        contentIdeas.unavailable_reason ??
+          "Content ideas are live from ARI-owned self-documentation artifacts.",
+        "ACE displays idea options only; recording, editing, upload, and publishing controls are disabled.",
       ],
     },
     {
