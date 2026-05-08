@@ -5,6 +5,7 @@ import sys
 from typing import Any
 
 from ari_telegram_gateway.asset_saver import TelegramAssetSaver
+from ari_telegram_gateway.career_commands import handle_career_command
 from ari_telegram_gateway.config import TelegramGatewayConfig
 from ari_telegram_gateway.event_builder import TelegramEventBuilder
 from ari_telegram_gateway.models import AgentRole, TelegramInboundEvent
@@ -112,6 +113,10 @@ def _send_confirmation(client: TelegramBotClient, event: TelegramInboundEvent) -
 
 
 def _confirmation_text(event: TelegramInboundEvent) -> str:
+    career_response = handle_career_command(event.raw_text)
+    if career_response is not None:
+        return career_response
+
     lines = [
         "ARI received this.",
         f"Role: {event.assigned_role.value}",
