@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from ari_career_command import (
@@ -13,6 +14,13 @@ from ari_career_command import (
     CareerStatus,
     CareerTrackerSummary,
 )
+from ari_surface_status import SurfaceSeverity, SurfaceState, SurfaceStatus, career_command_status
+
+
+@dataclass(frozen=True)
+class CareerCommandHandlingResult:
+    text: str
+    surface_status: SurfaceStatus
 
 
 class CareerCommandAdapterProtocol(Protocol):
@@ -44,6 +52,16 @@ def handle_career_command(
     *,
     adapter: CareerCommandAdapterProtocol | None = None,
 ) -> str | None:
+    result = handle_career_command_result(raw_text, adapter=adapter)
+    return result.text if result is not None else None
+
+
+def handle_career_command_result(
+    raw_text: str,
+    *,
+    adapter: CareerCommandAdapterProtocol | None = None,
+    event_id: str | None = None,
+) -> CareerCommandHandlingResult | None:
     parts = raw_text.strip().split()
     if not parts or parts[0].lower() != "/career":
         return None
@@ -54,50 +72,70 @@ def handle_career_command(
 
     try:
         if command == "help":
-            return _format_help()
+            text = _format_help()
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "status":
-            return _format_status(adapter.career_status())
+            text = _format_status(adapter.career_status())
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "tracker":
-            return _format_tracker(adapter.career_tracker_summary(limit=5))
+            text = _format_tracker(adapter.career_tracker_summary(limit=5))
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "pending":
-            return _format_pending(adapter.career_pending_actions_summary(limit=10))
+            text = _format_pending(adapter.career_pending_actions_summary(limit=10))
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "latest":
-            return _format_latest(
+            text = _format_latest(
                 adapter.career_latest_scout_report_summary(),
                 adapter.career_latest_batch_summary(limit=5),
             )
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "dashboard":
-            return _format_dashboard(adapter.career_dashboard_info())
+            text = _format_dashboard(adapter.career_dashboard_info())
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "scout_preview":
-            return _format_scout_preview(adapter)
+            text = _format_scout_preview(adapter)
+            ok = "failed (" not in text
+            return _handled(text, command=command, ok=ok, event_id=event_id)
         if command == "save":
             if not args:
-                return "Usage: /career save <rows>, for example /career save 1,3 or 1-3"
+                text = "Usage: /career save <rows>, for example /career save 1,3 or 1-3"
+                return _needs_user_choice(text, command=command, event_id=event_id)
             return _format_command_result(
                 "Career save",
                 adapter.save_batch_rows_to_tracker(" ".join(args)),
                 "Saved selected batch rows to the local tracker only.",
+                command=command,
+                event_id=event_id,
             )
         if command == "draft":
             if not args:
-                return "Usage: /career draft <rows>, for example /career draft 1,3 or 1-3"
+                text = "Usage: /career draft <rows>, for example /career draft 1,3 or 1-3"
+                return _needs_user_choice(text, command=command, event_id=event_id)
             return _format_command_result(
                 "Career draft",
                 adapter.draft_outreach_for_tracker_rows(" ".join(args)),
                 "Created local pending outreach drafts only.",
+                command=command,
+                event_id=event_id,
             )
         if command == "approve":
             if not args:
-                return "Usage: /career approve <pending_id_or_filename>"
-            return _format_review_result(adapter.approve_pending_action(args[0]))
+                text = "Usage: /career approve <pending_id_or_filename>"
+                return _needs_user_choice(text, command=command, event_id=event_id)
+            text = _format_review_result(adapter.approve_pending_action(args[0]))
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "reject":
             if not args:
-                return "Usage: /career reject <pending_id_or_filename>"
-            return _format_review_result(adapter.reject_pending_action(args[0]))
+                text = "Usage: /career reject <pending_id_or_filename>"
+                return _needs_user_choice(text, command=command, event_id=event_id)
+            text = _format_review_result(adapter.reject_pending_action(args[0]))
+            return _handled(text, command=command, ok=True, event_id=event_id)
     except Exception as exc:
-        return f"Career Command error: {exc}"
+        text = f"Career Command error: {exc}"
+        return _handled(text, command=command, ok=False, event_id=event_id)
 
-    return _format_help()
+    text = _format_help()
+    return _needs_user_choice(text, command=command, event_id=event_id)
 
 
 def _format_status(status: CareerStatus) -> str:
@@ -214,7 +252,14 @@ def _format_scout_preview(adapter: CareerCommandAdapterProtocol) -> str:
     return "\n".join(lines)
 
 
-def _format_command_result(title: str, result: CareerCommandResult, success_line: str) -> str:
+def _format_command_result(
+    title: str,
+    result: CareerCommandResult,
+    success_line: str,
+    *,
+    command: str,
+    event_id: str | None,
+) -> CareerCommandHandlingResult:
     status = "ok" if result.ok else f"failed ({result.returncode})"
     lines = [f"{title}: {status}"]
     if result.ok:
@@ -224,7 +269,8 @@ def _format_command_result(title: str, result: CareerCommandResult, success_line
     lines.append(
         "Safety: no applications, emails, LinkedIn messages, or external contact were sent."
     )
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return _handled(text, command=command, ok=result.ok, event_id=event_id)
 
 
 def _format_review_result(result: CareerPendingActionReview) -> str:
@@ -257,6 +303,45 @@ def _format_help() -> str:
             "Safety: local-only. No applications, emails, LinkedIn messages, "
             "browser automation, or external contact.",
         ]
+    )
+
+
+def _handled(
+    text: str,
+    *,
+    command: str,
+    ok: bool,
+    event_id: str | None,
+) -> CareerCommandHandlingResult:
+    return CareerCommandHandlingResult(
+        text=text,
+        surface_status=career_command_status(
+            command=command,
+            ok=ok,
+            message=text,
+            event_id=event_id,
+        ),
+    )
+
+
+def _needs_user_choice(
+    text: str,
+    *,
+    command: str,
+    event_id: str | None,
+) -> CareerCommandHandlingResult:
+    return CareerCommandHandlingResult(
+        text=text,
+        surface_status=SurfaceStatus(
+            state=SurfaceState.WAITING_FOR_APPROVAL,
+            severity=SurfaceSeverity.WARNING,
+            title="Career Command needs user choice",
+            message=text,
+            source="career_command",
+            surface="telegram",
+            event_id=event_id,
+            command=command,
+        ),
     )
 
 

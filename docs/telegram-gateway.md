@@ -151,6 +151,25 @@ data/telegram/state/
 The service scripts do not send applications, emails, LinkedIn messages, or any
 external contact. Telegram commands remain the same as the gateway code path.
 
+## Surface Status Writes
+
+The gateway writes local ACE surface status after processing Telegram updates
+and after Career Command command handling.
+
+Default files:
+
+```text
+data/surface/status/current.json
+data/surface/status/history/<status_id>.json
+```
+
+These files are ignored local runtime state. Future ACE surfaces such as the
+desktop companion, Inspection Cabinet, dashboards, and content intake surfaces
+can read `current.json` to understand what ARI is doing now.
+
+See [Surface Status](surface-status.md) for the model, mappings, and safety
+boundaries.
+
 ## Career Command Operations
 
 Career Command remains the existing sandbox at `~/code/openai-dev-sandbox`.

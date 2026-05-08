@@ -49,6 +49,7 @@ pythonpath = [
   "packages/ari-signals/src",
   "packages/ari-state/src",
   "packages/ari-career-command/src",
+  "packages/ari-surface-status/src",
   "packages/ari-telegram-gateway/src",
 ]
 
@@ -65,6 +66,7 @@ mypy_path = [
   "packages/ari-signals/src",
   "packages/ari-state/src",
   "packages/ari-career-command/src",
+  "packages/ari-surface-status/src",
   "packages/ari-telegram-gateway/src",
 ]
 warn_unused_configs = true
@@ -83,6 +85,7 @@ where = [
   "packages/ari-signals/src",
   "packages/ari-state/src",
   "packages/ari-career-command/src",
+  "packages/ari-surface-status/src",
   "packages/ari-telegram-gateway/src",
 ]
 include = ["ari_*"]

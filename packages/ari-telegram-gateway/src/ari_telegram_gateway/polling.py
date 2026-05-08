@@ -4,8 +4,10 @@ import argparse
 import sys
 from typing import Any
 
+from ari_surface_status import SurfaceStatusStore, surface_status_from_telegram_event
+
 from ari_telegram_gateway.asset_saver import TelegramAssetSaver
-from ari_telegram_gateway.career_commands import handle_career_command
+from ari_telegram_gateway.career_commands import handle_career_command_result
 from ari_telegram_gateway.config import TelegramGatewayConfig
 from ari_telegram_gateway.event_builder import TelegramEventBuilder
 from ari_telegram_gateway.models import AgentRole, TelegramInboundEvent
@@ -30,6 +32,7 @@ def run_polling(
         bot_username=_optional_str(bot.get("username")),
     )
     store = TelegramEventStore(inbox_dir=config.inbox_dir, events_dir=config.events_dir)
+    surface_status_store = SurfaceStatusStore()
     state_store = TelegramPollingStateStore(config.polling_state_file)
     state = state_store.load(bot_identity=config.bot_identity)
     asset_saver = TelegramAssetSaver(events_dir=config.events_dir, telegram_client=client)
@@ -63,8 +66,14 @@ def run_polling(
                     return
                 continue
 
-            event = _process_update(update, builder=builder, store=store, asset_saver=asset_saver)
-            _send_confirmation(client, event)
+            event = _process_update(
+                update,
+                builder=builder,
+                store=store,
+                asset_saver=asset_saver,
+                surface_status_store=surface_status_store,
+            )
+            _send_confirmation(client, event, surface_status_store=surface_status_store)
             if update_id is not None:
                 state = state_store.save_processed_update(
                     update_id=update_id,
@@ -92,6 +101,7 @@ def _process_update(
     builder: TelegramEventBuilder,
     store: TelegramEventStore,
     asset_saver: TelegramAssetSaver,
+    surface_status_store: SurfaceStatusStore | None = None,
 ) -> TelegramInboundEvent:
     store.save_raw_update(update)
     event = builder.build_from_update(update)
@@ -100,22 +110,38 @@ def _process_update(
         if event.pending_codex_task is not None:
             store.save_codex_task(event.pending_codex_task, event_id=event.event_id)
     store.save_event(event)
+    if surface_status_store is not None:
+        surface_status_store.write(surface_status_from_telegram_event(event))
     return event
 
 
-def _send_confirmation(client: TelegramBotClient, event: TelegramInboundEvent) -> None:
+def _send_confirmation(
+    client: TelegramBotClient,
+    event: TelegramInboundEvent,
+    *,
+    surface_status_store: SurfaceStatusStore | None = None,
+) -> None:
     if not event.conversation_id:
         return
     if not event.authorized:
         client.send_message(chat_id=event.conversation_id, text="ARI rejected this sender.")
         return
-    client.send_message(chat_id=event.conversation_id, text=_confirmation_text(event))
+    client.send_message(
+        chat_id=event.conversation_id,
+        text=_confirmation_text(event, surface_status_store=surface_status_store),
+    )
 
 
-def _confirmation_text(event: TelegramInboundEvent) -> str:
-    career_response = handle_career_command(event.raw_text)
+def _confirmation_text(
+    event: TelegramInboundEvent,
+    *,
+    surface_status_store: SurfaceStatusStore | None = None,
+) -> str:
+    career_response = handle_career_command_result(event.raw_text, event_id=event.event_id)
     if career_response is not None:
-        return career_response
+        if surface_status_store is not None:
+            surface_status_store.write(career_response.surface_status)
+        return career_response.text
 
     lines = [
         "ARI received this.",
