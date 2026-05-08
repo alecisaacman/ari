@@ -25,3 +25,8 @@ services/ari-hub/runtime/
 .env
 
 data/telegram/
+data/telegram/events/
+data/telegram/inbox/
+data/telegram/logs/
+data/telegram/run/
+data/telegram/state/

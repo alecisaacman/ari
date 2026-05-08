@@ -73,7 +73,7 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"
 
 Never commit `.env`.
 
-## Run Locally
+## Run Locally In Dev Mode
 
 The reliable no-install command from the repo root is:
 
@@ -86,6 +86,9 @@ For a bounded live check:
 ```bash
 PYTHONPATH=packages/ari-telegram-gateway/src ./.venv312/bin/python -m ari_telegram_gateway.polling --max-updates 3
 ```
+
+`--max-updates` is for testing only. Do not use it for the persistent local
+service, because it exits after the configured number of updates.
 
 The `ari-telegram-gateway` console script exists after the project is installed into the
 active virtual environment. If `./.venv312/bin/ari-telegram-gateway` is missing, refresh
@@ -100,6 +103,84 @@ Then run:
 ```bash
 ./.venv312/bin/ari-telegram-gateway
 ```
+
+## Persistent Local Service
+
+Use the local service scripts from the repo root when the gateway should stay
+available while the Mac is on:
+
+```bash
+scripts/telegram_gateway/start.sh
+scripts/telegram_gateway/status.sh
+scripts/telegram_gateway/logs.sh
+scripts/telegram_gateway/stop.sh
+```
+
+`start.sh`:
+
+- refreshes the editable install with
+  `./.venv312/bin/python -m pip install -e . --no-build-isolation`
+- starts `./.venv312/bin/ari-telegram-gateway` without `--max-updates`
+- writes logs to `data/telegram/logs/gateway.log`
+- writes the PID file to `data/telegram/run/gateway.pid`
+- refuses to start a duplicate gateway process
+- does not print `TELEGRAM_BOT_TOKEN` or `.env`
+
+`stop.sh` stops the PID in `data/telegram/run/gateway.pid` and removes stale or
+invalid PID files cleanly.
+
+`status.sh` reports whether the gateway is running, the PID when available, the
+latest polling state, and recent log lines.
+
+`logs.sh` tails:
+
+```text
+data/telegram/logs/gateway.log
+```
+
+Runtime data remains local and ignored:
+
+```text
+data/telegram/events/
+data/telegram/inbox/
+data/telegram/logs/
+data/telegram/run/
+data/telegram/state/
+```
+
+The service scripts do not send applications, emails, LinkedIn messages, or any
+external contact. Telegram commands remain the same as the gateway code path.
+
+## Optional macOS LaunchAgent
+
+A local LaunchAgent plist can be generated later, but it is disabled by default
+and is not loaded automatically:
+
+```bash
+scripts/telegram_gateway/install_launch_agent.sh
+```
+
+The generator writes:
+
+```text
+~/Library/LaunchAgents/com.alecisaacman.ari.telegram-gateway.plist
+```
+
+To enable it explicitly:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.alecisaacman.ari.telegram-gateway.plist
+```
+
+To disable it:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.alecisaacman.ari.telegram-gateway.plist
+```
+
+The LaunchAgent points at `scripts/telegram_gateway/start.sh` with this repo as
+the working directory. It still relies on the local `.env`, ignored runtime
+directories, and the same duplicate-process guard.
 
 ## Smoke Test Without Telegram Access
 
