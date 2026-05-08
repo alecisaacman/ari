@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import csv
 import os
+import shutil
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 DEFAULT_CAREER_COMMAND_ROOT = "~/code/openai-dev-sandbox"
@@ -112,6 +114,15 @@ class CareerCommandResult:
     @property
     def ok(self) -> bool:
         return self.returncode == 0
+
+
+@dataclass(frozen=True)
+class CareerPendingActionReview:
+    action_id: str
+    status: str
+    source_path: Path
+    destination_path: Path
+    title: str
 
 
 class CareerCommandAdapter:
@@ -251,6 +262,24 @@ class CareerCommandAdapter:
     def batch_evaluate_jobs(self, *, limit: int = 5) -> CareerCommandResult:
         return self._run_known_script(["tools/batch_evaluate_jobs.py", "--limit", str(limit)])
 
+    def save_batch_rows_to_tracker(self, rows: str) -> CareerCommandResult:
+        max_row = len(_read_csv_rows(self._latest_batch_summary_path()))
+        normalized_rows = _validate_row_spec(rows, max_row=max_row)
+        return self._run_known_script(
+            ["tools/save_from_batch_summary.py", "--rows", normalized_rows]
+        )
+
+    def draft_outreach_for_tracker_rows(self, rows: str) -> CareerCommandResult:
+        max_row = len(_read_csv_rows(self._tracker_path()))
+        normalized_rows = _validate_row_spec(rows, max_row=max_row)
+        return self._run_known_script(["tools/batch_draft_outreach.py", "--rows", normalized_rows])
+
+    def approve_pending_action(self, pending_id_or_filename: str) -> CareerPendingActionReview:
+        return self._review_pending_action(pending_id_or_filename, status="approved")
+
+    def reject_pending_action(self, pending_id_or_filename: str) -> CareerPendingActionReview:
+        return self._review_pending_action(pending_id_or_filename, status="rejected")
+
     def run_daily_scout_pipeline_preview(self) -> list[CareerCommandResult]:
         results: list[CareerCommandResult] = []
         for command in (
@@ -276,18 +305,118 @@ class CareerCommandAdapter:
         )
 
     def _validate_script_args(self, script_args: list[str]) -> None:
-        allowed = {
+        static_allowed = {
             ("career_scout.py",),
             ("tools/scout_report_to_jobs.py",),
             ("tools/batch_evaluate_jobs.py", "--limit", "5"),
         }
-        if tuple(script_args) not in allowed:
+        dynamic_allowed = (
+            len(script_args) == 3
+            and script_args[0] in {
+                "tools/save_from_batch_summary.py",
+                "tools/batch_draft_outreach.py",
+            }
+            and script_args[1] == "--rows"
+            and _row_spec_is_safe(script_args[2])
+        )
+        if tuple(script_args) not in static_allowed and not dynamic_allowed:
             raise ValueError(f"Career Command script is not allowlisted: {script_args!r}")
         if not self.root.exists():
             raise FileNotFoundError(f"Career Command root does not exist: {self.root}")
         if not self.python_path.exists():
             raise FileNotFoundError(
                 f"Career Command venv Python does not exist: {self.python_path}"
+            )
+
+    def _review_pending_action(
+        self, pending_id_or_filename: str, *, status: str
+    ) -> CareerPendingActionReview:
+        if status not in {"approved", "rejected"}:
+            raise ValueError("status must be approved or rejected")
+        source_path = self._resolve_pending_action(pending_id_or_filename)
+        destination_dir = self.root / f"{status}_actions"
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        destination_path = destination_dir / source_path.name
+        if destination_path.exists():
+            raise FileExistsError(f"Destination already exists: {destination_path}")
+
+        title = _pending_title(source_path)
+        action_type = _markdown_field(source_path, "Type")
+        _update_markdown_status(source_path, status)
+        shutil.move(str(source_path), str(destination_path))
+        self._append_action_log(
+            action_id=destination_path.stem,
+            action_type=action_type,
+            title=title,
+            status=status,
+            source_file=str(destination_path),
+            notes="Approved locally from ARI Telegram Gateway."
+            if status == "approved"
+            else "Rejected locally from ARI Telegram Gateway.",
+        )
+        return CareerPendingActionReview(
+            action_id=destination_path.stem,
+            status=status,
+            source_path=source_path,
+            destination_path=destination_path,
+            title=title,
+        )
+
+    def _resolve_pending_action(self, pending_id_or_filename: str) -> Path:
+        identifier = pending_id_or_filename.strip()
+        if not identifier:
+            raise ValueError("Pending action id or filename is required.")
+        if any(character in identifier for character in {"/", "\\"}) or identifier in {".", ".."}:
+            raise ValueError("Pending action id or filename must not contain path separators.")
+        pending_dir = self.root / "pending_actions"
+        candidates = _markdown_files(pending_dir)
+        matches = [
+            path for path in candidates if identifier in {path.name, path.stem, f"{path.stem}.md"}
+        ]
+        if not matches:
+            raise FileNotFoundError(f"No pending action matched: {identifier}")
+        if len(matches) > 1:
+            raise ValueError(f"Pending action id matched multiple files: {identifier}")
+        return matches[0]
+
+    def _append_action_log(
+        self,
+        *,
+        action_id: str,
+        action_type: str,
+        title: str,
+        status: str,
+        source_file: str,
+        notes: str,
+    ) -> None:
+        log_path = self.root / "logs" / "action_log.csv"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not log_path.exists()
+        with log_path.open("a", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(
+                file,
+                fieldnames=[
+                    "timestamp",
+                    "action_id",
+                    "action_type",
+                    "title",
+                    "status",
+                    "source_file",
+                    "notes",
+                ],
+            )
+            if write_header:
+                writer.writeheader()
+            writer.writerow(
+                {
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "action_id": action_id,
+                    "action_type": action_type,
+                    "title": title,
+                    "status": status,
+                    "source_file": source_file,
+                    "notes": notes,
+                }
             )
 
     def _tracker_path(self) -> Path:
@@ -333,6 +462,58 @@ def _score(value: str) -> float:
         return 0.0
 
 
+def _validate_row_spec(raw: str, *, max_row: int) -> str:
+    if max_row < 1:
+        raise ValueError("No rows are available for this operation.")
+    if not _row_spec_is_safe(raw):
+        raise ValueError("Rows must be a comma-separated list or range like 1,3 or 1-3.")
+
+    selected: list[int] = []
+    for part in raw.split(","):
+        text = part.strip()
+        if not text:
+            continue
+        if "-" in text:
+            start_raw, end_raw = text.split("-", 1)
+            start = int(start_raw)
+            end = int(end_raw)
+            if end < start:
+                raise ValueError("Row ranges must ascend, for example 1-3.")
+            selected.extend(range(start, end + 1))
+        else:
+            selected.append(int(text))
+
+    clean: list[int] = []
+    for item in selected:
+        if item < 1 or item > max_row:
+            raise ValueError(f"Selected row {item} is out of range. Valid range: 1-{max_row}.")
+        if item not in clean:
+            clean.append(item)
+    if not clean:
+        raise ValueError("At least one row must be selected.")
+    return ",".join(str(item) for item in clean)
+
+
+def _row_spec_is_safe(raw: str) -> bool:
+    text = raw.strip()
+    if not text:
+        return False
+    allowed = set("0123456789,- ")
+    if any(character not in allowed for character in text):
+        return False
+    parts = [part.strip() for part in text.split(",")]
+    if any(not part for part in parts):
+        return False
+    for part in parts:
+        if "-" in part:
+            pieces = part.split("-")
+            if len(pieces) != 2 or not all(piece.strip().isdigit() for piece in pieces):
+                return False
+        elif not part.isdigit():
+            return False
+    return True
+
+
 def _count_markdown_files(path: Path) -> int:
     return len(_markdown_files(path))
 
@@ -359,6 +540,22 @@ def _markdown_field(path: Path, field: str) -> str:
         if text.startswith(marker):
             return text.removeprefix(marker).strip()
     return ""
+
+
+def _update_markdown_status(path: Path, status: str) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    marker = "**Status:**"
+    updated = False
+    output: list[str] = []
+    for line in lines:
+        if line.strip().startswith(marker):
+            output.append(f"{marker} {status}")
+            updated = True
+        else:
+            output.append(line)
+    if not updated:
+        output.insert(1, f"{marker} {status}")
+    path.write_text("\n".join(output) + "\n", encoding="utf-8")
 
 
 def _first_heading(lines: list[str]) -> str:

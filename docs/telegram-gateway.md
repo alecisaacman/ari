@@ -151,6 +151,47 @@ data/telegram/state/
 The service scripts do not send applications, emails, LinkedIn messages, or any
 external contact. Telegram commands remain the same as the gateway code path.
 
+## Career Command Operations
+
+Career Command remains the existing sandbox at `~/code/openai-dev-sandbox`.
+Telegram is the ACE phone surface for controlled local operations; it is not a
+new job-search engine.
+
+Supported commands:
+
+```text
+/career help
+/career status
+/career tracker
+/career pending
+/career latest
+/career dashboard
+/career scout_preview
+/career save <rows>
+/career draft <rows>
+/career approve <pending_id_or_filename>
+/career reject <pending_id_or_filename>
+```
+
+Operating loop:
+
+1. `/career scout_preview` runs scout, extraction, and batch evaluation with
+   `--limit 5`, then stops.
+2. `/career latest` reviews the latest scout and batch output.
+3. `/career save <rows>` saves selected batch rows into the local tracker only.
+4. `/career draft <rows>` creates local pending outreach drafts only.
+5. `/career pending` lists pending draft filenames and titles.
+6. `/career approve <pending_id_or_filename>` or `/career reject
+   <pending_id_or_filename>` updates local approval state only.
+
+Approval is local state only. It moves a pending markdown file into
+`approved_actions/` or `rejected_actions/` and appends the sandbox action log. It
+does not send email, send LinkedIn messages, apply to jobs, contact anyone, or
+run browser automation.
+
+Only allowlisted Career Command scripts can run from Telegram. Telegram input is
+never treated as arbitrary shell.
+
 ## Optional macOS LaunchAgent
 
 A local LaunchAgent plist can be generated later, but it is disabled by default

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import subprocess
 from pathlib import Path
 
@@ -108,6 +109,147 @@ def test_scout_preview_runs_only_safe_pipeline_commands(tmp_path: Path) -> None:
     assert "update_status" not in disallowed
 
 
+def test_save_batch_rows_parses_row_specs_safely(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_batch_summary(root)
+    calls: list[list[str]] = []
+
+    def runner(command, cwd):
+        calls.append(list(command))
+        assert cwd == root
+        return subprocess.CompletedProcess(command, 0, stdout="Saved 2 row(s)\n", stderr="")
+
+    result = CareerCommandAdapter(root=root, runner=runner).save_batch_rows_to_tracker("1-2")
+
+    assert result.ok
+    assert calls == [
+        [
+            str(root / ".venv" / "bin" / "python"),
+            "tools/save_from_batch_summary.py",
+            "--rows",
+            "1,2",
+        ]
+    ]
+
+
+def test_draft_tracker_rows_parses_row_specs_safely(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_tracker(root)
+    calls: list[list[str]] = []
+
+    def runner(command, cwd):
+        calls.append(list(command))
+        assert cwd == root
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Created pending actions:\n", stderr=""
+        )
+
+    result = CareerCommandAdapter(root=root, runner=runner).draft_outreach_for_tracker_rows("1, 3")
+
+    assert result.ok
+    assert calls == [
+        [
+            str(root / ".venv" / "bin" / "python"),
+            "tools/batch_draft_outreach.py",
+            "--rows",
+            "1,3",
+        ]
+    ]
+
+
+def test_invalid_row_specs_fail_safely_without_running_commands(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_batch_summary(root)
+    calls: list[list[str]] = []
+
+    def runner(command, cwd):
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    adapter = CareerCommandAdapter(root=root, runner=runner)
+
+    for rows in ["1;rm -rf", "4", "3-1", ""]:
+        try:
+            adapter.save_batch_rows_to_tracker(rows)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Expected invalid rows to fail: {rows}")
+
+    assert calls == []
+
+
+def test_approve_pending_action_moves_file_and_logs_local_state(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_pending(root, "20260501_outreach_alpha.md", "Pending Action: Alpha outreach")
+
+    result = CareerCommandAdapter(root=root).approve_pending_action("20260501_outreach_alpha")
+
+    assert result.status == "approved"
+    assert not (root / "pending_actions" / "20260501_outreach_alpha.md").exists()
+    approved_path = root / "approved_actions" / "20260501_outreach_alpha.md"
+    assert approved_path.exists()
+    assert "**Status:** approved" in approved_path.read_text(encoding="utf-8")
+    log_rows = _read_action_log(root)
+    assert log_rows[-1]["action_id"] == "20260501_outreach_alpha"
+    assert log_rows[-1]["status"] == "approved"
+
+
+def test_reject_pending_action_moves_file_and_logs_local_state(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_pending(root, "20260501_outreach_beta.md", "Pending Action: Beta outreach")
+
+    result = CareerCommandAdapter(root=root).reject_pending_action("20260501_outreach_beta.md")
+
+    assert result.status == "rejected"
+    rejected_path = root / "rejected_actions" / "20260501_outreach_beta.md"
+    assert rejected_path.exists()
+    assert "**Status:** rejected" in rejected_path.read_text(encoding="utf-8")
+    log_rows = _read_action_log(root)
+    assert log_rows[-1]["action_id"] == "20260501_outreach_beta"
+    assert log_rows[-1]["status"] == "rejected"
+
+
+def test_invalid_pending_ids_fail_safely(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_pending(root, "20260501_outreach_alpha.md", "Pending Action: Alpha outreach")
+    adapter = CareerCommandAdapter(root=root)
+
+    for identifier in ["missing", "../20260501_outreach_alpha.md", ""]:
+        try:
+            adapter.approve_pending_action(identifier)
+        except (FileNotFoundError, ValueError):
+            pass
+        else:
+            raise AssertionError(f"Expected invalid pending id to fail: {identifier}")
+
+    assert (root / "pending_actions" / "20260501_outreach_alpha.md").exists()
+    assert not (root / "approved_actions" / "20260501_outreach_alpha.md").exists()
+
+
+def test_no_external_send_apply_contact_commands_are_allowlisted(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_tracker(root)
+    _write_batch_summary(root)
+    calls: list[list[str]] = []
+
+    def runner(command, cwd):
+        calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+    adapter = CareerCommandAdapter(root=root, runner=runner)
+    adapter.save_batch_rows_to_tracker("1")
+    adapter.draft_outreach_for_tracker_rows("1")
+    adapter.run_daily_scout_pipeline_preview()
+
+    command_text = " ".join(" ".join(command[1:]) for command in calls)
+    assert "send" not in command_text
+    assert "apply" not in command_text
+    assert "linkedin" not in command_text.lower()
+    assert "browser" not in command_text
+    assert "review_pending_actions" not in command_text
+
+
 def _career_root(tmp_path: Path) -> Path:
     root = tmp_path / "career-command"
     for relative in [
@@ -116,6 +258,7 @@ def _career_root(tmp_path: Path) -> Path:
         "pending_actions",
         "approved_actions",
         "rejected_actions",
+        "logs",
         "reports/scout_reports",
         "reports/job_evaluations",
         "tools",
@@ -196,3 +339,8 @@ def _write_batch_summary(root: Path) -> None:
 def _write_markdown(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content + "\n", encoding="utf-8")
+
+
+def _read_action_log(root: Path) -> list[dict[str, str]]:
+    with (root / "logs" / "action_log.csv").open(newline="", encoding="utf-8") as file:
+        return [dict(row) for row in csv.DictReader(file)]

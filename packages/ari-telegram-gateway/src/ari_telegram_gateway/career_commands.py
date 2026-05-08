@@ -7,6 +7,7 @@ from ari_career_command import (
     CareerCommandAdapter,
     CareerCommandResult,
     CareerDashboardInfo,
+    CareerPendingActionReview,
     CareerPendingActionsSummary,
     CareerScoutReportSummary,
     CareerStatus,
@@ -27,6 +28,14 @@ class CareerCommandAdapterProtocol(Protocol):
 
     def career_dashboard_info(self) -> CareerDashboardInfo: ...
 
+    def save_batch_rows_to_tracker(self, rows: str) -> CareerCommandResult: ...
+
+    def draft_outreach_for_tracker_rows(self, rows: str) -> CareerCommandResult: ...
+
+    def approve_pending_action(self, pending_id_or_filename: str) -> CareerPendingActionReview: ...
+
+    def reject_pending_action(self, pending_id_or_filename: str) -> CareerPendingActionReview: ...
+
     def run_daily_scout_pipeline_preview(self) -> list[CareerCommandResult]: ...
 
 
@@ -39,10 +48,13 @@ def handle_career_command(
     if not parts or parts[0].lower() != "/career":
         return None
 
-    command = parts[1].lower() if len(parts) > 1 else "status"
+    command = parts[1].lower() if len(parts) > 1 else "help"
+    args = parts[2:]
     adapter = adapter or CareerCommandAdapter()
 
     try:
+        if command == "help":
+            return _format_help()
         if command == "status":
             return _format_status(adapter.career_status())
         if command == "tracker":
@@ -58,6 +70,30 @@ def handle_career_command(
             return _format_dashboard(adapter.career_dashboard_info())
         if command == "scout_preview":
             return _format_scout_preview(adapter)
+        if command == "save":
+            if not args:
+                return "Usage: /career save <rows>, for example /career save 1,3 or 1-3"
+            return _format_command_result(
+                "Career save",
+                adapter.save_batch_rows_to_tracker(" ".join(args)),
+                "Saved selected batch rows to the local tracker only.",
+            )
+        if command == "draft":
+            if not args:
+                return "Usage: /career draft <rows>, for example /career draft 1,3 or 1-3"
+            return _format_command_result(
+                "Career draft",
+                adapter.draft_outreach_for_tracker_rows(" ".join(args)),
+                "Created local pending outreach drafts only.",
+            )
+        if command == "approve":
+            if not args:
+                return "Usage: /career approve <pending_id_or_filename>"
+            return _format_review_result(adapter.approve_pending_action(args[0]))
+        if command == "reject":
+            if not args:
+                return "Usage: /career reject <pending_id_or_filename>"
+            return _format_review_result(adapter.reject_pending_action(args[0]))
     except Exception as exc:
         return f"Career Command error: {exc}"
 
@@ -178,16 +214,48 @@ def _format_scout_preview(adapter: CareerCommandAdapterProtocol) -> str:
     return "\n".join(lines)
 
 
+def _format_command_result(title: str, result: CareerCommandResult, success_line: str) -> str:
+    status = "ok" if result.ok else f"failed ({result.returncode})"
+    lines = [f"{title}: {status}"]
+    if result.ok:
+        lines.append(success_line)
+    detail = _concise_command_output(result.stdout if result.stdout else result.stderr)
+    lines.extend(detail)
+    lines.append(
+        "Safety: no applications, emails, LinkedIn messages, or external contact were sent."
+    )
+    return "\n".join(lines)
+
+
+def _format_review_result(result: CareerPendingActionReview) -> str:
+    verb = "Approved" if result.status == "approved" else "Rejected"
+    return "\n".join(
+        [
+            f"{verb} local pending action.",
+            f"Action: {result.title}",
+            f"File: {result.destination_path.name}",
+            "Safety: this updated local approval state only. Nothing was sent externally.",
+        ]
+    )
+
+
 def _format_help() -> str:
     return "\n".join(
         [
             "Career Command commands:",
+            "/career help",
             "/career status",
             "/career tracker",
             "/career pending",
             "/career latest",
             "/career dashboard",
             "/career scout_preview",
+            "/career save <rows>",
+            "/career draft <rows>",
+            "/career approve <pending_id_or_filename>",
+            "/career reject <pending_id_or_filename>",
+            "Safety: local-only. No applications, emails, LinkedIn messages, "
+            "browser automation, or external contact.",
         ]
     )
 
@@ -202,3 +270,29 @@ def _first_nonempty_line(value: str) -> str:
         if text:
             return text
     return ""
+
+
+def _concise_command_output(value: str) -> list[str]:
+    interesting_prefixes = (
+        "Saved ",
+        "Created:",
+        "Created pending actions:",
+        "No new rows",
+        "Skipped:",
+        "Batch outreach complete.",
+        "- Row ",
+        "- ",
+    )
+    lines: list[str] = []
+    for line in value.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if text.startswith(interesting_prefixes):
+            lines.append(text)
+        if len(lines) >= 8:
+            break
+    if lines:
+        return lines
+    first = _first_nonempty_line(value)
+    return [first] if first else []
