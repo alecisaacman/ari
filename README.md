@@ -19,6 +19,7 @@ The code in this repository is the source-of-truth implementation of ARI's core 
 - `services/ari-core` — canonical runtime / brain
 - `services/ari-api` — API contract over canonical capabilities
 - `services/ari-hub` — ACE hub surface
+- `packages/ari-telegram-gateway` — Telegram natural-language intake surface
 
 ## Current capabilities
 
@@ -38,6 +39,7 @@ ARI now has:
 - persisted controller decision records for each self-improvement cycle
 - semantic verification profiles with slice-aware checks instead of generic success heuristics
 - bounded action plans that give Codex concrete local tasks, structural targets, and retry guidance under ARI control
+- a first Telegram polling gateway foundation that converts private natural-language Telegram messages into structured ARI events, role assignments, assets, and pending Codex tasks
 
 ## Current milestone
 
@@ -98,9 +100,57 @@ It means:
 - `services/ari-core/`
 - `services/ari-api/`
 - `services/ari-hub/`
+- `packages/ari-telegram-gateway/`
 - `config/schema.sql`
 - `tests/`
 - `docs/`
+
+## Telegram Gateway
+
+The Telegram Gateway is the first mobile natural-language command intake surface for ARI. Telegram captures user intent; ARI remains the brain, memory, router, and authority layer.
+
+Setup:
+
+1. Message `@BotFather` in Telegram and create the `ARI Command` bot, for example `@AriCommandBot`.
+2. Add the local bot token to `.env` as `TELEGRAM_BOT_TOKEN`. Never commit `.env`.
+3. Send a message to the bot, then call Telegram `getUpdates` to find `message.from.id`:
+
+```bash
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"
+```
+
+4. Add the authorized sender and local data directories to `.env`:
+
+```bash
+AUTHORIZED_TELEGRAM_USER_ID=replace-with-your-numeric-telegram-user-id
+ARI_TELEGRAM_INBOX_DIR=data/telegram/inbox
+ARI_TELEGRAM_EVENTS_DIR=data/telegram/events
+ARI_TELEGRAM_BOT_IDENTITY=ari_command
+```
+
+5. Run locally:
+
+```bash
+PYTHONPATH=packages/ari-telegram-gateway/src ./.venv312/bin/python -m ari_telegram_gateway.polling --max-updates 3
+```
+
+The console script is also available after `./.venv312/bin/pip install -e .`:
+
+```bash
+./.venv312/bin/ari-telegram-gateway --max-updates 3
+```
+
+The gateway writes ignored local runtime data under `data/telegram/`, including polling
+state at `data/telegram/state/ari_command_polling_state.json`. Delete that state file to
+reset the local Telegram offset. Never commit `.env` or `data/telegram/`.
+
+Smoke test without Telegram live access:
+
+```bash
+PYTHONPATH=packages/ari-telegram-gateway/src ./.venv312/bin/python scripts/dev/smoke_telegram_gateway.py
+```
+
+See [docs/telegram-gateway.md](docs/telegram-gateway.md) for architecture, safety rules, BotFather setup, and future multi-bot or boardroom-group expansion.
 
 ## Working rule
 

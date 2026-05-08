@@ -23,3 +23,5 @@ README.backup.pre_v1_docs.md
 services/ari-hub/runtime/
 .env
 .env
+
+data/telegram/

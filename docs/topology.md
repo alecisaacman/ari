@@ -8,6 +8,7 @@
 - `ari-core` is the canonical state and logic owner.
 - `ari-api` is the default contract into the brain.
 - `ari-hub` is the primary interface surface.
+- `ari-telegram-gateway` is the first mobile natural-language intake surface.
 - The current system includes real bounded execution, but not yet a full autonomous coding loop.
 - The terminal-facing default identity is `ari`, which routes natural-language goals into canonical runtime paths.
 - Codex is currently an external worker ARI can invoke locally inside bounded loops.
@@ -61,6 +62,21 @@ Responsibilities:
 - support explainable inspection of why items were surfaced
 - remain a client of canonical ARI state
 
+### Telegram Gateway
+
+The Telegram Gateway is a polling natural-language intake surface. It turns Telegram messages into structured ARI events with source identity, bot identity, conversation identity, sender identity, normalized intent, assigned role, assets, and approval requirements.
+
+Responsibilities:
+
+- accept private natural-language commands from the authorized Telegram user
+- save raw Telegram updates and structured ARI events into configured local ARI data directories
+- persist local polling state so repeated bounded runs resume after the last processed Telegram update
+- save uploaded photos, videos, documents, and voice notes as local event assets
+- route messages through the shared ARI agent registry rather than creating per-bot memory
+- create pending Codex task records for code-related messages without executing Codex automatically
+- reject unauthorized Telegram sender IDs
+- preserve a path to future multiple visible Telegram bots or a boardroom-style group connected to the same ARI brain
+
 ### Terminal
 
 The terminal is the operator surface for direct command, maintenance, and deep inspection.
@@ -100,6 +116,7 @@ Responsibilities:
 - `ari-core`: canonical brain, persistence access, policy, coordination, execution
 - `ari-api`: default service boundary for canonical reads, writes, and execution actions
 - `ari-hub`: primary web surface and ambient interface
+- `ari-telegram-gateway`: Telegram polling intake and local event persistence
 - notifications / phone / voice: future surfaces that should remain clients of the same canonical brain
 
 ## System Boundary

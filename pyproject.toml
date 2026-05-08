@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 ari = "ari_core.ari:main"
+ari-telegram-gateway = "ari_telegram_gateway.polling:main"
 
 [tool.ruff]
 line-length = 100
@@ -41,6 +42,13 @@ testpaths = ["tests"]
 pythonpath = [
   "services/ari-core/src",
   "services/ari-api/src",
+  "packages/ari-cli/src",
+  "packages/ari-events/src",
+  "packages/ari-memory/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-state/src",
+  "packages/ari-telegram-gateway/src",
 ]
 
 [tool.mypy]
@@ -49,6 +57,13 @@ strict = true
 mypy_path = [
   "services/ari-core/src",
   "services/ari-api/src",
+  "packages/ari-cli/src",
+  "packages/ari-events/src",
+  "packages/ari-memory/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-state/src",
+  "packages/ari-telegram-gateway/src",
 ]
 warn_unused_configs = true
 
@@ -59,5 +74,12 @@ py-modules = []
 where = [
   "services/ari-core/src",
   "services/ari-api/src",
+  "packages/ari-cli/src",
+  "packages/ari-events/src",
+  "packages/ari-memory/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-state/src",
+  "packages/ari-telegram-gateway/src",
 ]
 include = ["ari_*"]
