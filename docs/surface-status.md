@@ -11,7 +11,8 @@ doing right now?
 
 - ARI is the brain and source of truth for the status.
 - ACE surfaces read the status and render it.
-- Tux is only a future consumer for now.
+- Tux is a read-only desktop ACE surface consumer. The adapter produces a
+  serializable preview; it does not create a desktop window.
 - Telegram may read or publish ambient status later, but it does not own the
   status contract.
 - Dashboard and Sleep Window are consumers only. They must not become status
@@ -77,7 +78,8 @@ partially written JSON.
 
 ## Initial Tux Mapping
 
-Tux assets are reusable, but Tux is not wired in this slice.
+Tux assets are reusable. The read-only adapter maps the current ARI status to
+the expected Tux animation state:
 
 ```text
 idle -> idle
@@ -88,6 +90,28 @@ waiting_for_approval -> waiting
 blocked -> failed
 error -> failed
 success -> waving
+```
+
+The adapter lives in:
+
+```text
+services/ari-core/src/ari_core/tux_status.py
+```
+
+It reads `current.json`, applies the canonical mapping above, and validates the
+local Tux asset package without making network calls. The default asset root is:
+
+```text
+/Users/alecisaacman/ARI (codex)/pet-runs/tux
+```
+
+The asset root can be overridden with `ARI_TUX_ASSET_ROOT` or the CLI
+`--asset-root` option. Required local assets are:
+
+```text
+frames/<tux_state>/
+frames/frames-manifest.json
+final/spritesheet.png or final/spritesheet.webp
 ```
 
 ## CLI
@@ -106,6 +130,18 @@ ari surface status set --state working --summary "Testing Tux status"
 
 Both commands operate on local files only. They make no network calls.
 
+Show the read-only Tux preview for the current status:
+
+```text
+ari surface tux preview
+```
+
+JSON output for future UI consumers:
+
+```text
+ari surface tux preview --json
+```
+
 ## Safety Boundaries
 
 The status layer does not:
@@ -118,5 +154,6 @@ The status layer does not:
 - create a second source of truth for ARI
 - embed Tux in the dashboard
 - connect Tux to Sleep Window
+- create a macOS app, overlay, or floating desktop window
 
 It records concise local status for ACE surfaces to inspect.

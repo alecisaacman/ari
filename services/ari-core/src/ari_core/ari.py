@@ -140,6 +140,7 @@ from .surface_status import (
     build_surface_status,
     read_current_surface_status,
 )
+from .tux_status import build_tux_status_preview
 
 HELP_TOKENS = {"--help", "-h", "help"}
 
@@ -600,6 +601,29 @@ def _handle_surface_status_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_surface_tux_preview(args: argparse.Namespace) -> int:
+    preview = build_tux_status_preview(
+        status_dir=args.status_dir,
+        asset_root=args.asset_root,
+    )
+    payload = preview.to_dict()
+    if args.as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(f"ARI state: {preview.ari_state or 'none'}")
+    print(f"Tux animation state: {preview.tux_animation_state}")
+    print(f"Summary: {preview.summary}")
+    print(f"Sprite path: {preview.sprite_path}")
+    print(f"Frame directory: {preview.frame_directory}")
+    print(f"Assets present: {'yes' if preview.assets_present else 'no'}")
+    if preview.missing_assets:
+        print("Missing assets:")
+        for missing_asset in preview.missing_assets:
+            print(f"- {missing_asset}")
+    return 0
+
+
 def _parse_metadata_json(raw_value: str | None) -> dict[str, object]:
     if raw_value is None:
         return {}
@@ -878,6 +902,32 @@ def _add_surface_parsers(subparsers: argparse._SubParsersAction) -> None:
         type=Path,
         default=None,
         help="Override the surface status directory.",
+    )
+
+    tux_parser = surface_subparsers.add_parser(
+        "tux", help="Read-only Tux ACE surface preview commands."
+    )
+    tux_subparsers = tux_parser.add_subparsers(dest="surface_tux_command", required=True)
+    tux_preview_parser = tux_subparsers.add_parser(
+        "preview", help="Show the Tux animation preview for current ARI status."
+    )
+    tux_preview_parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=None,
+        help="Override the surface status directory.",
+    )
+    tux_preview_parser.add_argument(
+        "--asset-root",
+        type=Path,
+        default=None,
+        help="Override the Tux asset root.",
+    )
+    tux_preview_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Print the serializable preview object as JSON.",
     )
 
 
@@ -2320,6 +2370,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return _handle_surface_status_show(args)
         if args.surface_command == "status" and args.surface_status_command == "set":
             return _handle_surface_status_set(args)
+        if args.surface_command == "tux" and args.surface_tux_command == "preview":
+            return _handle_surface_tux_preview(args)
 
     if args.command == "networking":
         if args.networking_command == "today":

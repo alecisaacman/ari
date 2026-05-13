@@ -14,6 +14,7 @@ from ari_core.surface_status import (
     SurfaceStatusStore,
     build_surface_status,
 )
+from ari_core.tux_status import TuxStatusAdapter, build_tux_status_preview
 from ari_surface_status import surface_status_from_telegram_event
 from ari_telegram_gateway.career_commands import handle_career_command_result
 from ari_telegram_gateway.config import TelegramGatewayConfig
@@ -136,6 +137,97 @@ def test_surface_status_cli_set_and_show(tmp_path: Path) -> None:
     assert shown["state"] == "working"
     assert shown["summary"] == "Testing Tux status"
     assert shown["metadata"] == {"surface": "tux"}
+
+
+def test_tux_adapter_builds_preview_from_current_status(tmp_path: Path) -> None:
+    status_dir = tmp_path / "surface" / "status"
+    asset_root = tmp_path / "tux"
+    _write_tux_assets(asset_root, tux_state="running", sprite_name="spritesheet.webp")
+    SurfaceStatusStore(status_dir).write(
+        build_surface_status(
+            state=SurfaceState.WORKING,
+            summary="ARI is running a local task.",
+            source="test",
+            event_id="evt_tux_preview",
+        )
+    )
+
+    preview = TuxStatusAdapter(status_dir=status_dir, asset_root=asset_root).preview()
+
+    assert preview.status_present is True
+    assert preview.ari_state == "working"
+    assert preview.tux_animation_state == "running"
+    assert preview.summary == "ARI is running a local task."
+    assert preview.sprite_path == str(asset_root / "final" / "spritesheet.webp")
+    assert preview.frame_directory == str(asset_root / "frames" / "running")
+    assert preview.frames_manifest_path == str(asset_root / "frames" / "frames-manifest.json")
+    assert preview.assets_present is True
+    assert preview.missing_assets == []
+    assert preview.frame_width == 192
+    assert preview.frame_height == 208
+
+
+def test_tux_adapter_reports_missing_assets_without_real_asset_root(tmp_path: Path) -> None:
+    status_dir = tmp_path / "surface" / "status"
+    asset_root = tmp_path / "tux"
+    SurfaceStatusStore(status_dir).write(
+        build_surface_status(
+            state=SurfaceState.WAITING_FOR_APPROVAL,
+            summary="ARI needs approval.",
+            source="test",
+        )
+    )
+
+    preview = build_tux_status_preview(status_dir=status_dir, asset_root=asset_root)
+
+    assert preview.ari_state == "waiting_for_approval"
+    assert preview.tux_animation_state == "waiting"
+    assert preview.assets_present is False
+    assert preview.missing_assets == [
+        "frames/waiting/",
+        "final/spritesheet.png or final/spritesheet.webp",
+        "frames/frames-manifest.json",
+    ]
+
+
+def test_tux_preview_cli_outputs_serializable_preview(tmp_path: Path) -> None:
+    from ari_core.ari import main
+
+    status_dir = tmp_path / "surface" / "status"
+    asset_root = tmp_path / "tux"
+    _write_tux_assets(asset_root, tux_state="review", sprite_name="spritesheet.png")
+    SurfaceStatusStore(status_dir).write(
+        build_surface_status(
+            state=SurfaceState.REVIEWING,
+            summary="ARI is reviewing an execution result.",
+            source="test",
+            event_id="evt_tux_cli",
+        )
+    )
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "surface",
+                "tux",
+                "preview",
+                "--status-dir",
+                str(status_dir),
+                "--asset-root",
+                str(asset_root),
+                "--json",
+            ]
+        )
+
+    assert exit_code == 0
+    payload = json.loads(output.getvalue())
+    assert payload["ari_state"] == "reviewing"
+    assert payload["tux_animation_state"] == "review"
+    assert payload["summary"] == "ARI is reviewing an execution result."
+    assert payload["sprite_path"] == str(asset_root / "final" / "spritesheet.png")
+    assert payload["frame_directory"] == str(asset_root / "frames" / "review")
+    assert payload["assets_present"] is True
 
 
 def test_telegram_pending_approval_event_maps_to_waiting_status() -> None:
@@ -290,3 +382,18 @@ def _career_adapter(root: Path, runner=None):
     if runner is None:
         return CareerCommandAdapter(root=root)
     return CareerCommandAdapter(root=root, runner=runner)
+
+
+def _write_tux_assets(
+    asset_root: Path,
+    *,
+    tux_state: str,
+    sprite_name: str = "spritesheet.png",
+) -> None:
+    (asset_root / "frames" / tux_state).mkdir(parents=True)
+    (asset_root / "final").mkdir(parents=True)
+    (asset_root / "final" / sprite_name).write_bytes(b"fake sprite")
+    (asset_root / "frames" / "frames-manifest.json").write_text(
+        '{"frames":[]}\n',
+        encoding="utf-8",
+    )
