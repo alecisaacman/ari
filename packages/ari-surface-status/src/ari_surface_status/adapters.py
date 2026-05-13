@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ari_surface_status.models import SurfaceSeverity, SurfaceState, SurfaceStatus
+from ari_core.surface_status import SurfaceState, SurfaceStatus, build_surface_status
 
 
 def surface_status_from_telegram_event(event: object) -> SurfaceStatus:
@@ -11,74 +11,60 @@ def surface_status_from_telegram_event(event: object) -> SurfaceStatus:
     normalized_intent = _enum_value(getattr(event, "normalized_intent", ""))
     requires_approval = bool(getattr(event, "requires_approval", False))
     status = _enum_value(getattr(event, "status", ""))
+    task_id = _pending_task_id(getattr(event, "pending_codex_task", None))
+
+    metadata = {
+        "surface": "telegram",
+        "assigned_role": assigned_role,
+        "normalized_intent": normalized_intent,
+    }
 
     if not authorized or status == "rejected":
-        return SurfaceStatus(
+        return build_surface_status(
             state=SurfaceState.BLOCKED,
-            severity=SurfaceSeverity.WARNING,
-            title="Telegram sender rejected",
-            message="ARI blocked an unauthorized Telegram update.",
+            summary="ARI blocked an unauthorized Telegram update.",
             source="telegram",
-            surface="telegram",
             event_id=event_id or None,
-            metadata={
-                "assigned_role": assigned_role,
-                "normalized_intent": normalized_intent,
-            },
+            metadata=metadata,
         )
 
     if assigned_role == "CTO_CODEX" and requires_approval:
-        return SurfaceStatus(
+        return build_surface_status(
             state=SurfaceState.WAITING_FOR_APPROVAL,
-            severity=SurfaceSeverity.WARNING,
-            title="Codex task waiting for approval",
-            message=_truncate(raw_text) or "A Telegram Codex task requires approval.",
+            summary=_truncate(raw_text) or "A Telegram Codex task requires approval.",
             source="telegram",
-            surface="telegram",
             event_id=event_id or None,
-            metadata={
-                "assigned_role": assigned_role,
-                "normalized_intent": normalized_intent,
-                "requires_approval": True,
-            },
+            task_id=task_id,
+            metadata={**metadata, "requires_approval": True},
         )
 
     if assigned_role == "CPO" and normalized_intent in {
         "competitor_intel",
         "product_inspiration",
     }:
-        return SurfaceStatus(
+        return build_surface_status(
             state=SurfaceState.WORKING,
-            severity=SurfaceSeverity.INFO,
-            title="Product signal captured",
-            message=_truncate(raw_text) or "ARI captured a product or competitor signal.",
+            summary=_truncate(raw_text) or "ARI captured a product or competitor signal.",
             source="telegram",
-            surface="telegram",
             event_id=event_id or None,
-            metadata={"assigned_role": assigned_role, "normalized_intent": normalized_intent},
+            metadata=metadata,
         )
 
     if assigned_role == "MEMORY" or normalized_intent == "memory_capture":
-        return SurfaceStatus(
+        return build_surface_status(
             state=SurfaceState.SUCCESS,
-            severity=SurfaceSeverity.INFO,
-            title="Memory captured",
-            message=_truncate(raw_text) or "ARI captured a memory update.",
+            summary=_truncate(raw_text) or "ARI captured a memory update.",
             source="telegram",
-            surface="telegram",
             event_id=event_id or None,
-            metadata={"assigned_role": assigned_role, "normalized_intent": normalized_intent},
+            metadata=metadata,
         )
 
-    return SurfaceStatus(
+    return build_surface_status(
         state=SurfaceState.SUCCESS,
-        severity=SurfaceSeverity.INFO,
-        title="Telegram update processed",
-        message=_truncate(raw_text) or "ARI processed a Telegram update.",
+        summary=_truncate(raw_text) or "ARI processed a Telegram update.",
         source="telegram",
-        surface="telegram",
         event_id=event_id or None,
-        metadata={"assigned_role": assigned_role, "normalized_intent": normalized_intent},
+        metadata=metadata,
     )
 
 
@@ -91,45 +77,53 @@ def career_command_status(
 ) -> SurfaceStatus:
     command_name = command.strip().lower()
     if not ok:
-        return SurfaceStatus(
+        return build_surface_status(
             state=SurfaceState.ERROR,
-            severity=SurfaceSeverity.ERROR,
-            title="Career Command failed",
-            message=_truncate(message) or "Career Command returned an error.",
+            summary=_truncate(message) or "Career Command returned an error.",
             source="career_command",
-            surface="telegram",
             event_id=event_id,
-            command=command_name,
+            metadata={"surface": "telegram", "command": command_name},
         )
 
-    if command_name in {"status", "tracker", "pending", "latest", "dashboard", "help"}:
+    if command_name in {
+        "status",
+        "tracker",
+        "pending",
+        "latest",
+        "dashboard",
+        "help",
+        "scout_preview",
+        "save",
+        "draft",
+        "approve",
+        "reject",
+    }:
         state = SurfaceState.SUCCESS
-        title = "Career Command read completed"
-    elif command_name == "scout_preview":
-        state = SurfaceState.SUCCESS
-        title = "Career scout preview completed"
-    elif command_name in {"save", "draft", "approve", "reject"}:
-        state = SurfaceState.SUCCESS
-        title = "Career Command operation completed"
     else:
         state = SurfaceState.WAITING_FOR_APPROVAL
-        title = "Career Command needs user choice"
 
-    return SurfaceStatus(
+    return build_surface_status(
         state=state,
-        severity=SurfaceSeverity.INFO,
-        title=title,
-        message=_truncate(message) or "Career Command completed.",
+        summary=_truncate(message) or "Career Command completed.",
         source="career_command",
-        surface="telegram",
         event_id=event_id,
-        command=command_name,
+        metadata={"surface": "telegram", "command": command_name},
     )
 
 
 def _enum_value(value: object) -> str:
     raw = getattr(value, "value", value)
     return str(raw or "")
+
+
+def _pending_task_id(value: object) -> str | None:
+    task_id = getattr(value, "task_id", None)
+    if task_id is None:
+        task_id = getattr(value, "codex_task_id", None)
+    if task_id is None:
+        return None
+    normalized = str(task_id).strip()
+    return normalized or None
 
 
 def _truncate(value: str, *, limit: int = 220) -> str:

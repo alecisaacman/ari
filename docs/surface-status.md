@@ -1,25 +1,34 @@
-# ARI Surface Status
+# ARI Surface Status Layer
 
-The Surface Status layer is the shared local status artifact for ACE surfaces.
-It answers the basic question: what is ARI doing right now?
+The Surface Status layer is the first shared local status contract for ACE
+surfaces. ARI owns this status. ACE surfaces consume it.
 
-This is not a new UI and not a second ARI brain. It is a small local read model
-that surfaces can consume.
+This is not a desktop companion, dashboard feature, Telegram brain, or Sleep
+Window integration. It is a small ARI-owned read model that answers: what is ARI
+doing right now?
 
-## File Locations
+## Ownership
 
-The default store writes:
+- ARI is the brain and source of truth for the status.
+- ACE surfaces read the status and render it.
+- Tux is only a future consumer for now.
+- Telegram may read or publish ambient status later, but it does not own the
+  status contract.
+- Dashboard and Sleep Window are consumers only. They must not become status
+  owners or parallel state systems.
+
+## Files
+
+Default local paths:
 
 ```text
 data/surface/status/current.json
-data/surface/status/history/<status_id>.json
+data/surface/status/history/*.json
 ```
 
-`data/surface/` is ignored by Git. These files are local runtime state.
-
-`current.json` is the latest status for lightweight surfaces. `history/` keeps
-append-only status snapshots for debugging, demos, and future Inspection Cabinet
-timelines.
+`current.json` is the latest status for lightweight consumers. `history/`
+keeps append-only snapshots for debugging, demos, dashboards, and future
+Inspection Cabinet timelines.
 
 The location can be overridden with:
 
@@ -27,109 +36,87 @@ The location can be overridden with:
 ARI_SURFACE_STATUS_DIR=/custom/local/path
 ```
 
-## Model
+## Canonical Model
 
-The model lives in:
+The canonical implementation lives in:
 
 ```text
-packages/ari-surface-status/src/ari_surface_status/
+services/ari-core/src/ari_core/surface_status.py
 ```
 
-Controlled state enum:
+Shape:
+
+```json
+{
+  "state": "idle",
+  "role": "ARI",
+  "source": "system",
+  "summary": "ARI is idle.",
+  "event_id": "evt_...",
+  "task_id": null,
+  "updated_at": "2026-05-12T00:00:00Z",
+  "metadata": {}
+}
+```
+
+Supported states:
 
 ```text
 idle
-listening
-thinking
+routing
 working
+reviewing
 waiting_for_approval
 blocked
-success
 error
+success
 ```
 
-Controlled severity enum:
+Writes use temporary files and `os.replace` so local file consumers do not read
+partially written JSON.
+
+## Initial Tux Mapping
+
+Tux assets are reusable, but Tux is not wired in this slice.
 
 ```text
-info
-warning
-error
+idle -> idle
+routing -> jumping
+working -> running
+reviewing -> review
+waiting_for_approval -> waiting
+blocked -> failed
+error -> failed
+success -> waving
 ```
 
-Each status includes:
+## CLI
 
-- `status_id`
-- `created_at`
-- `state`
-- `severity`
-- `title`
-- `message`
-- `source`
-- optional `surface`
-- optional `event_id`
-- optional `command`
-- optional low-risk `metadata`
+Show current status:
 
-The status payload must not contain secrets, Telegram bot tokens, `.env`
-contents, or API keys.
+```text
+ari surface status show
+```
 
-## Telegram Integration
+Set current status:
 
-The Telegram Gateway writes a status after normal event persistence.
+```text
+ari surface status set --state working --summary "Testing Tux status"
+```
 
-Current mappings:
-
-- unauthorized rejected event -> `blocked`
-- `CTO_CODEX` with approval required -> `waiting_for_approval`
-- CPO competitor or product signal -> `working`
-- memory capture -> `success`
-- other processed Telegram event -> `success`
-
-Career Command Telegram commands write a second command-specific status after
-command handling:
-
-- read-only commands such as `/career status` and `/career tracker` -> `success`
-- `/career scout_preview` after completion -> `success`
-- `/career save`, `/career draft`, `/career approve`, `/career reject` success -> `success`
-- missing user choices such as `/career save` without rows -> `waiting_for_approval`
-- command failures -> `error`
-
-Telegram replies are unchanged except for the additional local status writes.
-
-## Future ACE Consumption
-
-Future Tux/cat desktop companion:
-
-- read `current.json`
-- map `state` to posture/animation
-- map `severity` to visual urgency
-- display `title` and `message` as local status text
-
-Future Inspection Cabinet:
-
-- read `history/`
-- show a timeline of ARI activity
-- correlate `event_id` and `command` with Telegram events, Career Command
-  operations, approvals, and future content intake
-
-Future dashboards and intake surfaces:
-
-- read `current.json` for compact ambient status
-- read `history/` for operator review and demos
+Both commands operate on local files only. They make no network calls.
 
 ## Safety Boundaries
 
-The status layer is local-first and file-backed.
-
-It does not:
+The status layer does not:
 
 - execute work
 - send messages
-- apply to jobs
-- contact anyone externally
+- contact external services
 - read `.env`
-- store Telegram bot tokens
-- store API keys
-- create a new source of truth for ARI state
+- store tokens or secrets
+- create a second source of truth for ARI
+- embed Tux in the dashboard
+- connect Tux to Sleep Window
 
-It only records concise local status for ACE surfaces.
+It records concise local status for ACE surfaces to inspect.

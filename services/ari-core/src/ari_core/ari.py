@@ -134,6 +134,12 @@ from .suits.documentation.frame import handle_frame_build
 from .suits.documentation.record import handle_record_plan
 from .suits.documentation.storyboard import handle_storyboard_short_video
 from .suits.documentation.video import handle_video_build
+from .surface_status import (
+    SurfaceState,
+    SurfaceStatusStore,
+    build_surface_status,
+    read_current_surface_status,
+)
 
 HELP_TOKENS = {"--help", "-h", "help"}
 
@@ -222,6 +228,7 @@ LEGACY_DOCUMENTATION_TOP_LEVEL = {
 TOP_LEVEL_COMMANDS = {
     "networking",
     "docs",
+    "surface",
     "api",
     "runtime",
     *LEGACY_NETWORKING_TOP_LEVEL,
@@ -568,6 +575,43 @@ def _handle_api_skills_propose(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_surface_status_show(args: argparse.Namespace) -> int:
+    status = read_current_surface_status(root_dir=args.status_dir)
+    if status is None:
+        store = SurfaceStatusStore(args.status_dir)
+        print(json.dumps({"status": None, "current_path": str(store.current_path)}))
+        return 1
+    print(json.dumps(status.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
+def _handle_surface_status_set(args: argparse.Namespace) -> int:
+    status = build_surface_status(
+        state=args.state,
+        summary=args.summary,
+        role=args.role,
+        source=args.source,
+        event_id=args.event_id,
+        task_id=args.task_id,
+        metadata=_parse_metadata_json(args.metadata_json),
+    )
+    SurfaceStatusStore(args.status_dir).write(status)
+    print(json.dumps(status.to_dict(), indent=2, sort_keys=True))
+    return 0
+
+
+def _parse_metadata_json(raw_value: str | None) -> dict[str, object]:
+    if raw_value is None:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"invalid --metadata-json: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise argparse.ArgumentTypeError("--metadata-json must decode to an object")
+    return parsed
+
+
 def _handle_api_overview_show(args: argparse.Namespace, *, db_path: Path = DB_PATH) -> int:
     overview = get_ari_operating_overview(db_path=db_path)
     payload = {"overview": overview.to_dict()}
@@ -790,6 +834,50 @@ def _add_networking_parsers(subparsers: argparse._SubParsersAction) -> None:
     )
     followups_complete_parser.add_argument(
         "--id", type=int, required=True, help="Existing follow-up id."
+    )
+
+
+def _add_surface_parsers(subparsers: argparse._SubParsersAction) -> None:
+    surface_parser = subparsers.add_parser("surface", help="ARI-owned ACE surface read models.")
+    surface_subparsers = surface_parser.add_subparsers(dest="surface_command", required=True)
+
+    status_parser = surface_subparsers.add_parser(
+        "status", help="Read or write the ARI surface status artifact."
+    )
+    status_subparsers = status_parser.add_subparsers(
+        dest="surface_status_command", required=True
+    )
+
+    show_parser = status_subparsers.add_parser("show", help="Show current surface status JSON.")
+    show_parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=None,
+        help="Override the surface status directory.",
+    )
+
+    set_parser = status_subparsers.add_parser("set", help="Write current surface status JSON.")
+    set_parser.add_argument(
+        "--state",
+        choices=[state.value for state in SurfaceState],
+        required=True,
+        help="Canonical ARI surface state.",
+    )
+    set_parser.add_argument("--summary", required=True, help="Short human-readable status summary.")
+    set_parser.add_argument("--role", default="ARI", help="Status owner role.")
+    set_parser.add_argument("--source", default="system", help="Subsystem writing the status.")
+    set_parser.add_argument("--event-id", default=None, help="Optional source event id.")
+    set_parser.add_argument("--task-id", default=None, help="Optional source task id.")
+    set_parser.add_argument(
+        "--metadata-json",
+        default=None,
+        help="Optional JSON object with low-risk surface metadata.",
+    )
+    set_parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=None,
+        help="Override the surface status directory.",
     )
 
 
@@ -2203,6 +2291,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     _add_networking_parsers(subparsers)
+    _add_surface_parsers(subparsers)
     _add_docs_parsers(subparsers)
     _add_api_parsers(subparsers)
     _add_runtime_parsers(subparsers)
@@ -2225,6 +2314,12 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
     parser = build_parser()
     normalized_argv = _normalize_legacy_argv(argv if argv is not None else sys.argv[1:])
     args = parser.parse_args(normalized_argv)
+
+    if args.command == "surface":
+        if args.surface_command == "status" and args.surface_status_command == "show":
+            return _handle_surface_status_show(args)
+        if args.surface_command == "status" and args.surface_status_command == "set":
+            return _handle_surface_status_set(args)
 
     if args.command == "networking":
         if args.networking_command == "today":

@@ -14,7 +14,12 @@ from ari_career_command import (
     CareerStatus,
     CareerTrackerSummary,
 )
-from ari_surface_status import SurfaceSeverity, SurfaceState, SurfaceStatus, career_command_status
+from ari_surface_status import (
+    SurfaceState,
+    SurfaceStatus,
+    build_surface_status,
+    career_command_status,
+)
 
 
 @dataclass(frozen=True)
@@ -332,15 +337,12 @@ def _needs_user_choice(
 ) -> CareerCommandHandlingResult:
     return CareerCommandHandlingResult(
         text=text,
-        surface_status=SurfaceStatus(
+        surface_status=build_surface_status(
             state=SurfaceState.WAITING_FOR_APPROVAL,
-            severity=SurfaceSeverity.WARNING,
-            title="Career Command needs user choice",
-            message=text,
+            summary=text,
             source="career_command",
-            surface="telegram",
             event_id=event_id,
-            command=command,
+            metadata={"surface": "telegram", "command": command},
         ),
     )
 
