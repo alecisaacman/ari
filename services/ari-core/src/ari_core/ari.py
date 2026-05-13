@@ -140,6 +140,11 @@ from .surface_status import (
     build_surface_status,
     read_current_surface_status,
 )
+from .tux_companion import (
+    build_tux_companion_config,
+    dry_run_tux_companion,
+    launch_tux_companion,
+)
 from .tux_status import build_tux_status_preview
 
 HELP_TOKENS = {"--help", "-h", "help"}
@@ -624,6 +629,25 @@ def _handle_surface_tux_preview(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_surface_tux_companion(args: argparse.Namespace) -> int:
+    try:
+        config = build_tux_companion_config(
+            asset_root=args.asset_root,
+            status_dir=args.status_dir,
+            poll_interval=args.poll_interval,
+            click_target=args.click_target,
+            no_bubble=args.no_bubble,
+            debug=args.debug,
+        )
+    except ValueError as exc:
+        print(f"Tux companion configuration failed: {exc}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        return dry_run_tux_companion(config)
+    return launch_tux_companion(config)
+
+
 def _parse_metadata_json(raw_value: str | None) -> dict[str, object]:
     if raw_value is None:
         return {}
@@ -928,6 +952,47 @@ def _add_surface_parsers(subparsers: argparse._SubParsersAction) -> None:
         dest="as_json",
         action="store_true",
         help="Print the serializable preview object as JSON.",
+    )
+    tux_companion_parser = tux_subparsers.add_parser(
+        "companion", help="Launch the read-only ARI Tux desktop companion."
+    )
+    tux_companion_parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=None,
+        help="Override the surface status directory.",
+    )
+    tux_companion_parser.add_argument(
+        "--asset-root",
+        type=Path,
+        default=None,
+        help="Override the Tux asset root.",
+    )
+    tux_companion_parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help="Seconds between ARI status polls. Default: 1.5.",
+    )
+    tux_companion_parser.add_argument(
+        "--click-target",
+        default=None,
+        help="URL or local target opened on double click. Defaults to ARI_TUX_CLICK_TARGET.",
+    )
+    tux_companion_parser.add_argument(
+        "--no-bubble",
+        action="store_true",
+        help="Start with the status bubble hidden.",
+    )
+    tux_companion_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging.",
+    )
+    tux_companion_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve status, frames, and bubble text without opening a GUI.",
     )
 
 
@@ -2372,6 +2437,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return _handle_surface_status_set(args)
         if args.surface_command == "tux" and args.surface_tux_command == "preview":
             return _handle_surface_tux_preview(args)
+        if args.surface_command == "tux" and args.surface_tux_command == "companion":
+            return _handle_surface_tux_companion(args)
 
     if args.command == "networking":
         if args.networking_command == "today":

@@ -14,7 +14,15 @@ from ari_core.surface_status import (
     SurfaceStatusStore,
     build_surface_status,
 )
-from ari_core.tux_status import TuxStatusAdapter, build_tux_status_preview
+from ari_core.tux_companion import (
+    CLICK_TARGET_ENV,
+    TuxAssetError,
+    build_bubble_text,
+    build_tux_companion_config,
+    discover_animation_frames,
+    read_tux_companion_snapshot,
+)
+from ari_core.tux_status import TUX_ASSET_ROOT_ENV, TuxStatusAdapter, build_tux_status_preview
 from ari_surface_status import surface_status_from_telegram_event
 from ari_telegram_gateway.career_commands import handle_career_command_result
 from ari_telegram_gateway.config import TelegramGatewayConfig
@@ -230,6 +238,120 @@ def test_tux_preview_cli_outputs_serializable_preview(tmp_path: Path) -> None:
     assert payload["assets_present"] is True
 
 
+def test_tux_companion_config_resolves_env_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_root = tmp_path / "env-tux"
+    status_dir = tmp_path / "env-status"
+    monkeypatch.setenv(TUX_ASSET_ROOT_ENV, str(asset_root))
+    monkeypatch.setenv(CLICK_TARGET_ENV, "http://127.0.0.1:3000")
+    monkeypatch.setenv("ARI_SURFACE_STATUS_DIR", str(status_dir))
+
+    config = build_tux_companion_config()
+
+    assert config.asset_root == asset_root
+    assert config.click_target == "http://127.0.0.1:3000"
+    assert config.resolved_status_dir == status_dir
+    assert config.poll_interval == 1.5
+    assert config.show_bubble is True
+
+
+def test_tux_companion_frame_discovery_loads_animation_state(tmp_path: Path) -> None:
+    asset_root = tmp_path / "tux"
+    frame_dir = asset_root / "frames" / "running"
+    frame_dir.mkdir(parents=True)
+    for frame_name in ["10.png", "02.png", "01.png"]:
+        (frame_dir / frame_name).write_bytes(b"fake frame")
+
+    frames = discover_animation_frames(asset_root, "running")
+
+    assert frames.state == "running"
+    assert [path.name for path in frames.frame_paths] == ["01.png", "02.png", "10.png"]
+
+
+def test_tux_companion_snapshot_uses_status_animation_and_bubble(tmp_path: Path) -> None:
+    status_dir = tmp_path / "surface" / "status"
+    asset_root = tmp_path / "tux"
+    _write_tux_assets(asset_root, tux_state="running", sprite_name="spritesheet.png")
+    _write_tux_animation_frames(asset_root, "running", count=2)
+    SurfaceStatusStore(status_dir).write(
+        build_surface_status(
+            state=SurfaceState.WORKING,
+            summary="ARI is running a local task.",
+            source="test",
+        )
+    )
+    config = build_tux_companion_config(asset_root=asset_root, status_dir=status_dir)
+
+    snapshot = read_tux_companion_snapshot(config)
+
+    assert snapshot.preview.ari_state == "working"
+    assert snapshot.preview.tux_animation_state == "running"
+    assert snapshot.frames.state == "running"
+    assert len(snapshot.frames.frame_paths) == 2
+    assert snapshot.bubble_text == "working · running\nARI is running a local task."
+
+
+def test_tux_companion_missing_assets_are_reported_cleanly(tmp_path: Path) -> None:
+    asset_root = tmp_path / "tux"
+
+    with pytest.raises(TuxAssetError) as exc:
+        discover_animation_frames(asset_root, "waiting")
+
+    assert "Tux animation frame directory is missing" in str(exc.value)
+    assert exc.value.missing_assets == ["frames/waiting/"]
+
+
+def test_tux_companion_bubble_defaults_missing_status_to_idle(tmp_path: Path) -> None:
+    asset_root = tmp_path / "tux"
+    _write_tux_assets(asset_root, tux_state="idle", sprite_name="spritesheet.png")
+    preview = build_tux_status_preview(
+        status_dir=tmp_path / "surface" / "status",
+        asset_root=asset_root,
+    )
+
+    assert build_bubble_text(preview) == "idle · idle\nNo current ARI surface status found."
+
+
+def test_tux_companion_dry_run_cli_outputs_selected_frames(tmp_path: Path) -> None:
+    from ari_core.ari import main
+
+    status_dir = tmp_path / "surface" / "status"
+    asset_root = tmp_path / "tux"
+    _write_tux_assets(asset_root, tux_state="waiting", sprite_name="spritesheet.png")
+    _write_tux_animation_frames(asset_root, "waiting", count=2)
+    SurfaceStatusStore(status_dir).write(
+        build_surface_status(
+            state=SurfaceState.WAITING_FOR_APPROVAL,
+            summary="Codex needs approval.",
+            source="test",
+        )
+    )
+
+    output = StringIO()
+    with redirect_stdout(output):
+        exit_code = main(
+            [
+                "surface",
+                "tux",
+                "companion",
+                "--status-dir",
+                str(status_dir),
+                "--asset-root",
+                str(asset_root),
+                "--dry-run",
+            ]
+        )
+
+    payload = json.loads(output.getvalue())
+    assert exit_code == 0
+    assert payload["ari_state"] == "waiting_for_approval"
+    assert payload["tux_animation_state"] == "waiting"
+    assert payload["bubble_text"] == "waiting_for_approval · waiting\nCodex needs approval."
+    assert payload["selected_frame_count"] == 2
+
+
 def test_telegram_pending_approval_event_maps_to_waiting_status() -> None:
     event = _builder().build_from_update(_telegram_update("Codex should inspect the repo"))
 
@@ -397,3 +519,10 @@ def _write_tux_assets(
         '{"frames":[]}\n',
         encoding="utf-8",
     )
+
+
+def _write_tux_animation_frames(asset_root: Path, tux_state: str, *, count: int) -> None:
+    frame_dir = asset_root / "frames" / tux_state
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    for frame_index in range(count):
+        (frame_dir / f"{frame_index:02d}.png").write_bytes(b"fake frame")
