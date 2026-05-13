@@ -64,6 +64,8 @@ with these commands:
 /career status
 /career tracker
 /career pending
+/career next
+/career reports
 /career latest
 /career dashboard
 /career help
@@ -82,6 +84,13 @@ exist.
 `data/career_tracker.csv`, ranked by `overall_score`.
 
 `/career pending` lists local pending action draft filenames and titles.
+
+`/career next` returns deterministic recommended next actions based on pending
+drafts, tracker state, and the latest batch output.
+
+`/career reports` summarizes the same latest scout and batch output as
+`/career latest`; it exists so the Telegram command contract matches the local
+ARI Career Command surface.
 
 `/career latest` summarizes the latest scout report and the latest batch
 evaluation summary.

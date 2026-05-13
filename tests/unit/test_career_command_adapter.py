@@ -4,7 +4,7 @@ import csv
 import subprocess
 from pathlib import Path
 
-from ari_career_command import CareerCommandAdapter
+from ari_career_command import CareerCommandAdapter, build_career_command_center
 
 
 def test_status_reads_tracker_and_action_counts(tmp_path: Path) -> None:
@@ -50,6 +50,7 @@ def test_pending_summary_lists_pending_drafts(tmp_path: Path) -> None:
     assert summary.drafts[0].title == "Pending Action: Alpha outreach"
     assert summary.drafts[0].action_type == "outreach"
     assert summary.drafts[0].status == "pending"
+    assert summary.drafts[0].requires_approval is True
 
 
 def test_latest_batch_summary_parses_csv(tmp_path: Path) -> None:
@@ -248,6 +249,49 @@ def test_no_external_send_apply_contact_commands_are_allowlisted(tmp_path: Path)
     assert "linkedin" not in command_text.lower()
     assert "browser" not in command_text
     assert "review_pending_actions" not in command_text
+
+
+def test_command_center_summary_generation_includes_recommendations(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_tracker(root)
+    _write_pending(root, "20260501_outreach_alpha.md", "Pending Action: Alpha outreach")
+    _write_scout_report(root)
+    _write_batch_summary(root)
+
+    center = build_career_command_center(CareerCommandAdapter(root=root))
+    payload = center.to_dict()
+
+    assert payload["objective"] == "Get Alec hired"
+    assert payload["tracker"]["total_roles"] == 3
+    assert payload["tracker"]["by_status"] == {"pending": 1, "ready": 1, "watch": 1}
+    assert payload["pending_actions"][0]["id"] == "20260501_outreach_alpha"
+    assert payload["pending_actions"][0]["requires_approval"] is True
+    assert payload["reports"]["latest_batch"]["total_count"] == 3
+    assert any("pending local action draft" in item for item in center.recommended_next_actions)
+    assert "No automatic applications" in center.safety_boundary
+
+
+def test_command_center_handles_missing_prototype_root_gracefully(tmp_path: Path) -> None:
+    root = tmp_path / "missing-career-root"
+
+    center = build_career_command_center(CareerCommandAdapter(root=root))
+
+    assert center.status.root_exists is False
+    assert center.tracker.total_count == 0
+    assert center.pending.total_count == 0
+    assert any("root is missing" in reason for reason in center.unavailable_reasons)
+    assert any("Set CAREER_COMMAND_ROOT" in item for item in center.recommended_next_actions)
+
+
+def test_command_center_handles_missing_tracker_gracefully(tmp_path: Path) -> None:
+    root = _career_root(tmp_path)
+    _write_pending(root, "20260501_outreach_alpha.md", "Pending Action: Alpha outreach")
+
+    center = build_career_command_center(CareerCommandAdapter(root=root))
+
+    assert center.tracker.exists is False
+    assert center.tracker.total_count == 0
+    assert any("Tracker CSV is missing" in reason for reason in center.unavailable_reasons)
 
 
 def _career_root(tmp_path: Path) -> Path:

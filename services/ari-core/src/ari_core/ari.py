@@ -5,6 +5,15 @@ import sys
 from pathlib import Path
 
 from .core.paths import DB_PATH
+from .modules.career.api import (
+    handle_career_command_center,
+    handle_career_next,
+    handle_career_pending,
+    handle_career_reports,
+    handle_career_scout_preview,
+    handle_career_status,
+    handle_career_tracker,
+)
 from .modules.coordination.api import (
     handle_api_coordination_get,
     handle_api_coordination_list,
@@ -232,6 +241,7 @@ LEGACY_DOCUMENTATION_TOP_LEVEL = {
     "session",
 }
 TOP_LEVEL_COMMANDS = {
+    "career",
     "networking",
     "docs",
     "surface",
@@ -883,6 +893,40 @@ def _add_networking_parsers(subparsers: argparse._SubParsersAction) -> None:
     followups_complete_parser.add_argument(
         "--id", type=int, required=True, help="Existing follow-up id."
     )
+
+
+def _add_career_parsers(subparsers: argparse._SubParsersAction) -> None:
+    career_parser = subparsers.add_parser(
+        "career", help="Career Command operating surface commands."
+    )
+    career_subparsers = career_parser.add_subparsers(dest="career_command", required=True)
+
+    for name, help_text in [
+        ("status", "Show current Career Command state."),
+        ("pending", "List pending local Career Command actions and drafts."),
+        ("next", "Recommend the next best Career Command actions."),
+        ("reports", "List latest Career Command reports and scout outputs."),
+        ("tracker", "Show Career Command tracker summary."),
+        ("command-center", "Show the full local Career Command center view."),
+        ("scout-preview", "Run the safe scout preview pipeline and stop for review."),
+    ]:
+        command_parser = career_subparsers.add_parser(name, help=help_text)
+        _add_career_common_arguments(command_parser)
+
+
+def _add_career_common_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--root",
+        default=None,
+        help="Override Career Command prototype root. Defaults to CAREER_COMMAND_ROOT or ~/code/openai-dev-sandbox.",
+    )
+    parser.add_argument(
+        "--status-dir",
+        type=Path,
+        default=None,
+        help="Override the ARI surface status directory.",
+    )
+    parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
 
 
 def _add_surface_parsers(subparsers: argparse._SubParsersAction) -> None:
@@ -2405,6 +2449,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="ARI parent command surface for module and suit workflows.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    _add_career_parsers(subparsers)
     _add_networking_parsers(subparsers)
     _add_surface_parsers(subparsers)
     _add_docs_parsers(subparsers)
@@ -2439,6 +2484,22 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return _handle_surface_tux_preview(args)
         if args.surface_command == "tux" and args.surface_tux_command == "companion":
             return _handle_surface_tux_companion(args)
+
+    if args.command == "career":
+        if args.career_command == "status":
+            return handle_career_status(args)
+        if args.career_command == "pending":
+            return handle_career_pending(args)
+        if args.career_command == "next":
+            return handle_career_next(args)
+        if args.career_command == "reports":
+            return handle_career_reports(args)
+        if args.career_command == "tracker":
+            return handle_career_tracker(args)
+        if args.career_command == "command-center":
+            return handle_career_command_center(args)
+        if args.career_command == "scout-preview":
+            return handle_career_scout_preview(args)
 
     if args.command == "networking":
         if args.networking_command == "today":

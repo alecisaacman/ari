@@ -32,6 +32,10 @@ def test_telegram_command_routing_recognizes_career_commands(tmp_path: Path) -> 
     assert "Pending Career Command drafts" in handle_career_command(
         "/career pending", adapter=adapter
     )
+    assert "Career Command next actions" in handle_career_command("/career next", adapter=adapter)
+    assert "Latest Career Command output" in handle_career_command(
+        "/career reports", adapter=adapter
+    )
     latest_response = handle_career_command("/career latest", adapter=adapter)
     assert latest_response is not None
     assert "Latest Career Command output" in latest_response

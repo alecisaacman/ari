@@ -34,6 +34,10 @@ class PendingActionDraft:
     title: str
     action_type: str
     status: str
+    created_at: str = ""
+    company: str = ""
+    role: str = ""
+    requires_approval: bool = True
 
 
 @dataclass(frozen=True)
@@ -187,6 +191,9 @@ class CareerCommandAdapter:
                 title=_pending_title(path),
                 action_type=_markdown_field(path, "Type"),
                 status=_markdown_field(path, "Status"),
+                created_at=_markdown_field(path, "Created"),
+                company=_markdown_field(path, "Company"),
+                role=_markdown_field(path, "Role"),
             )
             for path in files[:limit]
         ]

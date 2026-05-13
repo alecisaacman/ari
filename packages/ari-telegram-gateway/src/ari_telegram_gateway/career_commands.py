@@ -88,7 +88,16 @@ def handle_career_command_result(
         if command == "pending":
             text = _format_pending(adapter.career_pending_actions_summary(limit=10))
             return _handled(text, command=command, ok=True, event_id=event_id)
+        if command == "next":
+            text = _format_next(adapter)
+            return _handled(text, command=command, ok=True, event_id=event_id)
         if command == "latest":
+            text = _format_latest(
+                adapter.career_latest_scout_report_summary(),
+                adapter.career_latest_batch_summary(limit=5),
+            )
+            return _handled(text, command=command, ok=True, event_id=event_id)
+        if command == "reports":
             text = _format_latest(
                 adapter.career_latest_scout_report_summary(),
                 adapter.career_latest_batch_summary(limit=5),
@@ -216,6 +225,26 @@ def _format_latest(scout: CareerScoutReportSummary, batch: CareerBatchSummary) -
     return "\n".join(lines)
 
 
+def _format_next(adapter: CareerCommandAdapterProtocol) -> str:
+    pending = adapter.career_pending_actions_summary(limit=10)
+    tracker = adapter.career_tracker_summary(limit=5)
+    batch = adapter.career_latest_batch_summary(limit=5)
+    scout = adapter.career_latest_scout_report_summary()
+    lines = ["Career Command next actions"]
+    if pending.total_count:
+        lines.append(f"- Review {pending.total_count} pending local draft(s).")
+    if batch.exists and batch.total_count:
+        lines.append(
+            f"- Review latest batch summary and save the best of {batch.total_count} role(s)."
+        )
+    if tracker.total_count:
+        lines.append("- Decide the next resume/outreach step for the highest-score tracked role.")
+    if not scout.exists:
+        lines.append("- Run /career scout_preview when ready to refresh opportunities.")
+    lines.append("- Keep all external-facing action local until explicit approval.")
+    return "\n".join(lines)
+
+
 def _format_dashboard(info: CareerDashboardInfo) -> str:
     return "\n".join(
         [
@@ -298,6 +327,8 @@ def _format_help() -> str:
             "/career status",
             "/career tracker",
             "/career pending",
+            "/career next",
+            "/career reports",
             "/career latest",
             "/career dashboard",
             "/career scout_preview",
