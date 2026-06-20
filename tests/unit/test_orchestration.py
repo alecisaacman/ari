@@ -34,19 +34,20 @@ def test_signal_orchestration_persists_signals_alerts_and_run_history_end_to_end
         "open_loop_accumulation",
         "weekly_trajectory_drift",
         "elevated_stress",
+        "stale_high_priority_loop",
     }
-    assert len(result.alerts) == 3
+    assert len(result.alerts) == 4
     assert result.run.state_date == date(2026, 4, 10)
-    assert len(result.run.signal_ids) == 3
-    assert len(result.run.alert_ids) == 3
+    assert len(result.run.signal_ids) == 4
+    assert len(result.run.alert_ids) == 4
 
     with Session(engine) as session:
         stored_signals = SignalRepository(session).list_recent(limit=10)
         stored_alerts = AlertRepository(session).list_recent(limit=10)
         stored_runs = OrchestrationRunRepository(session).list_for_state_date(date(2026, 4, 10))
 
-    assert len(stored_signals) == 3
-    assert len(stored_alerts) == 3
+    assert len(stored_signals) == 4
+    assert len(stored_alerts) == 4
     assert len(stored_runs) == 1
 
     signal_reasons = {signal.id: signal.reason for signal in stored_signals}
@@ -98,8 +99,8 @@ def test_repeated_orchestration_run_reuses_identical_signals_and_alerts() -> Non
         stored_alerts = AlertRepository(session).list_recent(limit=10)
         stored_runs = OrchestrationRunRepository(session).list_for_state_date(date(2026, 4, 10))
 
-    assert len(stored_signals) == 3
-    assert len(stored_alerts) == 3
+    assert len(stored_signals) == 4
+    assert len(stored_alerts) == 4
     assert len(stored_runs) == 2
     assert stored_runs[0].state_fingerprint == stored_runs[1].state_fingerprint
 
@@ -169,8 +170,8 @@ def test_changed_state_creates_new_signal_and_alert_when_fingerprint_changes() -
         stored_signals = SignalRepository(session).list_recent(limit=10)
         stored_alerts = AlertRepository(session).list_recent(limit=10)
 
-    assert len(stored_signals) == 4
-    assert len(stored_alerts) == 4
+    assert len(stored_signals) == 5
+    assert len(stored_alerts) == 5
 
 
 def _seed_orchestration_state(engine: object, *, detected_at: datetime) -> None:
