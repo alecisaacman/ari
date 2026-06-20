@@ -17,6 +17,7 @@ from ari_core.history import (
     get_previous_run_details,
     get_signal_details,
 )
+from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.orchestration import (
     RunSignalOrchestrationInput,
     RunSignalOrchestrationResult,
@@ -66,6 +67,7 @@ __all__ = [
     "evaluate_decision_authority",
     "extract_resolved_skill_invocations",
     "get_alert_details",
+    "get_conversation_state",
     "get_daily_state",
     "get_latest_run_details",
     "get_previous_run_details",
@@ -79,6 +81,7 @@ __all__ = [
     "resolve_open_loop",
     "run_controller_cycle",
     "run_signal_orchestration",
+    "save_conversation_state",
     "update_daily_state",
     "update_weekly_plan",
     "update_weekly_reflection",

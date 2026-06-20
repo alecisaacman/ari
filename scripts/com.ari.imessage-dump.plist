@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ari.imessage-dump</string>
+
+    <!--
+    This is the ONLY process in ARI's iMessage pipeline that touches
+    ~/Library/Messages/chat.db, and it is launchd's DIRECT child — no bash,
+    no Python in between. That matters: macOS's Full Disk Access check for
+    a process several hops below launchd attributes the request to the
+    top-level process launchd spawned, not to the leaf binary actually
+    making the read — confirmed by direct testing on 2026-06-19 (a
+    launchd -> bash -> sqlite3 chain was denied even with sqlite3 itself
+    granted FDA; launchd -> sqlite3 directly succeeded). So sqlite3 must
+    be launchd's immediate argv[0] for its FDA grant to take effect.
+
+    This job does nothing but dump the self-thread's messages to a plain
+    file (state/imessage-dump.tsv) every cycle. imessage-poll.sh and
+    imessage-ingest.py (bash + Python, never granted FDA) read that file
+    instead of touching chat.db — so the only thing that ever needs Full
+    Disk Access, forever, is this one Apple-signed system binary.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/sqlite3</string>
+        <string>-readonly</string>
+        <string>-cmd</string>
+        <string>.output '/Users/alecisaacman/Code/ari/state/imessage-dump.tsv'</string>
+        <string>file:/Users/alecisaacman/Library/Messages/chat.db?mode=ro</string>
+        <string>SELECT m.ROWID, hex(m.text), hex(m.attributedBody), m.date, c.chat_identifier, m.associated_message_type FROM message m JOIN chat_message_join cmj ON cmj.message_id = m.ROWID JOIN chat c ON c.ROWID = cmj.chat_id WHERE c.chat_identifier IN ('+19493440038','alecisaacman@icloud.com') ORDER BY m.ROWID ASC;</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/alecisaacman/Code/ari/logs/imessage-dump.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/alecisaacman/Code/ari/logs/imessage-dump.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
