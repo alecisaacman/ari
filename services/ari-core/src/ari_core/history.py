@@ -4,8 +4,14 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
 
-from ari_memory import AlertRepository, OrchestrationRunRepository, SignalRepository
-from ari_state import Alert, OrchestrationRun, Signal
+from ari_memory import (
+    AlertRepository,
+    ControllerEventRepository,
+    OrchestrationRunRepository,
+    PendingApprovalRepository,
+    SignalRepository,
+)
+from ari_state import Alert, ControllerEvent, OrchestrationRun, PendingApproval, Signal
 from sqlalchemy.orm import Session
 
 
@@ -14,6 +20,8 @@ class OrchestrationRunDetails:
     run: OrchestrationRun
     signals: list[Signal]
     alerts: list[Alert]
+    controller_events: list[ControllerEvent]
+    pending_approval: PendingApproval | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +95,15 @@ def get_alert_details(
 def _load_run_details(session: Session, *, run: OrchestrationRun) -> OrchestrationRunDetails:
     signals = SignalRepository(session).list_by_ids(run.signal_ids)
     alerts = AlertRepository(session).list_by_ids(run.alert_ids)
-    return OrchestrationRunDetails(run=run, signals=signals, alerts=alerts)
+    controller_events = ControllerEventRepository(session).list_for_run(run.id)
+    pending_approval = PendingApprovalRepository(session).get_by_run(run.id)
+    return OrchestrationRunDetails(
+        run=run,
+        signals=signals,
+        alerts=alerts,
+        controller_events=controller_events,
+        pending_approval=pending_approval,
+    )
 
 
 def _compare_runs(
