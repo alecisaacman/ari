@@ -5,6 +5,7 @@ import { getTopImprovementFocus } from "@/src/core/agent/self-improvement";
 import { listPendingBuilderOutputs } from "@/src/core/orchestration/repository";
 import { ingestBuilderOutputsFromChannel, processPendingBuilderOutputs } from "@/src/core/orchestration/processor";
 import { processBuilderDispatchConsumerOnce } from "@/src/core/operator/builder-consumer";
+import { isCanonicalPaused } from "@/src/core/ari-spine/control-bridge";
 import { saveCanonicalNote } from "@/src/core/ari-spine/notes-bridge";
 import { getActiveStateSnapshot } from "@/src/core/memory/spine";
 import { listTasks } from "@/src/core/memory/repository";
@@ -213,6 +214,10 @@ export function stopBackgroundRuntime(): void {
 export async function runBackgroundCycleOnce(reason: "startup" | "interval" | "manual" = "manual"): Promise<void> {
   const state = getState();
   if (state.running) {
+    return;
+  }
+
+  if (isCanonicalPaused().paused) {
     return;
   }
 

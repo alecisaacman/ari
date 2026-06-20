@@ -45,6 +45,10 @@ class ProjectDraftRequest(APIModel):
     source: Literal["goal", "active_project", "manual"] = "manual"
 
 
+class PauseRequest(APIModel):
+    reason: str = ""
+
+
 class ExecutionCommandRequest(APIModel):
     command: str
     cwd: str = "."

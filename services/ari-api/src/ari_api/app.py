@@ -16,10 +16,12 @@ from ari_api.schemas import (
     MemoryCreateRequest,
     NoteCreateRequest,
     OrchestrationClassifyRequest,
+    PauseRequest,
     PolicyPayloadRequest,
     ProjectDraftRequest,
     TaskCreateRequest,
 )
+from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.core.paths import DB_PATH
 from ari_core.modules.coordination.db import (
     ENTITY_CONFIG,
@@ -75,6 +77,18 @@ def create_app() -> FastAPI:
             "dbExists": Path(DB_PATH).exists(),
             "entities": sorted(ENTITY_CONFIG.keys()),
         }
+
+    @app.get("/paused")
+    def get_paused() -> dict[str, Any]:
+        return get_pause_state()
+
+    @app.post("/pause")
+    def post_pause(payload: PauseRequest) -> dict[str, Any]:
+        return pause(payload.reason)
+
+    @app.post("/resume")
+    def post_resume() -> dict[str, Any]:
+        return resume()
 
     @app.post("/notes")
     def create_note(payload: NoteCreateRequest) -> dict[str, Any]:
