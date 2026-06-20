@@ -6,6 +6,7 @@ from ari_core.approvals import (
     list_pending_approvals,
 )
 from ari_core.authority import evaluate_decision_authority
+from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message
 from ari_core.controller import resume_controller_cycle, run_controller_cycle
 from ari_core.decision_translate import build_controller_decision
 from ari_core.history import (
@@ -48,6 +49,7 @@ from ari_core.state import (
 
 __all__ = [
     "ApprovalWorkflowResult",
+    "BrainResponse",
     "CreateOpenLoopInput",
     "DailyStateUpdate",
     "MCP_BETA_HEADER",
@@ -75,8 +77,10 @@ __all__ = [
     "get_weekly_state",
     "list_open_loops",
     "list_pending_approvals",
+    "make_tool_dispatcher",
     "record_skill_invocation",
     "register_skill",
+    "respond_to_message",
     "resume_controller_cycle",
     "resolve_open_loop",
     "run_controller_cycle",
