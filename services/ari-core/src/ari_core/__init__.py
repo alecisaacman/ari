@@ -22,6 +22,13 @@ from ari_core.orchestration import (
     RunSignalOrchestrationResult,
     run_signal_orchestration,
 )
+from ari_core.skills import (
+    MCP_BETA_HEADER,
+    build_mcp_request_args,
+    extract_resolved_skill_invocations,
+    record_skill_invocation,
+    register_skill,
+)
 from ari_core.state import (
     CreateOpenLoopInput,
     DailyStateUpdate,
@@ -42,6 +49,7 @@ __all__ = [
     "ApprovalWorkflowResult",
     "CreateOpenLoopInput",
     "DailyStateUpdate",
+    "MCP_BETA_HEADER",
     "OrchestrationRunComparison",
     "OrchestrationRunDetails",
     "RunSignalOrchestrationInput",
@@ -51,10 +59,12 @@ __all__ = [
     "WeeklyReflectionUpdate",
     "approve_pending_approval",
     "build_controller_decision",
+    "build_mcp_request_args",
     "compare_latest_two_runs",
     "create_open_loop",
     "deny_pending_approval",
     "evaluate_decision_authority",
+    "extract_resolved_skill_invocations",
     "get_alert_details",
     "get_daily_state",
     "get_latest_run_details",
@@ -63,6 +73,8 @@ __all__ = [
     "get_weekly_state",
     "list_open_loops",
     "list_pending_approvals",
+    "record_skill_invocation",
+    "register_skill",
     "resume_controller_cycle",
     "resolve_open_loop",
     "run_controller_cycle",
