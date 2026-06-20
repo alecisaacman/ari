@@ -6,6 +6,9 @@
 - Postgres is the durable system record.
 - Shared typed state models define the canonical data contract.
 - The orchestration layer reads canonical state, evaluates signals, persists signals, and emits durable alerts.
+- Controlled execution flows through one governed path: decision, authority, bounded dispatch, verification, outcome.
+- Controlled cycles also persist an ordered controller event stream for replay and inspection.
+- Approval-gated decisions persist durable pending approval state and can resume the same governed controller cycle after approval.
 
 ## Surfaces
 

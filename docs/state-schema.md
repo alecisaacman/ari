@@ -140,6 +140,76 @@ Core fields:
 - `executed_at`
 - `signal_ids`
 - `alert_ids`
+- `controller_trajectory`
+- `controller_cycle_state`
+
+### ControllerTrajectory
+
+Represents the canonical governed control path for a controlled cycle.
+
+Core fields:
+
+- `decision`
+- `authority_result`
+- `action_plan`
+- `worker_run`
+- `verification_result`
+- `controller_outcome`
+
+### ControllerEvent
+
+Represents one durable typed controller-step event for replaying a controlled cycle.
+
+Core fields:
+
+- `id`
+- `run_id`
+- `sequence_number`
+- `occurred_at`
+- `event_type`
+- `summary`
+- `payload`
+
+### PendingApproval
+
+Represents a first-class approval gate created when authority blocks execution pending operator approval.
+
+Core fields:
+
+- `id`
+- `run_id`
+- `decision_id`
+- `status`
+- `requested_at`
+- `resolved_at`
+- `reason`
+- `decision_summary`
+- `proposed_action`
+
+### ControllerDecision
+
+Represents the canonical decision considered for execution.
+
+Core fields:
+
+- `id`
+- `decision_type`
+- `decision_summary`
+- `proposed_action`
+- `requires_approval`
+- `confidence`
+- `action_intents`
+
+### AuthorityResult
+
+Represents the rule-based authority evaluation result for a controller decision.
+
+Core fields:
+
+- `decision_id`
+- `outcome`
+- `reason`
+- `may_execute`
 
 ## Explainability
 
@@ -168,6 +238,45 @@ Repeated orchestration runs must also stay stable and explainable.
 - use durable fingerprints on persisted `Signal` and `Alert` records to avoid recreating identical outputs for the same `state_date`
 - preserve the original `reason`, `evidence`, and `source_signal_ids` chain when reusing prior records
 - support a narrow read path that can load the latest run, the previous run, the linked signals and alerts for a run, direct signal and alert detail by id, and a direct comparison of the latest two runs for the same `state_date`
+- when a controller decision is supplied, persist the canonical governed trajectory `decision -> authority_result -> action_plan -> worker_run -> verification_result -> controller_outcome` on the `OrchestrationRun`
+- when a controller decision is supplied, also persist a typed ordered `ControllerEvent` stream so one cycle can be replayed step by step without inferring state from summary fields alone
+- expose stable controller cycle states: `running`, `waiting_for_approval`, `resumed`, `denied`, `completed`, `failed`
+
+## Authority And Dispatch
+
+Authority evaluation must happen before action planning or execution.
+
+- evaluate every controller decision through a local rule-based authority layer
+- authority outcomes are `allow`, `require_approval`, `deny`, and `defer`
+- only `act` decisions with authority outcome `allow` may dispatch into bounded execution
+- decisions with `require_approval`, `deny`, or `defer` must not execute
+
+## Approval Workflow V1
+
+`require_approval` is a durable governed workflow, not a passive authority label.
+
+- when authority returns `require_approval`, persist a first-class `PendingApproval` record linked to the orchestration run and decision
+- mark the controller cycle state as `waiting_for_approval`
+- expose pending approvals through the canonical read surfaces
+- allow explicit approve or deny actions against the pending approval record
+- approving a pending approval resumes the same controller trajectory into bounded dispatch and verification
+- denying a pending approval ends the controlled cycle without execution and preserves the denial reason in the trajectory and event stream
+
+## Controller Event Stream V1
+
+The initial controller event stream must remain explicit and boring.
+
+- `observation_intake`
+- `decision_selected`
+- `authority_result`
+- `approval_requested`
+- `approval_granted`
+- `approval_denied`
+- `controller_resumed`
+- `dispatch_started`
+- `dispatch_result`
+- `verification_result`
+- `controller_outcome`
 
 ## Initial Routine Contracts
 

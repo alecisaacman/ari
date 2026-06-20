@@ -5,7 +5,9 @@
 .venv/
 __pycache__/
 *.pyc
+.DS_Store
 dist/
 build/
 ari.egg-info/
-ari.egg-info/
+logs/
+state/
