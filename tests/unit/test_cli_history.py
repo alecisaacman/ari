@@ -9,7 +9,16 @@ from ari_cli.history_cli import (
 from ari_core import RunSignalOrchestrationInput, run_signal_orchestration
 from ari_memory import Base, DailyStateRepository, OpenLoopRepository, WeeklyStateRepository
 from ari_memory.session import create_session_factory
-from ari_state import AlertChannel, DailyState, OpenLoop, OpenLoopPriority, WeeklyState
+from ari_state import (
+    ActionType,
+    AlertChannel,
+    ControllerDecision,
+    DailyState,
+    OpenLoop,
+    OpenLoopPriority,
+    ProposedAction,
+    WeeklyState,
+)
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -27,8 +36,8 @@ def test_cli_latest_run_outputs_run_signals_and_alerts() -> None:
     rendered = output.getvalue()
     assert exit_code == 0
     assert "latest orchestration run for 2026-04-10" in rendered
-    assert "signals: 3" in rendered
-    assert "alerts: 3" in rendered
+    assert "signals: 4" in rendered
+    assert "alerts: 4" in rendered
     assert "open_loop_accumulation" in rendered
     assert "Weekly trajectory is drifting" in rendered
 
@@ -46,8 +55,8 @@ def test_cli_previous_run_outputs_previous_run_for_state_date() -> None:
     rendered = output.getvalue()
     assert exit_code == 0
     assert "previous orchestration run for 2026-04-10" in rendered
-    assert "signals: 3" in rendered
-    assert "alerts: 3" in rendered
+    assert "signals: 4" in rendered
+    assert "alerts: 4" in rendered
     assert "Stress is elevated at 9/10." in rendered
 
 
@@ -88,6 +97,23 @@ def test_cli_explainability_output_reads_from_canonical_query_results() -> None:
     assert "Sample of active open loops contributing to the accumulation signal." in rendered
     assert "reason: No meaningful overlap was found between the weekly outcomes" in rendered
     assert "source_signals:" in rendered
+
+
+def test_cli_latest_run_renders_controller_event_stream() -> None:
+    session_factory = _build_controlled_history_session_factory()
+    output = StringIO()
+
+    exit_code = handle_latest_run(
+        session_factory,
+        state_date=date(2026, 4, 10),
+        stdout=output,
+    )
+
+    rendered = output.getvalue()
+    assert exit_code == 0
+    assert "controller_events" in rendered
+    assert "[0] observation_intake" in rendered
+    assert "[6] controller_outcome" in rendered
 
 
 def _build_history_session_factory() -> sessionmaker[Session]:
@@ -159,6 +185,25 @@ def _build_changed_history_session_factory() -> sessionmaker[Session]:
     return create_session_factory(engine)
 
 
+def _build_controlled_history_session_factory() -> sessionmaker[Session]:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
+    _seed_orchestration_state(engine, detected_at=detected_at)
+
+    with Session(engine) as session:
+        run_signal_orchestration(
+            session,
+            RunSignalOrchestrationInput(
+                state_date=date(2026, 4, 10),
+                detected_at=detected_at,
+                alert_channel=AlertChannel.HUB,
+                controller_decision=_controller_decision(),
+            ),
+        )
+
+    return create_session_factory(engine)
+
+
 def _seed_orchestration_state(engine: Engine, *, detected_at: datetime) -> None:
     Base.metadata.create_all(engine)
 
@@ -196,3 +241,18 @@ def _seed_orchestration_state(engine: Engine, *, detected_at: datetime) -> None:
                 )
             )
         session.commit()
+
+
+def _controller_decision() -> ControllerDecision:
+    return ControllerDecision(
+        decision_summary="Inspect the test file.",
+        proposed_action="Inspect the test file.",
+        confidence=0.92,
+        action_intents=[
+            ProposedAction(
+                action_type=ActionType.READ_FILE,
+                target="tests/unit/test_models.py",
+                instructions="Read the target test before changing anything.",
+            )
+        ],
+    )

@@ -8,8 +8,10 @@ from ari_core import (
     DailyStateUpdate,
     WeeklyPlanningUpdate,
     WeeklyReflectionUpdate,
+    approve_pending_approval,
     compare_latest_two_runs,
     create_open_loop,
+    deny_pending_approval,
     get_alert_details,
     get_daily_state,
     get_latest_run_details,
@@ -17,6 +19,7 @@ from ari_core import (
     get_signal_details,
     get_weekly_state,
     list_open_loops,
+    list_pending_approvals,
     resolve_open_loop,
     update_daily_state,
     update_weekly_plan,
@@ -33,6 +36,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ari_api.schemas import (
     ActiveOpenLoopsResponse,
     AlertResponse,
+    ApprovalActionRequest,
     DailyStateResponse,
     DailyStateWriteRequest,
     OpenLoopCreateRequest,
@@ -40,6 +44,8 @@ from ari_api.schemas import (
     OpenLoopResponse,
     OrchestrationRunComparisonResponse,
     OrchestrationRunResponse,
+    PendingApprovalResponse,
+    PendingApprovalsResponse,
     SignalResponse,
     WeeklyPlanWriteRequest,
     WeeklyReflectionWriteRequest,
@@ -48,6 +54,7 @@ from ari_api.schemas import (
     build_alert_response,
     build_daily_state_response,
     build_open_loop_response,
+    build_pending_approvals_response,
     build_run_comparison_response,
     build_run_response,
     build_signal_response,
@@ -78,6 +85,61 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                 detail=f"No orchestration run found for {state_date.isoformat()}.",
             )
         return build_run_response(details)
+
+    @app.get(
+        "/pending-approvals",
+        response_model=PendingApprovalsResponse,
+    )
+    def pending_approvals(
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> PendingApprovalsResponse:
+        return build_pending_approvals_response(list_pending_approvals(session))
+
+    @app.post(
+        "/pending-approvals/{approval_id}/approve",
+        response_model=PendingApprovalResponse,
+    )
+    def approve_pending(
+        approval_id: str,
+        payload: ApprovalActionRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> PendingApprovalResponse:
+        from uuid import UUID
+
+        result = approve_pending_approval(
+            session,
+            approval_id=UUID(approval_id),
+            approved_at=payload.resolved_at,
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No pending approval found for {approval_id}.",
+            )
+        return PendingApprovalResponse.model_validate(result.approval.model_dump(mode="json"))
+
+    @app.post(
+        "/pending-approvals/{approval_id}/deny",
+        response_model=PendingApprovalResponse,
+    )
+    def deny_pending(
+        approval_id: str,
+        payload: ApprovalActionRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> PendingApprovalResponse:
+        from uuid import UUID
+
+        result = deny_pending_approval(
+            session,
+            approval_id=UUID(approval_id),
+            denied_at=payload.resolved_at,
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No pending approval found for {approval_id}.",
+            )
+        return PendingApprovalResponse.model_validate(result.approval.model_dump(mode="json"))
 
     @app.get(
         "/orchestration-runs/previous",

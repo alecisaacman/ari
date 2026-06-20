@@ -32,12 +32,15 @@ from ari_memory import (
 )
 from ari_memory.session import create_session_factory
 from ari_state import (
+    ActionType,
     AlertChannel,
+    ControllerDecision,
     DailyState,
     EventCategory,
     OpenLoop,
     OpenLoopPriority,
     OpenLoopStatus,
+    ProposedAction,
     WeeklyState,
 )
 from fastapi.testclient import TestClient
@@ -121,9 +124,11 @@ def test_compare_latest_two_runs_endpoint_exposes_expected_shape_fields() -> Non
     assert response.status_code == 200
     assert sorted(body) == [
         "alerts",
+        "latest_controller_events",
         "latest_run",
         "new_alert_ids",
         "new_signal_ids",
+        "previous_controller_events",
         "previous_run",
         "reused_alert_ids",
         "reused_signal_ids",
@@ -132,7 +137,10 @@ def test_compare_latest_two_runs_endpoint_exposes_expected_shape_fields() -> Non
     ]
     assert sorted(body["latest_run"]) == [
         "alert_ids",
+        "controller_cycle_state",
+        "controller_trajectory",
         "executed_at",
+        "pending_approval",
         "run_id",
         "signal_ids",
         "state_date",
@@ -140,7 +148,10 @@ def test_compare_latest_two_runs_endpoint_exposes_expected_shape_fields() -> Non
     ]
     assert sorted(body["previous_run"]) == [
         "alert_ids",
+        "controller_cycle_state",
+        "controller_trajectory",
         "executed_at",
+        "pending_approval",
         "run_id",
         "signal_ids",
         "state_date",
@@ -173,6 +184,109 @@ def test_compare_latest_two_runs_endpoint_exposes_expected_shape_fields() -> Non
         "status",
         "title",
     ]
+
+
+def test_latest_run_endpoint_exposes_controller_trajectory_when_present() -> None:
+    session_factory = _build_controlled_history_session_factory()
+    app = create_app(session_factory)
+
+    with TestClient(app) as client:
+        response = client.get("/orchestration-runs/latest", params={"state_date": "2026-04-10"})
+
+    assert response.status_code == 200
+    trajectory = response.json()["run"]["controller_trajectory"]
+    assert trajectory is not None
+    assert trajectory["controller_outcome"] == "success"
+    assert trajectory["authority_result"]["outcome"] == "allow"
+    assert trajectory["action_plan"]["is_bounded"] is True
+    assert trajectory["worker_run"]["observations"][0]["kind"] == "read_file"
+
+
+def test_latest_run_endpoint_exposes_ordered_controller_events_when_present() -> None:
+    session_factory = _build_controlled_history_session_factory()
+    app = create_app(session_factory)
+
+    with TestClient(app) as client:
+        response = client.get("/orchestration-runs/latest", params={"state_date": "2026-04-10"})
+
+    assert response.status_code == 200
+    events = response.json()["controller_events"]
+    assert [event["sequence_number"] for event in events] == list(range(7))
+    assert [event["event_type"] for event in events] == [
+        "observation_intake",
+        "decision_selected",
+        "authority_result",
+        "dispatch_started",
+        "dispatch_result",
+        "verification_result",
+        "controller_outcome",
+    ]
+    assert events[0]["payload"]["signal_ids"]
+    assert events[-1]["payload"]["controller_outcome"] == "success"
+
+
+def test_pending_approvals_endpoint_lists_waiting_approvals() -> None:
+    session_factory = _build_pending_approval_session_factory()
+    app = create_app(session_factory)
+
+    with TestClient(app) as client:
+        response = client.get("/pending-approvals")
+
+    assert response.status_code == 200
+    approvals = response.json()["approvals"]
+    assert len(approvals) == 1
+    assert approvals[0]["status"] == "pending"
+    assert "requiring approval" in approvals[0]["reason"].lower()
+
+
+def test_pending_approval_approve_endpoint_resumes_controller_cycle() -> None:
+    session_factory = _build_pending_approval_session_factory()
+    app = create_app(session_factory)
+
+    with session_factory() as session:
+        pending = get_latest_run_details(session, state_date=date(2026, 4, 10))
+    assert pending is not None
+    assert pending.pending_approval is not None
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/pending-approvals/{pending.pending_approval.id}/approve",
+            json={"resolved_at": "2026-04-10T12:05:00Z"},
+        )
+        latest = client.get("/orchestration-runs/latest", params={"state_date": "2026-04-10"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
+    latest_run = latest.json()["run"]
+    assert latest_run["controller_cycle_state"] == "completed"
+    assert latest_run["pending_approval"]["status"] == "approved"
+    assert latest.json()["controller_events"][4]["event_type"] == "approval_granted"
+    assert latest.json()["controller_events"][5]["event_type"] == "controller_resumed"
+
+
+def test_pending_approval_deny_endpoint_denies_controller_cycle() -> None:
+    session_factory = _build_pending_approval_session_factory()
+    app = create_app(session_factory)
+
+    with session_factory() as session:
+        pending = get_latest_run_details(session, state_date=date(2026, 4, 10))
+    assert pending is not None
+    assert pending.pending_approval is not None
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/pending-approvals/{pending.pending_approval.id}/deny",
+            json={"resolved_at": "2026-04-10T12:05:00Z"},
+        )
+        latest = client.get("/orchestration-runs/latest", params={"state_date": "2026-04-10"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "denied"
+    latest_run = latest.json()["run"]
+    assert latest_run["controller_cycle_state"] == "denied"
+    assert latest_run["pending_approval"]["status"] == "denied"
+    assert latest.json()["controller_events"][-2]["event_type"] == "approval_denied"
+    assert latest.json()["controller_events"][-1]["event_type"] == "controller_outcome"
 
 
 def test_current_daily_state_endpoint_returns_canonical_daily_state() -> None:
@@ -582,6 +696,54 @@ def _build_empty_session_factory() -> sessionmaker[Session]:
     return create_session_factory(engine)
 
 
+def _build_controlled_history_session_factory() -> sessionmaker[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
+    _seed_orchestration_state(engine, detected_at=detected_at)
+
+    with Session(engine) as session:
+        run_signal_orchestration(
+            session,
+            RunSignalOrchestrationInput(
+                state_date=date(2026, 4, 10),
+                detected_at=detected_at,
+                alert_channel=AlertChannel.HUB,
+                controller_decision=_controller_decision(),
+            ),
+        )
+
+    return create_session_factory(engine)
+
+
+def _build_pending_approval_session_factory() -> sessionmaker[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
+    _seed_orchestration_state(engine, detected_at=detected_at)
+
+    with Session(engine) as session:
+        run_signal_orchestration(
+            session,
+            RunSignalOrchestrationInput(
+                state_date=date(2026, 4, 10),
+                detected_at=detected_at,
+                alert_channel=AlertChannel.HUB,
+                controller_decision=_approval_controller_decision(),
+            ),
+        )
+
+    return create_session_factory(engine)
+
+
 def _prepare_file_database(path: Path) -> str:
     database_url = f"sqlite+pysqlite:///{path}"
     engine = create_engine(database_url, future=True)
@@ -643,3 +805,34 @@ def _seed_orchestration_state(engine: Engine, *, detected_at: datetime) -> None:
                 )
             )
         session.commit()
+
+
+def _controller_decision() -> ControllerDecision:
+    return ControllerDecision(
+        decision_summary="Inspect the test file.",
+        proposed_action="Inspect the test file.",
+        confidence=0.92,
+        action_intents=[
+            ProposedAction(
+                action_type=ActionType.READ_FILE,
+                target="tests/unit/test_models.py",
+                instructions="Read the target test before changing anything.",
+            )
+        ],
+    )
+
+
+def _approval_controller_decision() -> ControllerDecision:
+    return ControllerDecision(
+        decision_summary="Inspect the test file with approval.",
+        proposed_action="Inspect the test file with approval.",
+        requires_approval=True,
+        confidence=0.92,
+        action_intents=[
+            ProposedAction(
+                action_type=ActionType.READ_FILE,
+                target="tests/unit/test_models.py",
+                instructions="Read the target test before changing anything.",
+            )
+        ],
+    )

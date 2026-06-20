@@ -1,21 +1,54 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import TextIO
 from uuid import UUID
 
 from ari_core import (
     OrchestrationRunComparison,
     OrchestrationRunDetails,
+    RunSignalOrchestrationInput,
     compare_latest_two_runs,
     get_latest_run_details,
     get_previous_run_details,
+    run_signal_orchestration,
 )
-from ari_state import Alert, Signal
+from ari_state import Alert, ControllerEvent, Signal
 from sqlalchemy.orm import Session
 
 SessionFactory = Callable[[], Session]
+
+
+def handle_run_orchestration(
+    session_factory: SessionFactory,
+    *,
+    state_date: date,
+    stdout: TextIO,
+) -> int:
+    detected_at = datetime.now(tz=UTC)
+    orchestration_input = RunSignalOrchestrationInput(
+        state_date=state_date,
+        detected_at=detected_at,
+    )
+    with session_factory() as session:
+        result = run_signal_orchestration(session, orchestration_input)
+    run = result.run
+    stdout.write(f"orchestration run complete for {run.state_date.isoformat()}\n")
+    stdout.write(f"run_id: {run.id}\n")
+    stdout.write(f"executed_at: {_format_datetime(run.executed_at)}\n")
+    stdout.write(f"state_fingerprint: {run.state_fingerprint}\n")
+    stdout.write(f"signals: {len(result.signals)}\n")
+    stdout.write(f"alerts: {len(result.alerts)}\n")
+    if result.signals:
+        stdout.write("\nsignals\n")
+        stdout.write(_render_signal_block(result.signals))
+        stdout.write("\n")
+    if result.alerts:
+        stdout.write("\nalerts\n")
+        stdout.write(_render_alert_block(result.alerts))
+        stdout.write("\n")
+    return 0
 
 
 def handle_latest_run(
@@ -57,13 +90,14 @@ def handle_compare_latest_two_runs(
     with session_factory() as session:
         comparison = compare_latest_two_runs(session, state_date=state_date)
         latest = get_latest_run_details(session, state_date=state_date)
-    if comparison is None or latest is None:
+        previous = get_previous_run_details(session, state_date=state_date)
+    if comparison is None or latest is None or previous is None:
         stdout.write(
             "Need at least two orchestration runs to compare "
             f"for {state_date.isoformat()}.\n"
         )
         return 1
-    stdout.write(render_run_comparison(comparison, latest))
+    stdout.write(render_run_comparison(comparison, latest, previous))
     return 0
 
 
@@ -76,12 +110,21 @@ def render_run_details(label: str, details: OrchestrationRunDetails) -> str:
         f"state_fingerprint: {run.state_fingerprint}",
         f"signals: {len(details.signals)}",
         f"alerts: {len(details.alerts)}",
+        f"controller_cycle_state: {run.controller_cycle_state or 'none'}",
+        (
+            "pending_approval: "
+            f"{details.pending_approval.id if details.pending_approval is not None else 'none'}"
+        ),
+        _render_controller_summary(run),
         "",
         "signals",
         _render_signal_block(details.signals),
         "",
         "alerts",
         _render_alert_block(details.alerts),
+        "",
+        "controller_events",
+        _render_controller_event_block(details.controller_events),
         "",
     ]
     return "\n".join(sections)
@@ -90,6 +133,7 @@ def render_run_details(label: str, details: OrchestrationRunDetails) -> str:
 def render_run_comparison(
     comparison: OrchestrationRunComparison,
     latest: OrchestrationRunDetails,
+    previous: OrchestrationRunDetails,
 ) -> str:
     signal_status = _status_map(
         reused_ids=comparison.reused_signal_ids,
@@ -117,6 +161,12 @@ def render_run_comparison(
         "",
         "alerts",
         _render_alert_block(latest.alerts, statuses=alert_status),
+        "",
+        "latest_controller_events",
+        _render_controller_event_block(latest.controller_events),
+        "",
+        "previous_controller_events",
+        _render_controller_event_block(previous.controller_events),
         "",
     ]
     return "\n".join(sections)
@@ -169,6 +219,30 @@ def _status_map(*, reused_ids: list[UUID], new_ids: list[UUID]) -> dict[UUID, st
     status_by_id = {entity_id: "reused" for entity_id in reused_ids}
     status_by_id.update({entity_id: "new" for entity_id in new_ids})
     return status_by_id
+
+
+def _render_controller_event_block(events: list[ControllerEvent]) -> str:
+    if not events:
+        return "none"
+    lines: list[str] = []
+    for event in events:
+        lines.append(
+            f"- [{event.sequence_number}] {event.event_type}: {event.summary}"
+        )
+    return "\n".join(lines)
+
+
+def _render_controller_summary(run: object) -> str:
+    trajectory = getattr(run, "controller_trajectory", None)
+    if trajectory is None:
+        return "controller_outcome: none"
+    return "\n".join(
+        [
+            f"controller_outcome: {trajectory.controller_outcome}",
+            f"decision: {trajectory.decision.decision_summary}",
+            f"authority: {trajectory.authority_result.outcome}",
+        ]
+    )
 
 
 def _format_datetime(value: object) -> str:

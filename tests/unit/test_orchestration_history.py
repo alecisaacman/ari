@@ -8,7 +8,17 @@ from ari_core import (
     run_signal_orchestration,
 )
 from ari_memory import Base, DailyStateRepository, OpenLoopRepository, WeeklyStateRepository
-from ari_state import AlertChannel, DailyState, OpenLoop, OpenLoopPriority, WeeklyState
+from ari_state import (
+    ActionType,
+    AlertChannel,
+    ControllerDecision,
+    ControllerEventType,
+    DailyState,
+    OpenLoop,
+    OpenLoopPriority,
+    ProposedAction,
+    WeeklyState,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -146,13 +156,55 @@ def test_history_comparison_of_changed_run_distinguishes_reused_vs_new_outputs()
     assert comparison.reused_signal_ids == [
         second_signals["open_loop_accumulation"].id,
         second_signals["weekly_trajectory_drift"].id,
+        second_signals["stale_high_priority_loop"].id,
     ]
     assert comparison.new_signal_ids == [second_signals["elevated_stress"].id]
     assert comparison.reused_alert_ids == [
         second_alerts["Open loops are accumulating"].id,
         second_alerts["Weekly trajectory is drifting"].id,
+        second_alerts["High-priority loops have stalled"].id,
     ]
     assert comparison.new_alert_ids == [second_alerts["Stress is elevated"].id]
+
+
+def test_history_exposes_persisted_controller_trajectory_for_controlled_run() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    detected_at = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
+    _seed_orchestration_state(engine, detected_at=detected_at)
+
+    with Session(engine) as session:
+        result = run_signal_orchestration(
+            session,
+            RunSignalOrchestrationInput(
+                state_date=date(2026, 4, 10),
+                detected_at=detected_at,
+                alert_channel=AlertChannel.HUB,
+                controller_decision=_controller_decision(),
+            ),
+        )
+
+    assert result.controller_trajectory is not None
+    assert result.controller_trajectory.controller_outcome == "success"
+
+    with Session(engine) as session:
+        latest = get_latest_run_details(session, state_date=date(2026, 4, 10))
+
+    assert latest is not None
+    assert latest.run.controller_trajectory is not None
+    assert latest.run.controller_trajectory.decision.decision_summary == "Inspect the test file."
+    assert latest.run.controller_trajectory.authority_result.outcome == "allow"
+    assert latest.run.controller_trajectory.worker_run is not None
+    assert latest.run.controller_trajectory.verification_result is not None
+    assert [event.sequence_number for event in latest.controller_events] == list(range(7))
+    assert [event.event_type for event in latest.controller_events] == [
+        ControllerEventType.OBSERVATION_INTAKE,
+        ControllerEventType.DECISION_SELECTED,
+        ControllerEventType.AUTHORITY_RESULT,
+        ControllerEventType.DISPATCH_STARTED,
+        ControllerEventType.DISPATCH_RESULT,
+        ControllerEventType.VERIFICATION_RESULT,
+        ControllerEventType.CONTROLLER_OUTCOME,
+    ]
 
 
 def _seed_orchestration_state(engine: object, *, detected_at: datetime) -> None:
@@ -192,3 +244,18 @@ def _seed_orchestration_state(engine: object, *, detected_at: datetime) -> None:
                 )
             )
         session.commit()
+
+
+def _controller_decision() -> ControllerDecision:
+    return ControllerDecision(
+        decision_summary="Inspect the test file.",
+        proposed_action="Inspect the test file.",
+        confidence=0.92,
+        action_intents=[
+            ProposedAction(
+                action_type=ActionType.READ_FILE,
+                target="tests/unit/test_models.py",
+                instructions="Read the target test before changing anything.",
+            )
+        ],
+    )

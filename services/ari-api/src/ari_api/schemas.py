@@ -5,14 +5,24 @@ from uuid import UUID
 
 from ari_core import OrchestrationRunComparison, OrchestrationRunDetails
 from ari_state import (
+    ActionPlan,
     Alert,
+    AuthorityResult,
+    ControllerDecision,
+    ControllerEvent,
+    ControllerTrajectory,
     DailyState,
     EvidenceItem,
+    ExecutionObservationRecord,
     OpenLoop,
     OpenLoopKind,
     OpenLoopPriority,
+    PendingApproval,
+    ProposedAction,
     Signal,
+    VerificationResult,
     WeeklyState,
+    WorkerRun,
 )
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,6 +68,95 @@ class AlertResponse(APIModel):
     sent_at: datetime | None
 
 
+class ProposedActionResponse(APIModel):
+    action_type: str
+    target: str
+    instructions: str
+
+
+class ControllerDecisionResponse(APIModel):
+    id: UUID
+    decision_type: str
+    decision_summary: str
+    proposed_action: str
+    requires_approval: bool
+    confidence: float
+    action_intents: list[ProposedActionResponse]
+
+
+class AuthorityResultResponse(APIModel):
+    decision_id: UUID
+    outcome: str
+    reason: str
+    may_execute: bool
+
+
+class ActionPlanResponse(APIModel):
+    decision_id: UUID
+    summary: str
+    actions: list[ProposedActionResponse]
+    is_bounded: bool
+
+
+class ExecutionObservationResponse(APIModel):
+    success: bool
+    kind: str
+    target: str
+    summary: str
+    details: str
+
+
+class WorkerRunResponse(APIModel):
+    decision_id: UUID
+    executed_at: datetime
+    observations: list[ExecutionObservationResponse]
+
+
+class VerificationResultResponse(APIModel):
+    decision_id: UUID
+    outcome: str
+    reason: str
+
+
+class ControllerTrajectoryResponse(APIModel):
+    decision: ControllerDecisionResponse
+    authority_result: AuthorityResultResponse
+    action_plan: ActionPlanResponse | None
+    worker_run: WorkerRunResponse | None
+    verification_result: VerificationResultResponse | None
+    controller_outcome: str
+
+
+class ControllerEventResponse(APIModel):
+    id: UUID
+    run_id: UUID
+    sequence_number: int
+    occurred_at: datetime
+    event_type: str
+    summary: str
+    payload: dict[str, object]
+
+
+class PendingApprovalResponse(APIModel):
+    id: UUID
+    run_id: UUID
+    decision_id: UUID
+    status: str
+    requested_at: datetime
+    resolved_at: datetime | None
+    reason: str
+    decision_summary: str
+    proposed_action: str
+
+
+class PendingApprovalsResponse(APIModel):
+    approvals: list[PendingApprovalResponse]
+
+
+class ApprovalActionRequest(APIModel):
+    resolved_at: datetime | None = None
+
+
 class RunSummaryResponse(APIModel):
     run_id: UUID
     state_date: date
@@ -65,12 +164,16 @@ class RunSummaryResponse(APIModel):
     state_fingerprint: str
     signal_ids: list[UUID]
     alert_ids: list[UUID]
+    controller_trajectory: ControllerTrajectoryResponse | None
+    controller_cycle_state: str | None
+    pending_approval: PendingApprovalResponse | None
 
 
 class OrchestrationRunResponse(APIModel):
     run: RunSummaryResponse
     signals: list[SignalResponse]
     alerts: list[AlertResponse]
+    controller_events: list[ControllerEventResponse]
 
 
 class OrchestrationRunComparisonResponse(APIModel):
@@ -83,6 +186,8 @@ class OrchestrationRunComparisonResponse(APIModel):
     new_alert_ids: list[UUID]
     signals: list[SignalResponse]
     alerts: list[AlertResponse]
+    latest_controller_events: list[ControllerEventResponse]
+    previous_controller_events: list[ControllerEventResponse]
 
 
 class DailyStateResponse(APIModel):
@@ -164,6 +269,9 @@ def build_run_response(details: OrchestrationRunDetails) -> OrchestrationRunResp
         run=_build_run_summary(details),
         signals=[_build_signal_response(signal) for signal in details.signals],
         alerts=[_build_alert_response(alert) for alert in details.alerts],
+        controller_events=[
+            _build_controller_event_response(event) for event in details.controller_events
+        ],
     )
 
 
@@ -182,6 +290,12 @@ def build_run_comparison_response(
         new_alert_ids=[*comparison.new_alert_ids],
         signals=[_build_signal_response(signal) for signal in latest.signals],
         alerts=[_build_alert_response(alert) for alert in latest.alerts],
+        latest_controller_events=[
+            _build_controller_event_response(event) for event in latest.controller_events
+        ],
+        previous_controller_events=[
+            _build_controller_event_response(event) for event in previous.controller_events
+        ],
     )
 
 
@@ -235,6 +349,9 @@ def _build_run_summary(details: OrchestrationRunDetails) -> RunSummaryResponse:
         state_fingerprint=run.state_fingerprint,
         signal_ids=[*run.signal_ids],
         alert_ids=[*run.alert_ids],
+        controller_trajectory=_build_controller_trajectory_response(run.controller_trajectory),
+        controller_cycle_state=run.controller_cycle_state,
+        pending_approval=_build_pending_approval_response(details.pending_approval),
     )
 
 
@@ -294,4 +411,142 @@ def _build_open_loop_response(loop: OpenLoop) -> OpenLoopResponse:
         opened_at=loop.opened_at,
         due_at=loop.due_at,
         last_touched_at=loop.last_touched_at,
+    )
+
+
+def _build_controller_trajectory_response(
+    trajectory: ControllerTrajectory | None,
+) -> ControllerTrajectoryResponse | None:
+    if trajectory is None:
+        return None
+    return ControllerTrajectoryResponse(
+        decision=_build_controller_decision_response(trajectory.decision),
+        authority_result=_build_authority_result_response(trajectory.authority_result),
+        action_plan=_build_action_plan_response(trajectory.action_plan),
+        worker_run=_build_worker_run_response(trajectory.worker_run),
+        verification_result=_build_verification_result_response(trajectory.verification_result),
+        controller_outcome=trajectory.controller_outcome,
+    )
+
+
+def _build_controller_decision_response(
+    decision: ControllerDecision,
+) -> ControllerDecisionResponse:
+    return ControllerDecisionResponse(
+        id=decision.id,
+        decision_type=decision.decision_type,
+        decision_summary=decision.decision_summary,
+        proposed_action=decision.proposed_action,
+        requires_approval=decision.requires_approval,
+        confidence=decision.confidence,
+        action_intents=[
+            _build_proposed_action_response(action) for action in decision.action_intents
+        ],
+    )
+
+
+def _build_authority_result_response(result: AuthorityResult) -> AuthorityResultResponse:
+    return AuthorityResultResponse(
+        decision_id=result.decision_id,
+        outcome=result.outcome,
+        reason=result.reason,
+        may_execute=result.may_execute,
+    )
+
+
+def _build_action_plan_response(plan: ActionPlan | None) -> ActionPlanResponse | None:
+    if plan is None:
+        return None
+    return ActionPlanResponse(
+        decision_id=plan.decision_id,
+        summary=plan.summary,
+        actions=[_build_proposed_action_response(action) for action in plan.actions],
+        is_bounded=plan.is_bounded,
+    )
+
+
+def _build_worker_run_response(run: WorkerRun | None) -> WorkerRunResponse | None:
+    if run is None:
+        return None
+    return WorkerRunResponse(
+        decision_id=run.decision_id,
+        executed_at=run.executed_at,
+        observations=[
+            _build_execution_observation_response(observation)
+            for observation in run.observations
+        ],
+    )
+
+
+def _build_execution_observation_response(
+    observation: ExecutionObservationRecord,
+) -> ExecutionObservationResponse:
+    return ExecutionObservationResponse(
+        success=observation.success,
+        kind=observation.kind,
+        target=observation.target,
+        summary=observation.summary,
+        details=observation.details,
+    )
+
+
+def _build_verification_result_response(
+    result: VerificationResult | None,
+) -> VerificationResultResponse | None:
+    if result is None:
+        return None
+    return VerificationResultResponse(
+        decision_id=result.decision_id,
+        outcome=result.outcome,
+        reason=result.reason,
+    )
+
+
+def _build_proposed_action_response(action: ProposedAction) -> ProposedActionResponse:
+    return ProposedActionResponse(
+        action_type=action.action_type,
+        target=action.target,
+        instructions=action.instructions,
+    )
+
+
+def _build_controller_event_response(event: ControllerEvent) -> ControllerEventResponse:
+    return ControllerEventResponse(
+        id=event.id,
+        run_id=event.run_id,
+        sequence_number=event.sequence_number,
+        occurred_at=event.occurred_at,
+        event_type=event.event_type,
+        summary=event.summary,
+        payload=dict(event.payload),
+    )
+
+
+def build_pending_approvals_response(
+    approvals: list[PendingApproval],
+) -> PendingApprovalsResponse:
+    return PendingApprovalsResponse(
+        approvals=[
+            _build_pending_approval_response(approval)
+            for approval in approvals
+            if approval is not None
+        ]
+    )
+
+
+def _build_pending_approval_response(
+    approval: PendingApproval | None,
+) -> PendingApprovalResponse | None:
+    if approval is None:
+        return None
+    return PendingApprovalResponse(
+        id=approval.id,
+        run_id=approval.run_id,
+        decision_id=approval.decision_id,
+        status=approval.status,
+        requested_at=approval.requested_at,
+        resolved_at=approval.resolved_at,
+        reason=approval.reason,
+        decision_summary=approval.decision_summary,
+        proposed_action=approval.proposed_action,
     )

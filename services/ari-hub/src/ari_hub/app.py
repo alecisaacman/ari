@@ -6,14 +6,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from html import escape
-from typing import Any
+from typing import Any, Protocol, cast
 from urllib.error import HTTPError
-from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.parse import parse_qs, urlencode
+from urllib.request import Request, urlopen
 from uuid import UUID
 
 from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi import Request as FastAPIRequest
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 JSONDict = dict[str, Any]
 
@@ -22,6 +23,37 @@ JSONDict = dict[str, Any]
 class HubAPIError(Exception):
     status_code: int
     detail: str
+
+
+class HubAPIClient(Protocol):
+    def get_latest_run(self, *, state_date: date) -> JSONDict: ...
+
+    def compare_latest_two_runs(self, *, state_date: date) -> JSONDict: ...
+
+    def get_current_daily_state(self, *, state_date: date) -> JSONDict: ...
+
+    def get_current_weekly_state(self, *, state_date: date) -> JSONDict: ...
+
+    def get_active_open_loops(self) -> JSONDict: ...
+
+    def get_signal_detail(self, *, signal_id: UUID) -> JSONDict: ...
+
+    def get_alert_detail(self, *, alert_id: UUID) -> JSONDict: ...
+
+    def update_daily_state(self, *, state_date: date, payload: JSONDict) -> JSONDict: ...
+
+    def update_weekly_plan(self, *, state_date: date, payload: JSONDict) -> JSONDict: ...
+
+    def update_weekly_reflection(
+        self,
+        *,
+        state_date: date,
+        payload: JSONDict,
+    ) -> JSONDict: ...
+
+    def add_open_loop(self, *, payload: JSONDict) -> JSONDict: ...
+
+    def resolve_open_loop(self, *, loop_id: UUID, payload: JSONDict) -> JSONDict: ...
 
 
 class OrchestrationHistoryClient:
@@ -49,20 +81,87 @@ class OrchestrationHistoryClient:
     def get_alert_detail(self, *, alert_id: UUID) -> JSONDict:
         return self._fetch(f"/alerts/{alert_id}")
 
+    def update_daily_state(self, *, state_date: date, payload: JSONDict) -> JSONDict:
+        return self._send_json(
+            "/daily-states/current",
+            method="PUT",
+            payload=payload,
+            state_date=state_date,
+        )
+
+    def update_weekly_plan(self, *, state_date: date, payload: JSONDict) -> JSONDict:
+        return self._send_json(
+            "/weekly-states/plan",
+            method="PUT",
+            payload=payload,
+            state_date=state_date,
+        )
+
+    def update_weekly_reflection(self, *, state_date: date, payload: JSONDict) -> JSONDict:
+        return self._send_json(
+            "/weekly-states/reflection",
+            method="PUT",
+            payload=payload,
+            state_date=state_date,
+        )
+
+    def add_open_loop(self, *, payload: JSONDict) -> JSONDict:
+        return self._send_json("/open-loops", method="POST", payload=payload)
+
+    def resolve_open_loop(self, *, loop_id: UUID, payload: JSONDict) -> JSONDict:
+        return self._send_json(
+            f"/open-loops/{loop_id}/resolve",
+            method="POST",
+            payload=payload,
+        )
+
     def _fetch(self, path: str, *, state_date: date | None = None) -> JSONDict:
-        url = f"{self._base_url}{path}"
-        if state_date is not None:
-            query = urlencode({"state_date": state_date.isoformat()})
-            url = f"{url}?{query}"
+        return self._request(path, state_date=state_date)
+
+    def _send_json(
+        self,
+        path: str,
+        *,
+        method: str,
+        payload: JSONDict,
+        state_date: date | None = None,
+    ) -> JSONDict:
+        body = json.dumps(payload).encode("utf-8")
+        request = Request(
+            self._build_url(path, state_date=state_date),
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        return self._request(path, request=request, state_date=state_date)
+
+    def _request(
+        self,
+        path: str,
+        *,
+        request: Request | None = None,
+        state_date: date | None = None,
+    ) -> JSONDict:
+        resolved_request: str | Request = request or self._build_url(
+            path,
+            state_date=state_date,
+        )
         try:
-            with urlopen(url) as response:
-                return json.load(response)
+            with urlopen(resolved_request) as response:
+                return cast(JSONDict, json.load(response))
         except HTTPError as error:
             detail = _extract_error_detail(error)
             raise HubAPIError(status_code=error.code, detail=detail) from error
 
+    def _build_url(self, path: str, *, state_date: date | None = None) -> str:
+        url = f"{self._base_url}{path}"
+        if state_date is not None:
+            query = urlencode({"state_date": state_date.isoformat()})
+            url = f"{url}?{query}"
+        return url
 
-def create_app(api_client: OrchestrationHistoryClient | None = None) -> FastAPI:
+
+def create_app(api_client: HubAPIClient | None = None) -> FastAPI:
     resolved_client = api_client or OrchestrationHistoryClient(_api_base_url())
     app = FastAPI(title="ARI Hub", version="0.1.0")
 
@@ -173,6 +272,90 @@ def create_app(api_client: OrchestrationHistoryClient | None = None) -> FastAPI:
             )
         )
 
+    @app.post("/actions/daily-state")
+    async def write_daily_state_action(request: FastAPIRequest) -> Response:
+        form = await _parse_form_body(request)
+        state_date = date.fromisoformat(_required_str(form, "state_date"))
+        try:
+            resolved_client.update_daily_state(
+                state_date=state_date,
+                payload={
+                    "priorities": _split_lines(form.get("priorities")),
+                    "win_condition": _optional_str(form.get("win_condition")),
+                    "movement": _parse_bool(form.get("movement")),
+                    "stress": _parse_int(form.get("stress")),
+                    "next_action": _optional_str(form.get("next_action")),
+                },
+            )
+        except (HubAPIError, ValueError) as error:
+            return _render_action_error(error, title="Daily state update failed")
+        return _redirect_home(state_date=state_date)
+
+    @app.post("/actions/weekly-plan")
+    async def write_weekly_plan_action(request: FastAPIRequest) -> Response:
+        form = await _parse_form_body(request)
+        state_date = date.fromisoformat(_required_str(form, "state_date"))
+        try:
+            resolved_client.update_weekly_plan(
+                state_date=state_date,
+                payload={
+                    "outcomes": _split_lines(form.get("outcomes")),
+                    "cannot_drift": _split_lines(form.get("cannot_drift")),
+                    "blockers": _split_lines(form.get("blockers")),
+                },
+            )
+        except (HubAPIError, ValueError) as error:
+            return _render_action_error(error, title="Weekly plan update failed")
+        return _redirect_home(state_date=state_date)
+
+    @app.post("/actions/weekly-reflection")
+    async def write_weekly_reflection_action(
+        request: FastAPIRequest,
+    ) -> Response:
+        form = await _parse_form_body(request)
+        state_date = date.fromisoformat(_required_str(form, "state_date"))
+        try:
+            resolved_client.update_weekly_reflection(
+                state_date=state_date,
+                payload={
+                    "lesson": _required_str(form, "lesson"),
+                    "blockers": _split_lines(form.get("blockers")),
+                },
+            )
+        except (HubAPIError, ValueError) as error:
+            return _render_action_error(error, title="Weekly reflection update failed")
+        return _redirect_home(state_date=state_date)
+
+    @app.post("/actions/open-loops")
+    async def add_open_loop_action(request: FastAPIRequest) -> Response:
+        form = await _parse_form_body(request)
+        state_date = date.fromisoformat(_required_str(form, "state_date"))
+        try:
+            resolved_client.add_open_loop(
+                payload={
+                    "title": _required_str(form, "title"),
+                    "source": _required_str(form, "source"),
+                    "priority": _required_str(form, "priority"),
+                    "notes": _optional_str(form.get("notes")) or "",
+                }
+            )
+        except (HubAPIError, ValueError) as error:
+            return _render_action_error(error, title="Open loop add failed")
+        return _redirect_home(state_date=state_date)
+
+    @app.post("/actions/open-loops/{loop_id}/resolve")
+    async def resolve_open_loop_action(
+        loop_id: UUID,
+        request: FastAPIRequest,
+    ) -> Response:
+        form = await _parse_form_body(request)
+        state_date = date.fromisoformat(_required_str(form, "state_date"))
+        try:
+            resolved_client.resolve_open_loop(loop_id=loop_id, payload={})
+        except (HubAPIError, ValueError) as error:
+            return _render_action_error(error, title="Open loop resolve failed")
+        return _redirect_home(state_date=state_date)
+
     return app
 
 
@@ -202,14 +385,17 @@ def render_hub_page(
             comparison_error=comparison_error,
         ),
         _render_daily_state_section(
+            state_date=state_date,
             daily_state=daily_state,
             daily_state_error=daily_state_error,
         ),
         _render_weekly_state_section(
+            state_date=state_date,
             weekly_state=weekly_state,
             weekly_state_error=weekly_state_error,
         ),
         _render_open_loops_section(
+            state_date=state_date,
             active_open_loops=active_open_loops,
             active_open_loops_error=active_open_loops_error,
         ),
@@ -278,7 +464,7 @@ def render_hub_page(
       font-size: 1.15rem;
       color: var(--accent);
     }}
-    p, li, dt, dd, label, input {{
+    p, li, dt, dd, label, input, textarea, select {{
       font-size: 0.98rem;
       line-height: 1.45;
     }}
@@ -289,10 +475,14 @@ def render_hub_page(
       flex-wrap: wrap;
       margin-top: 16px;
     }}
-    input {{
+    input, textarea, select {{
       border: 1px solid var(--line);
       background: white;
       padding: 10px 12px;
+    }}
+    textarea {{
+      min-width: 240px;
+      min-height: 88px;
     }}
     button {{
       border: 1px solid var(--accent);
@@ -365,12 +555,21 @@ def render_hub_page(
     .detail-actions {{
       margin-top: 12px;
     }}
+    .inline-form {{
+      display: inline-flex;
+      margin-top: 12px;
+    }}
+    .action-block {{
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }}
   </style>
 </head>
 <body>
   <main>
     <header>
-      <p class="muted">Read-only hub view over the orchestration history API.</p>
+      <p class="muted">API-backed hub view over the canonical orchestration and state API.</p>
       <h1>ARI Hub</h1>
       <form method="get">
         <label>
@@ -399,7 +598,8 @@ def _render_latest_section(*, latest_run: JSONDict | None, latest_error: str | N
         "Latest Run",
         _render_run_summary(run, prefix="Latest")
         + _render_id_list("Linked signal ids", run["signal_ids"])
-        + _render_id_list("Linked alert ids", run["alert_ids"]),
+        + _render_id_list("Linked alert ids", run["alert_ids"])
+        + _render_controller_trajectory(run.get("controller_trajectory")),
     )
 
 
@@ -465,13 +665,15 @@ def _render_signals_section(
 
 def _render_daily_state_section(
     *,
+    state_date: date,
     daily_state: JSONDict | None,
     daily_state_error: str | None,
 ) -> str:
     if daily_state is None:
         return _render_section(
             "Current Operational State",
-            f'<p class="empty">{escape(daily_state_error or "No daily state found.")}</p>',
+            f'<p class="empty">{escape(daily_state_error or "No daily state found.")}</p>'
+            f"{_render_daily_state_form(state_date=state_date, daily_state=None)}",
         )
 
     movement = daily_state["movement"]
@@ -494,19 +696,22 @@ def _render_daily_state_section(
         f"<dt>Stress</dt><dd>{escape(stress_label)}</dd>"
         f"<dt>Next action</dt><dd>{next_action or _empty_inline('None set.')}</dd>"
         f"<dt>Last check</dt><dd>{escape(daily_state['last_check_at'] or 'unknown')}</dd>"
-        "</dl>",
+        "</dl>"
+        + _render_daily_state_form(state_date=state_date, daily_state=daily_state),
     )
 
 
 def _render_weekly_state_section(
     *,
+    state_date: date,
     weekly_state: JSONDict | None,
     weekly_state_error: str | None,
 ) -> str:
     if weekly_state is None:
         return _render_section(
             "Weekly Trajectory",
-            f'<p class="empty">{escape(weekly_state_error or "No weekly state found.")}</p>',
+            f'<p class="empty">{escape(weekly_state_error or "No weekly state found.")}</p>'
+            f"{_render_weekly_forms(state_date=state_date, weekly_state=None)}",
         )
 
     lesson = escape(weekly_state["lesson"])
@@ -519,26 +724,30 @@ def _render_weekly_state_section(
         f"<dt>Blockers</dt><dd>{_render_inline_list(weekly_state['blockers'])}</dd>"
         f"<dt>Lesson</dt><dd>{lesson or _empty_inline('None captured.')}</dd>"
         f"<dt>Last review</dt><dd>{escape(weekly_state['last_review_at'] or 'unknown')}</dd>"
-        "</dl>",
+        "</dl>" + _render_weekly_forms(state_date=state_date, weekly_state=weekly_state),
     )
 
 
 def _render_open_loops_section(
     *,
+    state_date: date,
     active_open_loops: JSONDict | None,
     active_open_loops_error: str | None,
 ) -> str:
     if active_open_loops is None:
+        message = active_open_loops_error or "No open loops available."
         return _render_section(
             "Active Open Loops",
-            f'<p class="empty">{escape(active_open_loops_error or "No open loops available.")}</p>',
+            _render_open_loop_add_form(state_date=state_date)
+            + f'<p class="empty">{escape(message)}</p>',
         )
 
     loops = _list_from(active_open_loops, "loops")
     if not loops:
         return _render_section(
             "Active Open Loops",
-            '<p class="empty">No active open loops.</p>',
+            _render_open_loop_add_form(state_date=state_date)
+            + '<p class="empty">No active open loops.</p>',
         )
 
     items = []
@@ -563,9 +772,13 @@ def _render_open_loops_section(
             f"<dt>Project id</dt><dd>{escape(loop['project_id'] or 'none')}</dd>"
             f"<dt>Notes</dt><dd>{notes}</dd>"
             "</dl>"
+            f'{_render_open_loop_resolve_form(state_date=state_date, loop_id=loop["id"])}'
             "</article>"
         )
-    return _render_section("Active Open Loops", "".join(items))
+    return _render_section(
+        "Active Open Loops",
+        _render_open_loop_add_form(state_date=state_date) + "".join(items),
+    )
 
 
 def _render_alerts_section(
@@ -707,6 +920,24 @@ def _render_run_summary(run: JSONDict, *, prefix: str) -> str:
         f"<dt>Alert count</dt><dd>{len(run['alert_ids'])}</dd>"
         "</dl>"
         "</section>"
+    )
+
+
+def _render_controller_trajectory(trajectory: JSONDict | None) -> str:
+    if trajectory is None:
+        return "<p><strong>Controller trajectory:</strong> none</p>"
+    decision = trajectory["decision"]
+    authority = trajectory["authority_result"]
+    return (
+        "<div class=\"action-block\">"
+        "<h3>Controller Trajectory</h3>"
+        "<dl>"
+        f"<dt>Outcome</dt><dd>{escape(trajectory['controller_outcome'])}</dd>"
+        f"<dt>Decision</dt><dd>{escape(decision['decision_summary'])}</dd>"
+        f"<dt>Authority</dt><dd>{escape(authority['outcome'])}</dd>"
+        f"<dt>Authority reason</dt><dd>{escape(authority['reason'])}</dd>"
+        "</dl>"
+        "</div>"
     )
 
 
@@ -867,3 +1098,197 @@ def _detail_href(
     if alert_id is not None:
         query["alert_id"] = str(alert_id)
     return f"/?{urlencode(query)}"
+
+
+def _redirect_home(*, state_date: date) -> RedirectResponse:
+    return RedirectResponse(url=_detail_href(state_date=state_date), status_code=303)
+
+
+def _render_action_error(error: Exception, *, title: str) -> HTMLResponse:
+    detail = str(error)
+    status_code = 400
+    if isinstance(error, HubAPIError):
+        detail = error.detail
+        status_code = error.status_code
+    return HTMLResponse(
+        content=f"<h1>{escape(title)}</h1><p>{escape(detail)}</p>",
+        status_code=status_code,
+    )
+
+
+def _render_daily_state_form(*, state_date: date, daily_state: JSONDict | None) -> str:
+    priorities = _join_lines(_list_from(daily_state, "priorities"))
+    win_condition = _string_from(daily_state, "win_condition")
+    movement = daily_state["movement"] if daily_state is not None else None
+    stress = (
+        ""
+        if daily_state is None or daily_state["stress"] is None
+        else str(daily_state["stress"])
+    )
+    next_action = _string_from(daily_state, "next_action")
+    return (
+        '<div class="action-block">'
+        '<h3>Update Current Operational State</h3>'
+        '<form method="post" action="/actions/daily-state">'
+        f'<input type="hidden" name="state_date" value="{escape(state_date.isoformat())}">'
+        "<label>Top priorities<br>"
+        f'<textarea name="priorities">{escape(priorities)}</textarea>'
+        "</label>"
+        "<label>Win condition<br>"
+        f'<input type="text" name="win_condition" value="{escape(win_condition)}">'
+        "</label>"
+        "<label>Movement<br>"
+        '<select name="movement">'
+        f'{_render_option(value="", label="unknown", selected=movement is None)}'
+        f'{_render_option(value="true", label="recorded", selected=movement is True)}'
+        f'{_render_option(value="false", label="not recorded", selected=movement is False)}'
+        "</select>"
+        "</label>"
+        "<label>Stress<br>"
+        f'<input type="number" min="1" max="10" name="stress" value="{escape(stress)}">'
+        "</label>"
+        "<label>Next action<br>"
+        f'<input type="text" name="next_action" value="{escape(next_action)}">'
+        "</label>"
+        "<button type=\"submit\">Save daily state</button>"
+        "</form>"
+        "</div>"
+    )
+
+
+def _render_weekly_forms(*, state_date: date, weekly_state: JSONDict | None) -> str:
+    outcomes = _join_lines(_list_from(weekly_state, "outcomes"))
+    cannot_drift = _join_lines(_list_from(weekly_state, "cannot_drift"))
+    blockers = _join_lines(_list_from(weekly_state, "blockers"))
+    lesson = _string_from(weekly_state, "lesson")
+    return (
+        '<div class="action-block">'
+        '<h3>Update Weekly Plan</h3>'
+        '<form method="post" action="/actions/weekly-plan">'
+        f'<input type="hidden" name="state_date" value="{escape(state_date.isoformat())}">'
+        "<label>Outcomes<br>"
+        f'<textarea name="outcomes">{escape(outcomes)}</textarea>'
+        "</label>"
+        "<label>Cannot drift<br>"
+        f'<textarea name="cannot_drift">{escape(cannot_drift)}</textarea>'
+        "</label>"
+        "<label>Blockers<br>"
+        f'<textarea name="blockers">{escape(blockers)}</textarea>'
+        "</label>"
+        "<button type=\"submit\">Save weekly plan</button>"
+        "</form>"
+        "</div>"
+        '<div class="action-block">'
+        '<h3>Update Weekly Reflection</h3>'
+        '<form method="post" action="/actions/weekly-reflection">'
+        f'<input type="hidden" name="state_date" value="{escape(state_date.isoformat())}">'
+        "<label>Lesson<br>"
+        f'<input type="text" name="lesson" value="{escape(lesson)}">'
+        "</label>"
+        "<label>Blockers<br>"
+        f'<textarea name="blockers">{escape(blockers)}</textarea>'
+        "</label>"
+        "<button type=\"submit\">Save weekly reflection</button>"
+        "</form>"
+        "</div>"
+    )
+
+
+def _render_open_loop_add_form(*, state_date: date) -> str:
+    return (
+        '<div class="action-block">'
+        '<h3>Add Open Loop</h3>'
+        '<form method="post" action="/actions/open-loops">'
+        f'<input type="hidden" name="state_date" value="{escape(state_date.isoformat())}">'
+        "<label>Title<br>"
+        '<input type="text" name="title" value="">'
+        "</label>"
+        "<label>Source<br>"
+        '<input type="text" name="source" value="hub">'
+        "</label>"
+        "<label>Priority<br>"
+        '<select name="priority">'
+        f'{_render_option(value="low", label="low", selected=False)}'
+        f'{_render_option(value="medium", label="medium", selected=True)}'
+        f'{_render_option(value="high", label="high", selected=False)}'
+        "</select>"
+        "</label>"
+        "<label>Notes<br>"
+        '<input type="text" name="notes" value="">'
+        "</label>"
+        "<button type=\"submit\">Add open loop</button>"
+        "</form>"
+        "</div>"
+    )
+
+
+def _render_open_loop_resolve_form(*, state_date: date, loop_id: str) -> str:
+    return (
+        '<form class="inline-form" method="post" action="'
+        f'/actions/open-loops/{escape(loop_id)}/resolve">'
+        f'<input type="hidden" name="state_date" value="{escape(state_date.isoformat())}">'
+        "<button type=\"submit\">Resolve open loop</button>"
+        "</form>"
+    )
+
+
+def _render_option(*, value: str, label: str, selected: bool) -> str:
+    selected_attr = " selected" if selected else ""
+    return f'<option value="{escape(value)}"{selected_attr}>{escape(label)}</option>'
+
+
+async def _parse_form_body(request: FastAPIRequest) -> dict[str, str]:
+    body = (await request.body()).decode("utf-8")
+    parsed = parse_qs(body, keep_blank_values=True)
+    return {key: values[-1] for key, values in parsed.items() if values}
+
+
+def _join_lines(values: list[str]) -> str:
+    return "\n".join(values)
+
+
+def _string_from(payload: JSONDict | None, key: str) -> str:
+    if payload is None:
+        return ""
+    value = payload.get(key)
+    return str(value) if isinstance(value, str) else ""
+
+
+def _split_lines(value: Any) -> list[str] | None:
+    text = _optional_str(value)
+    if text is None:
+        return None
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _required_str(form: Any, field_name: str) -> str:
+    value = _optional_str(form.get(field_name))
+    if value is None:
+        raise ValueError(f"Missing required field: {field_name}.")
+    return value
+
+
+def _parse_bool(value: Any) -> bool | None:
+    text = _optional_str(value)
+    if text is None:
+        return None
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    raise ValueError(f"Invalid boolean value: {text}.")
+
+
+def _parse_int(value: Any) -> int | None:
+    text = _optional_str(value)
+    if text is None:
+        return None
+    return int(text)
