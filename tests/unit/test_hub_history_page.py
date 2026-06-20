@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from ari_api import create_app as create_api_app
 from ari_core import (
@@ -15,7 +15,14 @@ from ari_hub import create_app as create_hub_app
 from ari_hub.app import HubAPIError
 from ari_memory import Base, DailyStateRepository, OpenLoopRepository, WeeklyStateRepository
 from ari_memory.session import create_session_factory
-from ari_state import AlertChannel, DailyState, OpenLoop, OpenLoopPriority, WeeklyState
+from ari_state import (
+    AlertChannel,
+    DailyState,
+    OpenLoop,
+    OpenLoopPriority,
+    OpenLoopStatus,
+    WeeklyState,
+)
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -67,10 +74,30 @@ class StubHistoryClient:
         return self.active_open_loops
 
     def get_signal_detail(self, *, signal_id: Any) -> dict[str, Any]:
-        return self.signal_details[str(signal_id)]
+        return cast(dict[str, Any], self.signal_details[str(signal_id)])
 
     def get_alert_detail(self, *, alert_id: Any) -> dict[str, Any]:
-        return self.alert_details[str(alert_id)]
+        return cast(dict[str, Any], self.alert_details[str(alert_id)])
+
+    def update_daily_state(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("update_daily_state should not be called in this test")
+
+    def update_weekly_plan(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("update_weekly_plan should not be called in this test")
+
+    def update_weekly_reflection(
+        self,
+        *,
+        state_date: date,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise AssertionError("update_weekly_reflection should not be called in this test")
+
+    def add_open_loop(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("add_open_loop should not be called in this test")
+
+    def resolve_open_loop(self, *, loop_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("resolve_open_loop should not be called in this test")
 
 
 def test_hub_page_renders_expected_sections_and_change_markers() -> None:
@@ -237,9 +264,128 @@ def test_hub_module_has_no_direct_persistence_dependency() -> None:
     assert "sqlalchemy" not in source
 
 
+def test_hub_actions_update_daily_and_weekly_state_through_api() -> None:
+    session_factory = _build_changed_history_session_factory()
+    api_app = create_api_app(session_factory)
+    history_client = APIBackedHistoryClient(api_app)
+    hub_app = create_hub_app(api_client=history_client)
+
+    with TestClient(hub_app) as client:
+        daily_response = client.post(
+            "/actions/daily-state",
+            data={
+                "state_date": "2026-04-10",
+                "priorities": "Protect canonical seam\nShip hub write path",
+                "win_condition": "Keep hub transport thin.",
+                "movement": "true",
+                "stress": "4",
+                "next_action": "Review the redirect.",
+            },
+            follow_redirects=False,
+        )
+        plan_response = client.post(
+            "/actions/weekly-plan",
+            data={
+                "state_date": "2026-04-10",
+                "outcomes": "Complete hub mutation slice",
+                "cannot_drift": "No persistence in hub",
+                "blockers": "Hub write path missing",
+            },
+            follow_redirects=False,
+        )
+        reflection_response = client.post(
+            "/actions/weekly-reflection",
+            data={
+                "state_date": "2026-04-10",
+                "lesson": "Thin surfaces stay honest when the API owns mutation.",
+                "blockers": "Hub write path missing",
+            },
+            follow_redirects=False,
+        )
+        page = client.get("/", params={"state_date": "2026-04-10"})
+
+    assert daily_response.status_code == 303
+    assert plan_response.status_code == 303
+    assert reflection_response.status_code == 303
+    assert daily_response.headers["location"] == "/?state_date=2026-04-10"
+    assert plan_response.headers["location"] == "/?state_date=2026-04-10"
+    assert reflection_response.headers["location"] == "/?state_date=2026-04-10"
+    assert ("PUT", "/daily-states/current?state_date=2026-04-10") in history_client.calls
+    assert ("PUT", "/weekly-states/plan?state_date=2026-04-10") in history_client.calls
+    assert ("PUT", "/weekly-states/reflection?state_date=2026-04-10") in history_client.calls
+    assert page.status_code == 200
+    assert "Protect canonical seam" in page.text
+    assert "Ship hub write path" in page.text
+    assert "Keep hub transport thin." in page.text
+    assert "Review the redirect." in page.text
+    assert "Complete hub mutation slice" in page.text
+    assert "No persistence in hub" in page.text
+    assert (
+        "Thin surfaces stay honest when the API owns mutation." in page.text
+    )
+
+
+def test_hub_open_loop_actions_use_api_and_update_visible_state() -> None:
+    session_factory = _build_changed_history_session_factory()
+    api_app = create_api_app(session_factory)
+    history_client = APIBackedHistoryClient(api_app)
+    hub_app = create_hub_app(api_client=history_client)
+
+    with TestClient(hub_app) as client:
+        add_response = client.post(
+            "/actions/open-loops",
+            data={
+                "state_date": "2026-04-10",
+                "title": "Close hub write gap",
+                "source": "hub",
+                "priority": "high",
+                "notes": "Route through the API only.",
+            },
+            follow_redirects=False,
+        )
+        page_after_add = client.get("/", params={"state_date": "2026-04-10"})
+
+    with session_factory() as session:
+        matching_loops = [
+            loop
+            for loop in OpenLoopRepository(session).list_open()
+            if loop.title == "Close hub write gap"
+        ]
+
+    assert add_response.status_code == 303
+    assert add_response.headers["location"] == "/?state_date=2026-04-10"
+    assert ("POST", "/open-loops") in history_client.calls
+    assert page_after_add.status_code == 200
+    assert "Close hub write gap" in page_after_add.text
+    assert "Route through the API only." in page_after_add.text
+    assert len(matching_loops) == 1
+    loop_id = matching_loops[0].id
+
+    with TestClient(hub_app) as client:
+        resolve_response = client.post(
+            f"/actions/open-loops/{loop_id}/resolve",
+            data={"state_date": "2026-04-10"},
+            follow_redirects=False,
+        )
+        page_after_resolve = client.get("/", params={"state_date": "2026-04-10"})
+
+    assert resolve_response.status_code == 303
+    assert resolve_response.headers["location"] == "/?state_date=2026-04-10"
+    assert ("POST", f"/open-loops/{loop_id}/resolve") in history_client.calls
+    assert page_after_resolve.status_code == 200
+    assert "Close hub write gap" not in page_after_resolve.text
+
+    with session_factory() as session:
+        resolved_loop = OpenLoopRepository(session).get(loop_id)
+
+    assert resolved_loop is not None
+    assert resolved_loop.status == OpenLoopStatus.CLOSED
+
+
 class APIBackedHistoryClient:
     def __init__(self, api_app: Any) -> None:
         self._client = TestClient(api_app)
+        self.calls: list[tuple[str, str]] = []
 
     def get_latest_run(self, *, state_date: date) -> dict[str, Any]:
         return self._get("/orchestration-runs/latest", state_date)
@@ -256,22 +402,83 @@ class APIBackedHistoryClient:
     def get_active_open_loops(self) -> dict[str, Any]:
         response = self._client.get("/open-loops/active")
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def get_signal_detail(self, *, signal_id: Any) -> dict[str, Any]:
         response = self._client.get(f"/signals/{signal_id}")
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def get_alert_detail(self, *, alert_id: Any) -> dict[str, Any]:
-        response = self._client.get(f"/alerts/{alert_id}")
+        path = f"/alerts/{alert_id}"
+        self.calls.append(("GET", path))
+        response = self._client.get(path)
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
+
+    def update_daily_state(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._send(
+            "PUT",
+            "/daily-states/current",
+            state_date=state_date,
+            payload=payload,
+        )
+
+    def update_weekly_plan(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._send(
+            "PUT",
+            "/weekly-states/plan",
+            state_date=state_date,
+            payload=payload,
+        )
+
+    def update_weekly_reflection(
+        self,
+        *,
+        state_date: date,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._send(
+            "PUT",
+            "/weekly-states/reflection",
+            state_date=state_date,
+            payload=payload,
+        )
+
+    def add_open_loop(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._send("POST", "/open-loops", payload=payload)
+
+    def resolve_open_loop(self, *, loop_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._send(
+            "POST",
+            f"/open-loops/{loop_id}/resolve",
+            payload=payload,
+        )
 
     def _get(self, path: str, state_date: date) -> dict[str, Any]:
+        query_path = f"{path}?state_date={state_date.isoformat()}"
+        self.calls.append(("GET", query_path))
         response = self._client.get(path, params={"state_date": state_date.isoformat()})
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any],
+        state_date: date | None = None,
+    ) -> dict[str, Any]:
+        request_path = path
+        params: dict[str, str] | None = None
+        if state_date is not None:
+            params = {"state_date": state_date.isoformat()}
+            request_path = f"{path}?state_date={state_date.isoformat()}"
+        self.calls.append((method, request_path))
+        response = self._client.request(method, path, params=params, json=payload)
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
 
 class MissingLatestHistoryClient:
@@ -285,6 +492,41 @@ class MissingLatestHistoryClient:
         raise AssertionError(
             "compare_latest_two_runs should not be called when latest run is missing"
         )
+
+    def get_current_daily_state(self, *, state_date: date) -> dict[str, Any]:
+        raise AssertionError("get_current_daily_state should not be called in this test")
+
+    def get_current_weekly_state(self, *, state_date: date) -> dict[str, Any]:
+        raise AssertionError("get_current_weekly_state should not be called in this test")
+
+    def get_active_open_loops(self) -> dict[str, Any]:
+        raise AssertionError("get_active_open_loops should not be called in this test")
+
+    def get_signal_detail(self, *, signal_id: Any) -> dict[str, Any]:
+        raise AssertionError("get_signal_detail should not be called in this test")
+
+    def get_alert_detail(self, *, alert_id: Any) -> dict[str, Any]:
+        raise AssertionError("get_alert_detail should not be called in this test")
+
+    def update_daily_state(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("update_daily_state should not be called in this test")
+
+    def update_weekly_plan(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("update_weekly_plan should not be called in this test")
+
+    def update_weekly_reflection(
+        self,
+        *,
+        state_date: date,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise AssertionError("update_weekly_reflection should not be called in this test")
+
+    def add_open_loop(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("add_open_loop should not be called in this test")
+
+    def resolve_open_loop(self, *, loop_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("resolve_open_loop should not be called in this test")
 
 
 class StateGapHistoryClient:
@@ -321,6 +563,26 @@ class StateGapHistoryClient:
 
     def get_alert_detail(self, *, alert_id: Any) -> dict[str, Any]:
         raise HubAPIError(status_code=404, detail=f"No alert found for {alert_id}.")
+
+    def update_daily_state(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("update_daily_state should not be called in this test")
+
+    def update_weekly_plan(self, *, state_date: date, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("update_weekly_plan should not be called in this test")
+
+    def update_weekly_reflection(
+        self,
+        *,
+        state_date: date,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise AssertionError("update_weekly_reflection should not be called in this test")
+
+    def add_open_loop(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("add_open_loop should not be called in this test")
+
+    def resolve_open_loop(self, *, loop_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("resolve_open_loop should not be called in this test")
 
 
 def _build_read_models(
