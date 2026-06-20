@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TypeVar
@@ -8,6 +9,7 @@ from uuid import UUID
 from ari_memory import (
     DailyStateRepository,
     EventRepository,
+    OpenLoopEnrichmentRepository,
     OpenLoopRepository,
     WeeklyStateRepository,
 )
@@ -24,14 +26,37 @@ from ari_state import (
     Event,
     EventCategory,
     OpenLoop,
+    OpenLoopEnrichment,
     OpenLoopKind,
     OpenLoopPriority,
     OpenLoopStatus,
+    SkillKind,
     WeeklyState,
 )
 from sqlalchemy.orm import Session
 
+from ari_core.company_research import research_company
+from ari_core.skills import PAUSED_FILE, record_skill_invocation
+
 StateT = TypeVar("StateT")
+
+JOB_APPLICATION_ENRICHMENT_SKILL_NAME = "company_research"
+JOB_APPLICATION_ENRICHMENT_SOURCE = "ari.signals.job_application_enrichment"
+
+
+def _job_application_enrichment_enabled() -> bool:
+    """Reversible via a flag, not a code revert: flip
+    ARI_JOB_APPLICATION_ENRICHMENT_ENABLED=false to disable. Also honors
+    the same state/PAUSED kill switch build_mcp_request_args checks, since
+    this is an autonomous skill call ARI makes on its own, not one a human
+    approved turn-by-turn."""
+    if PAUSED_FILE.exists():
+        return False
+    return os.environ.get("ARI_JOB_APPLICATION_ENRICHMENT_ENABLED", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +88,7 @@ class CreateOpenLoopInput:
     kind: OpenLoopKind = OpenLoopKind.TASK
     priority: OpenLoopPriority = OpenLoopPriority.MEDIUM
     notes: str = ""
+    company: str | None = None
     project_id: UUID | None = None
     due_at: datetime | None = None
 
@@ -220,6 +246,7 @@ def create_open_loop(
             priority=loop.priority,
             source=loop.source,
             notes=loop.notes,
+            company=loop.company,
             project_id=loop.project_id,
             opened_at=timestamp,
             due_at=loop.due_at,
@@ -236,7 +263,90 @@ def create_open_loop(
         )
     )
     session.commit()
+
+    if (
+        created.kind == OpenLoopKind.JOB_APPLICATION
+        and created.company
+        and _job_application_enrichment_enabled()
+    ):
+        _trigger_job_application_enrichment(
+            session,
+            loop_id=created.id,
+            company=created.company,
+        )
+
     return StateMutationResult(state=created, events=[event])
+
+
+def _trigger_job_application_enrichment(
+    session: Session,
+    *,
+    loop_id: UUID,
+    company: str,
+) -> None:
+    """Fires once, synchronously, right after a job_application loop is
+    created. Reversible via ARI_JOB_APPLICATION_ENRICHMENT_ENABLED=false or
+    the state/PAUSED kill switch — no code change needed to turn it off.
+    Network/API failures are caught and recorded as a failed skill
+    invocation rather than raised, so a flaky search never blocks filing
+    the open loop itself. Logs through ari_core.skills.record_skill_invocation,
+    the same audit path every other skill call goes through."""
+    try:
+        result = research_company(company)
+    except Exception as exc:  # noqa: BLE001 - any failure here is logged, not raised
+        record_skill_invocation(
+            session,
+            channel="automation",
+            skill_kind=SkillKind.WEB_SEARCH,
+            skill_name=JOB_APPLICATION_ENRICHMENT_SKILL_NAME,
+            tool_name="web_search",
+            summary=f"Company research failed for {company}: {exc}",
+            payload={
+                "loop_id": str(loop_id),
+                "company": company,
+                "reason": "open_loop created with kind=job_application",
+                "error": str(exc),
+            },
+            is_error=True,
+        )
+        return
+
+    enrichment = OpenLoopEnrichmentRepository(session).create(
+        OpenLoopEnrichment(
+            loop_id=loop_id,
+            kind="company_intel",
+            company=company,
+            summary=result.summary,
+            findings=[
+                {
+                    "category": finding.category,
+                    "summary": finding.summary,
+                    "source_url": finding.source_url,
+                    "published_at": finding.published_at,
+                }
+                for finding in result.findings
+            ],
+            source=JOB_APPLICATION_ENRICHMENT_SOURCE,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+    session.commit()
+    record_skill_invocation(
+        session,
+        channel="automation",
+        skill_kind=SkillKind.WEB_SEARCH,
+        skill_name=JOB_APPLICATION_ENRICHMENT_SKILL_NAME,
+        tool_name="web_search",
+        summary=f"Company research completed for {company}: {result.summary}"[:500],
+        payload={
+            "loop_id": str(loop_id),
+            "company": company,
+            "reason": "open_loop created with kind=job_application",
+            "enrichment_id": str(enrichment.id),
+            "findings_count": len(enrichment.findings),
+        },
+        is_error=False,
+    )
 
 
 def resolve_open_loop(
