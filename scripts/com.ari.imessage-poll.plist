@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ari.imessage-poll</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/alecisaacman/Code/ari/scripts/imessage-poll.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>90</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/alecisaacman/Code/ari/logs/imessage-poll.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/alecisaacman/Code/ari/logs/imessage-poll.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+</dict>
+</plist>

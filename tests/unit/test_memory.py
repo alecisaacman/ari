@@ -4,6 +4,8 @@ from uuid import uuid4
 from ari_memory import (
     AlertRepository,
     Base,
+    ControllerEventRepository,
+    ConversationStateRepository,
     OrchestrationRunRepository,
     SignalRepository,
     WeeklyStateRepository,
@@ -12,6 +14,9 @@ from ari_state import (
     Alert,
     AlertChannel,
     AlertEscalationLevel,
+    ControllerEvent,
+    ControllerEventType,
+    ConversationState,
     EvidenceItem,
     OrchestrationRun,
     Signal,
@@ -20,6 +25,46 @@ from ari_state import (
 )
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+
+
+def test_conversation_state_repository_upserts_by_channel() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        repository = ConversationStateRepository(session)
+
+        assert repository.get("imessage") is None
+
+        created = repository.upsert(
+            ConversationState(
+                channel="imessage",
+                cursor=100,
+                messages=[{"role": "user", "content": "hello"}],
+                updated_at=datetime(2026, 6, 19, 0, 0, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+        fetched = repository.get("imessage")
+        assert fetched is not None
+        assert fetched.cursor == 100
+        assert fetched.messages == [{"role": "user", "content": "hello"}]
+
+        updated = repository.upsert(
+            ConversationState(
+                channel="imessage",
+                cursor=200,
+                messages=[{"role": "user", "content": "second"}],
+                updated_at=datetime(2026, 6, 19, 1, 0, tzinfo=UTC),
+            )
+        )
+        session.commit()
+
+        assert updated.cursor == 200
+        assert repository.get("imessage").cursor == 200
+        # upsert by channel, not a new row each time
+        assert updated.id == created.id
 
 
 def test_weekly_state_repository_upserts_and_gets() -> None:
@@ -166,3 +211,39 @@ def test_orchestration_run_repository_persists_run_history() -> None:
         assert fetched.state_fingerprint == "state-fingerprint"
         assert fetched.signal_ids == [signal_id]
         assert fetched.alert_ids == [alert_id]
+
+
+def test_controller_event_repository_persists_ordered_event_stream() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    run_id = uuid4()
+
+    with Session(engine) as session:
+        repository = ControllerEventRepository(session)
+        created = repository.create_many(
+            [
+                ControllerEvent(
+                    run_id=run_id,
+                    sequence_number=0,
+                    occurred_at=datetime(2026, 4, 10, 12, 0, tzinfo=UTC),
+                    event_type=ControllerEventType.OBSERVATION_INTAKE,
+                    summary="Controller intake captured persisted signals and alerts.",
+                    payload={"signal_ids": ["a"]},
+                ),
+                ControllerEvent(
+                    run_id=run_id,
+                    sequence_number=1,
+                    occurred_at=datetime(2026, 4, 10, 12, 0, tzinfo=UTC),
+                    event_type=ControllerEventType.DECISION_SELECTED,
+                    summary="Controller selected a canonical decision for this cycle.",
+                    payload={"decision_summary": "Inspect the file."},
+                ),
+            ]
+        )
+        session.commit()
+
+        fetched = repository.list_for_run(run_id)
+
+    assert [event.id for event in fetched] == [event.id for event in created]
+    assert fetched[0].event_type == ControllerEventType.OBSERVATION_INTAKE
+    assert fetched[1].event_type == ControllerEventType.DECISION_SELECTED
