@@ -4,6 +4,8 @@
 
 The hub is the main visible window into ARI on the home computer. It is not the brain. It presents the current shared state and lets the operator inspect what ARI is tracking.
 
+The hub may also support a narrow operator loop for maintaining canonical state through the API. It must remain API-backed and must not mutate persistence directly.
+
 ## Milestone 1 Hub Requirements
 
 The hub should display:
@@ -14,6 +16,13 @@ The hub should display:
 - active signals
 - active alerts and intelligence items
 - one clear explanation pathway for surfaced items
+
+The hub should also support simple actions to:
+
+- set or update the current `DailyState`
+- set or update the current `WeeklyState` planning and reflection fields
+- add an open loop
+- resolve an open loop
 
 ## Design Direction
 
@@ -78,3 +87,5 @@ The hub should feel like an operating console, not a wellness dashboard.
 - heavy customization
 - real-time collaboration
 - polished mobile parity
+
+Simple same-page forms and post/redirect/get flows are in scope when they reuse the canonical API/state seam without adding local business logic.
