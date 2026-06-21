@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from .core.pause import handle_pause, handle_paused, handle_resume
 from .core.paths import DB_PATH
 from .modules.networking.cli import (
     handle_add_contact,
@@ -481,6 +482,14 @@ def _add_legacy_alias_parsers(subparsers: argparse._SubParsersAction) -> None:
     session_build_parser.add_argument("--save-name", help=argparse.SUPPRESS)
 
 
+def _add_control_parsers(subparsers: argparse._SubParsersAction) -> None:
+    pause_parser = subparsers.add_parser("pause", help="Halt all autonomous file/command execution.")
+    pause_parser.add_argument("--reason", default="", help="Why execution is being paused.")
+
+    subparsers.add_parser("resume", help="Resume autonomous file/command execution.")
+    subparsers.add_parser("paused", help="Show whether execution is currently paused.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ari",
@@ -491,6 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_docs_parsers(subparsers)
     _add_api_parsers(subparsers)
     _add_legacy_alias_parsers(subparsers)
+    _add_control_parsers(subparsers)
     return parser
 
 
@@ -608,6 +618,13 @@ def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
             return handle_api_execution_action_approve(args, db_path=db_path)
         if args.api_command == "execution" and args.api_execution_command == "actions" and args.api_execution_action_command == "run":
             return handle_api_execution_action_run(args, db_path=db_path)
+
+    if args.command == "pause":
+        return handle_pause(args)
+    if args.command == "resume":
+        return handle_resume(args)
+    if args.command == "paused":
+        return handle_paused(args)
 
     parser.error("Unknown ARI command.")
     return 2

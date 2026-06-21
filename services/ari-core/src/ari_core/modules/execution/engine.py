@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
+from ...core.pause import ensure_not_paused
 from ...core.paths import DB_PATH, EXECUTION_ROOT
 from .db import (
     create_coding_action,
@@ -135,6 +136,7 @@ def read_file(path: str) -> dict[str, Any]:
 
 
 def write_file(path: str, content: str, *, action_id: str | None = None, db_path: Path = DB_PATH) -> dict[str, Any]:
+    ensure_not_paused()
     resolved = resolve_execution_path(path)
     _validate_mutation_path(resolved)
     resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +167,7 @@ def patch_file(
     action_id: str | None = None,
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
+    ensure_not_paused()
     if not find_text:
         raise ValueError("find_text is required for patch operations.")
 
@@ -233,6 +236,7 @@ def classify_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def execute_command(command: str, *, cwd: str = ".", timeout_seconds: int = 60) -> dict[str, Any]:
+    ensure_not_paused()
     argv = _validate_command(command)
     resolved_cwd = resolve_execution_path(cwd, must_exist=True, allow_directory=True)
     if not resolved_cwd.is_dir():
@@ -330,6 +334,7 @@ def create_operator_action(
     approval_required: bool | None = None,
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
+    ensure_not_paused()
     normalized_ops, target_paths = _normalize_operations(operations)
     resolved_cwd = resolve_execution_path(working_directory, must_exist=False, allow_directory=True)
     risky = _is_risky_action(target_paths, normalized_ops, verify_command)
@@ -378,6 +383,7 @@ def create_operator_action(
 
 
 def approve_operator_action(action_id: str, db_path: Path = DB_PATH) -> dict[str, Any]:
+    ensure_not_paused()
     row = get_coding_action(action_id, db_path=db_path)
     if row is None:
         raise ValueError(f"Unknown coding action: {action_id}")
@@ -431,6 +437,7 @@ def _apply_action_operations(action: dict[str, Any], *, db_path: Path) -> list[d
 
 
 def run_operator_action(action_id: str, db_path: Path = DB_PATH) -> dict[str, Any]:
+    ensure_not_paused()
     row = get_coding_action(action_id, db_path=db_path)
     if row is None:
         raise ValueError(f"Unknown coding action: {action_id}")

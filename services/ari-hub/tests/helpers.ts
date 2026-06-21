@@ -11,7 +11,7 @@ import { resetModelProvider } from "../src/core/models";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CANONICAL_ARI_PROJECT_ROOT = path.resolve(TESTS_DIR, "..", "..", "..");
-const CANONICAL_ARI_VENV_PYTHON = path.join(CANONICAL_ARI_PROJECT_ROOT, ".venv312", "bin", "python");
+const CANONICAL_ARI_VENV_PYTHON = path.join(CANONICAL_ARI_PROJECT_ROOT, ".venv", "bin", "python");
 let apiServerProcess: ChildProcess | null = null;
 
 export function setupIsolatedRuntime(name: string, mode: "manual" | "assisted" | "auto" = "manual"): string {
