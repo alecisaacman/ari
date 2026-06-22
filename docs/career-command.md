@@ -1,13 +1,8 @@
 # Career Command
 
-Career Command is ARI's first high-stakes proof module. Its current objective is
-simple: get Alec hired.
+Career Command is ARI's first high-stakes proof module. Its current objective is simple: support a structured job-search operating loop.
 
-ARI owns orchestration, state visibility, safety rules, and future memory hooks.
-Career Command owns the job-search workflow state: scouting, evaluation, local
-tracking, local drafts, and local approval/rejection state. Telegram and
-dashboards are ACE surfaces over this module; they must not become separate
-brains.
+ARI owns orchestration, state visibility, safety rules, and future memory hooks. Career Command owns the job-search workflow state: scouting, evaluation, local tracking, local drafts, and local approval/rejection state. Telegram and dashboards are ACE surfaces over this module; they must not become separate brains.
 
 ## Current Integration
 
@@ -23,8 +18,7 @@ ARI reads that prototype through the adapter package:
 packages/ari-career-command/src/ari_career_command/
 ```
 
-The adapter defaults to `~/code/openai-dev-sandbox` and can be pointed elsewhere
-with `CAREER_COMMAND_ROOT` or `--root`.
+The adapter defaults to `~/code/openai-dev-sandbox` and can be pointed elsewhere with `CAREER_COMMAND_ROOT` or `--root`.
 
 The local read model inspects:
 
@@ -62,13 +56,9 @@ Optional safe preview:
 ari career scout-preview
 ```
 
-`scout-preview` is allowed to run only the existing safe preview pipeline and
-then stop for review. It does not save jobs, create outreach drafts, approve
-anything, apply, send messages, or contact anyone.
+`scout-preview` is allowed to run only the existing safe preview pipeline and then stop for review. It does not save jobs, create outreach drafts, approve anything, apply, send messages, or contact anyone.
 
-Every local Career Command operation writes the canonical ARI surface status
-artifact through the existing surface status layer. It does not create a second
-status system.
+Every local Career Command operation writes the canonical ARI surface status artifact through the existing surface status layer. It does not create a second status system.
 
 ## Future Telegram Contract
 
@@ -81,9 +71,7 @@ status system.
 | `ari career reports` | `/career reports` | latest scout, batch summary, recent report files | read-only |
 | `ari career scout-preview` | `/career scout_preview` | safe scout/evaluation preview result | local preview only |
 
-Telegram may later expose local save, draft, approve, and reject operations, but
-external sending must remain outside this adapter unless explicitly approved
-through a governed approval flow.
+Telegram may later expose local save, draft, approve, and reject operations, but external sending must remain outside this adapter unless explicitly approved through a governed approval flow.
 
 ## Safety Boundaries
 
@@ -111,18 +99,12 @@ Career Command may not:
 ## Known Limitations
 
 - The durable job-search engine still lives in `~/code/openai-dev-sandbox`.
-- The ARI command center is currently a read model plus safe wrappers, not the
-  final canonical Career Command database.
-- `scout-preview` may fail if the external prototype is missing dependencies or
-  API quota. The status, pending, tracker, reports, and command-center commands
-  do not require API calls.
+- The ARI command center is currently a read model plus safe wrappers, not the final canonical Career Command database.
+- `scout-preview` may fail if the external prototype is missing dependencies or API quota. The status, pending, tracker, reports, and command-center commands do not require API calls.
 - The next-action recommender is deterministic and intentionally conservative.
 
 ## Next Build Priorities
 
-1. Add a canonical saved-target/action schema once the external workflow proves
-   stable from ARI surfaces.
-2. Expose the read-only commands through Telegram using the documented command
-   contract.
-3. Add governed local approve/reject flows to ARI state before any external send
-   path is considered.
+1. Add a canonical saved-target/action schema once the external workflow proves stable from ARI surfaces.
+2. Expose the read-only commands through Telegram using the documented command contract.
+3. Add governed local approve/reject flows to ARI state before any external send path is considered.
