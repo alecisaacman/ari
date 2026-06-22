@@ -31,3 +31,6 @@ data/telegram/state/
 data/surface/
 logs/
 state/
+
+# Local iMessage LaunchAgent with private local identifiers
+scripts/com.ari.imessage-dump.plist

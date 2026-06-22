@@ -212,6 +212,25 @@ export function getRecentMessages(conversationId: string | undefined, limit = 8)
     .reverse();
 }
 
+export function getChannelCursor(channel: string): number | null {
+  const database = getDatabase();
+  const row = database.prepare("SELECT cursor FROM channel_cursors WHERE channel = ?").get(channel) as
+    | { cursor: number }
+    | undefined;
+  return row ? row.cursor : null;
+}
+
+export function setChannelCursor(channel: string, cursor: number): void {
+  const database = getDatabase();
+  const timestamp = now();
+  database
+    .prepare(
+      `INSERT INTO channel_cursors (channel, cursor, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(channel) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`
+    )
+    .run(channel, cursor, timestamp);
+}
+
 export function saveMemory(type: MemoryType, title: string, content: string, tags: string[] = []): MemoryRecord {
   if (isCanonicalMemoryType(type)) {
     return rememberCanonicalMemory(type, title, content, tags);

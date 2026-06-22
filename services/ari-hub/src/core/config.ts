@@ -39,6 +39,7 @@ export type AriConfig = {
   canonicalApiTimeoutMs: number;
   canonicalBridgeMode: CanonicalBridgeMode;
   executionStallMinutes: number;
+  imessageDumpPath: string;
 };
 
 export function getConfig(): AriConfig {
@@ -46,6 +47,7 @@ export function getConfig(): AriConfig {
   const runtimeRoot = path.join(projectRoot, "runtime");
   const workspaceRoot = path.join(projectRoot, "workspace");
   const orchestrationRoot = path.join(runtimeRoot, "orchestration");
+  const canonicalAriProjectRoot = process.env.ARI_CANONICAL_PROJECT_ROOT || path.resolve(projectRoot, "..", "..");
 
   return {
     appName: "ARI",
@@ -77,7 +79,7 @@ export function getConfig(): AriConfig {
     openAiTranscriptionModel: process.env.ARI_OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
     openAiTtsModel: process.env.ARI_OPENAI_TTS_MODEL || "gpt-4o-mini-tts",
     openAiTtsVoice: process.env.ARI_OPENAI_TTS_VOICE || "alloy",
-    canonicalAriProjectRoot: process.env.ARI_CANONICAL_PROJECT_ROOT || path.resolve(projectRoot, "..", ".."),
+    canonicalAriProjectRoot,
     canonicalAriHome: process.env.ARI_CANONICAL_HOME || "",
     canonicalPythonCommand: process.env.ARI_CANONICAL_PYTHON || "python3.12",
     canonicalApiBaseUrl: process.env.ARI_API_BASE_URL || "http://127.0.0.1:8000",
@@ -87,7 +89,9 @@ export function getConfig(): AriConfig {
     canonicalBridgeMode: process.env.ARI_CANONICAL_BRIDGE_MODE === "subprocess" ? "subprocess" : "api",
     executionStallMinutes: Number.isFinite(Number(process.env.ARI_EXECUTION_STALL_MINUTES))
       ? Math.max(0, Number(process.env.ARI_EXECUTION_STALL_MINUTES))
-      : 60
+      : 60,
+    imessageDumpPath:
+      process.env.ARI_IMESSAGE_DUMP_PATH || path.join(canonicalAriProjectRoot, "state", "imessage-dump.tsv")
   };
 }
 

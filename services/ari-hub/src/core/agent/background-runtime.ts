@@ -6,6 +6,7 @@ import { listPendingBuilderOutputs } from "@/src/core/orchestration/repository";
 import { ingestBuilderOutputsFromChannel, processPendingBuilderOutputs } from "@/src/core/orchestration/processor";
 import { processBuilderDispatchConsumerOnce } from "@/src/core/operator/builder-consumer";
 import { isCanonicalPaused } from "@/src/core/ari-spine/control-bridge";
+import { runImessageCycleOnce } from "@/src/core/agent/imessage-cycle";
 import { saveCanonicalNote } from "@/src/core/ari-spine/notes-bridge";
 import { getActiveStateSnapshot } from "@/src/core/memory/spine";
 import { listTasks } from "@/src/core/memory/repository";
@@ -225,6 +226,13 @@ export async function runBackgroundCycleOnce(reason: "startup" | "interval" | "m
   let producedWork = false;
 
   try {
+    if (reason !== "startup") {
+      // Skip on the one-time "startup" trigger (fired synchronously the first time any API
+      // handler calls ensureBackgroundRuntime()): touching the dump file there has been observed
+      // to destabilize unrelated tests that spin up their own subprocess-backed runtime in the
+      // same process tick. The interval tick 45s later covers the same ground safely.
+      producedWork = (await runImessageCycleOnce()) || producedWork;
+    }
     producedWork = processBuilderDispatchConsumerOnce(reason) || producedWork;
     const ingestedBuilderOutputs = ingestBuilderOutputsFromChannel();
     const pendingBuilderOutputs = listPendingBuilderOutputs();
