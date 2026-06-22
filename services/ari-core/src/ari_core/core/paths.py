@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 CONFIG_DIR = PROJECT_ROOT / "config"
 LEGACY_RUNTIME_DIR = PROJECT_ROOT / "runtime"

@@ -3,9 +3,8 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
-
 from ari_memory import Base, DatabaseSettings
+from sqlalchemy import engine_from_config, pool
 
 config = context.config
 

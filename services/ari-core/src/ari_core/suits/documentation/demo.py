@@ -7,7 +7,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ...core.paths import DB_PATH
 
@@ -19,7 +19,7 @@ def _sanitize_save_name(name: str) -> str:
     return cleaned
 
 
-def _artifact_slug(command: str, save_name: Optional[str] = None) -> str:
+def _artifact_slug(command: str, save_name: str | None = None) -> str:
     if save_name:
         return _sanitize_save_name(save_name)
 
@@ -30,8 +30,8 @@ def _artifact_slug(command: str, save_name: Optional[str] = None) -> str:
 
 def _execution_capture_paths(
     command: str,
-    save_name: Optional[str] = None,
-    now: Optional[datetime] = None,
+    save_name: str | None = None,
+    now: datetime | None = None,
 ) -> tuple[Path, Path]:
     now_value = now or datetime.now()
     output_dir = Path.home() / "ARI" / "videos" / now_value.strftime("%Y-%m-%d")
@@ -40,7 +40,7 @@ def _execution_capture_paths(
     return output_dir / f"{base_name}.mov", output_dir / f"{base_name}.txt"
 
 
-def detect_proof_line(stdout: str) -> Optional[str]:
+def detect_proof_line(stdout: str) -> str | None:
     lines = [line.rstrip() for line in stdout.splitlines()]
     non_empty_lines = [line for line in lines if line.strip()]
     if not non_empty_lines:
@@ -166,10 +166,10 @@ def _run_shell_command(command: str) -> subprocess.CompletedProcess[str]:
 def execute_recorded_command(
     command: str,
     *,
-    save_name: Optional[str] = None,
+    save_name: str | None = None,
     pre_delay: float = 1.0,
     post_delay: float = 2.0,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     if pre_delay < 0 or post_delay < 0:
         raise ValueError("pre-delay and post-delay must be non-negative.")
@@ -179,7 +179,7 @@ def execute_recorded_command(
     status = "FAILED"
     notes = "Recording did not start."
     exit_code = 1
-    recorder: Optional[subprocess.Popen[str]] = None
+    recorder: subprocess.Popen[str] | None = None
     proof = {"proof_line": "", "proof_line_index": -1, "total_lines": 0}
 
     try:
@@ -283,8 +283,8 @@ def _format_demo_output(command: str, result: subprocess.CompletedProcess[str], 
 def _save_demo_artifact(
     command: str,
     result: subprocess.CompletedProcess[str],
-    save_name: Optional[str] = None,
-    now: Optional[datetime] = None,
+    save_name: str | None = None,
+    now: datetime | None = None,
 ) -> Path:
     now_value = now or datetime.now()
     output_dir = Path.home() / "ARI" / "demos" / now_value.strftime("%Y-%m-%d")
@@ -370,14 +370,14 @@ def _session_demo_root() -> Path:
     return Path.home() / "ARI" / "demos"
 
 
-def _session_output_dir(now: Optional[datetime] = None) -> Path:
+def _session_output_dir(now: datetime | None = None) -> Path:
     now_value = now or datetime.now()
     output_dir = Path.home() / "ARI" / "sessions" / now_value.strftime("%Y-%m-%d")
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
 
-def _session_output_path(save_name: Optional[str] = None, now: Optional[datetime] = None) -> Path:
+def _session_output_path(save_name: str | None = None, now: datetime | None = None) -> Path:
     now_value = now or datetime.now()
     output_dir = _session_output_dir(now_value)
     suffix = _sanitize_save_name(save_name) if save_name else "session"
@@ -468,7 +468,7 @@ def _sort_artifacts(paths: list[str]) -> list[str]:
 def _structured_artifact_paths(
     artifact_path: Path,
     *,
-    seen: Optional[set[str]] = None,
+    seen: set[str] | None = None,
     max_depth: int = 2,
 ) -> list[str]:
     expanded_path = artifact_path.expanduser()
@@ -616,7 +616,7 @@ def _build_entry_proof_points(
 def _parse_demo_file(demo_path: Path) -> dict[str, Any]:
     header_fields: dict[str, str] = {}
     sections: dict[str, list[str]] = {"stdout": [], "stderr": []}
-    current_section: Optional[str] = None
+    current_section: str | None = None
 
     for raw_line in demo_path.read_text(encoding="utf-8").splitlines():
         stripped = raw_line.strip()
@@ -1001,7 +1001,7 @@ def _build_short_video_script(
     }
 
 
-def _build_session_object(entries: list[dict[str, Any]], now: Optional[datetime] = None) -> dict[str, Any]:
+def _build_session_object(entries: list[dict[str, Any]], now: datetime | None = None) -> dict[str, Any]:
     proof_points = sorted(
         _dedupe_preserve_order([point for entry in entries for point in entry.get("proof_points", [])]),
         key=_proof_priority,

@@ -1,174 +1,171 @@
-# ARI
+# ARI — Local-First Operational Intelligence
 
-ARI is a local-first agentic operating system for personal execution, work automation, and decision support.
+ARI is a local-first personal intelligence system for structured execution, memory, decision support, and approval-gated automation.
 
-The core idea is simple:
+**ARI is the brain. ACE is the interface.**
 
-> One canonical intelligence, many surfaces.
+## Core Identity
 
-ARI is the brain. ACE is the interface doctrine and surface layer. Codex and other agents may help build or operate parts of the system, but ARI remains the canonical source of state, policy, memory, and execution history.
+This repository contains the current canonical implementation of ARI's local-first brain and runtime.
 
-## What ARI Is Building Toward
+ARI is designed to operate across surfaces and devices, beginning with the user's primary computer as the execution host. The code in this repository is the source-of-truth implementation for ARI's core loop, decision system, state model, and execution boundaries.
 
-ARI is designed to help an operator maintain continuity across work, projects, decisions, routines, and open loops.
+## What this repository contains
 
-The system is not intended to be a loose collection of chatbots. It is being built as a durable local runtime that can:
+- `services/ari-core` — canonical runtime / brain
+- `services/ari-api` — API contract over canonical capabilities
+- `services/ari-hub` — ACE hub surface
+- `packages/ari-telegram-gateway` — Telegram natural-language intake surface
 
-- hold canonical state across days, weeks, projects, and open loops
-- turn raw inputs into structured events
-- derive explainable signals and alerts
-- expose state through multiple surfaces without duplicating logic
-- keep human approval boundaries around external actions
-- produce artifacts that make work inspectable and reusable
+## Current capabilities
 
-## Current Status
+ARI currently includes:
 
-ARI is an active prototype. The current repository focuses on the local execution spine:
+- canonical notes, tasks, and structured memory
+- canonical coordination and policy state
+- API-first hub-to-brain architecture
+- bounded coding/operator execution
+- execution lifecycle tracking and verification
+- governed decision, dispatch, evaluation, and persistence loop
+- typed signal decisions: act, escalate, defer, or ignore, with explicit reasoning
+- local-first worker backend seam controlled by ARI, with deterministic stub and command-backed modes
+- bounded self-improvement runner over the same worker seam
+- single outward `ari` CLI entrypoint with natural-language routing
+- self-improvement slice selection tied to repo state and execution intent
+- verification profiles based on changed paths, expected symbols, targeted tests, output checks, and unexpected-change detection
+- persisted controller decision records for bounded self-improvement cycles
+- bounded action plans that give worker agents concrete local tasks, structural targets, and retry guidance
+- Telegram polling gateway foundation that converts private natural-language Telegram messages into structured ARI events, role assignments, assets, and pending local tasks
 
-- canonical Python core
-- FastAPI service boundary
-- Next.js hub surface
-- typed state and event models
-- local Postgres baseline
-- explainable signal and alert paths
-- testable routines and orchestration contracts
+## Current milestone
 
-This is not yet a packaged public product. It is a working foundation for a serious local-first agentic system.
+**v0.12 — Bounded action generation**
 
-## Core Architecture
+This means:
 
-```text
-operator
-  |
-  v
-ACE surfaces: hub, terminal, phone, notifications, future companion UI
-  |
-  v
-ari-api: service boundary over canonical capabilities
-  |
-  v
-ari-core: routines, orchestration, signals, alerts, execution logic
-  |
-  v
-canonical state + persistence
-```
+- the canonical brain/runtime is real
+- the API seam is real
+- the hub is a surface, not the brain
+- execution exists as a bounded, policy-aware capability
+- ARI can invoke worker agents inside its own controlled loop
+- the terminal surface starts from one outward identity: `ari`
+- ARI leaves a typed controller trail for bounded self-improvement cycles
+- bounded self-improvement does not trust plausible stdout alone
+- ARI generates explicit bounded action plans and tighter retry prompts for worker runs
+- ARI can switch between stub and command-backed worker backends without changing the controller loop or outward interface
 
-### Repository Layout
+## Next milestone
 
-- `services/ari-core/` — canonical Python ARI runtime
-- `services/ari-api/` — FastAPI wrapper over canonical ARI capabilities
-- `services/ari-hub/` — Next.js ACE hub surface
-- `docs/` — architecture and product direction
-- `tests/` — Python verification for the converged repo
-- `compose.yaml` — local Postgres baseline
-- `pyproject.toml` — Python package and tooling configuration
+**v1.0 — Governed autonomous coding loop**
 
-## Product Doctrine
+Goal:
 
-ARI follows a few strict design rules:
+- generate bounded coding actions
+- execute them under policy
+- verify results
+- retry intelligently
+- reduce dependence on external coding agents for well-scoped local tasks over time
 
-- ARI is the brain; ACE is the interface layer.
-- Shared state is canonical.
-- Surfaces should read from and write through ARI instead of inventing parallel logic.
-- External actions require explicit approval unless a boundary has been deliberately expanded.
-- Signals and alerts must be explainable after the fact.
-- Local-first durability is preferred over premature cloud complexity.
-- Build the spine before adding polish.
+## Direction
 
-## Current Proof Module Direction
+Long-term, ARI is being built toward:
 
-The first practical proof module is Career Command: a job-search and career-execution workflow that can scout roles, evaluate fit, draft outreach, track actions, and surface pending approvals.
+- durable local execution memory
+- persistent self-documentation
+- multi-surface access
+- explicit inspection and review tools
+- clean mobile and desktop access points
 
-The intended product loop is:
+## Local-first execution model
 
-1. Scout opportunities.
-2. Evaluate and rank fit.
-3. Save selected targets.
-4. Draft outreach or next actions locally.
-5. Require human approval before any external send, application, or message.
-6. Track the execution history.
-7. Surface progress through ACE surfaces such as the hub and Telegram.
+ARI is designed as a local-first system.
 
-Career Command is not the whole product. It is the first concrete proof that ARI can turn messy work into a structured operating loop.
+Primary execution host:
 
-## Safety Boundaries
+- The user's local computer is the main execution environment.
+- File access, command execution, and state mutation occur locally by default.
 
-Current default boundary:
+Future extension:
 
-- no automatic applications
-- no automatic emails
-- no automatic LinkedIn messages
-- no payment or purchasing actions
-- no silent external side effects
+- Additional nodes such as mobile devices, remote workers, and cloud services may interface with the canonical brain.
+- These nodes act as surfaces or extensions, not replacements for the core runtime.
 
-ARI may draft, rank, summarize, track, and recommend. External actions should remain approval-gated.
+Local-first does not mean single-machine forever. It means:
 
-## Quick Start
+- local control
+- local execution by default
+- external systems are optional extensions, not dependencies
 
-Create a Python 3.12 environment and install repo dependencies:
+## Repository layout
 
-```bash
-python3.12 -m venv .venv
-./.venv/bin/pip install '.[dev]'
-```
+- `services/ari-core/`
+- `services/ari-api/`
+- `services/ari-hub/`
+- `packages/ari-telegram-gateway/`
+- `config/schema.sql`
+- `tests/`
+- `docs/`
 
-Start local infrastructure:
+## Telegram gateway
 
-```bash
-cp .env.example .env
-docker compose up -d
-```
+The Telegram gateway is the first mobile natural-language command intake surface for ARI. Telegram captures user intent; ARI remains the brain, memory, router, and authority layer.
 
-Install hub dependencies:
+Setup:
+
+1. Message `@BotFather` in Telegram and create the `ARI Command` bot, for example `@AriCommandBot`.
+2. Add the local bot token to `.env` as `TELEGRAM_BOT_TOKEN`. Never commit `.env`.
+3. Send a message to the bot, then call Telegram `getUpdates` to find `message.from.id`:
 
 ```bash
-cd services/ari-hub
-npm install
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"
 ```
 
-Run the API:
+4. Add the authorized sender and local data directories to `.env`:
 
 ```bash
-cd /path/to/ari
-./.venv/bin/python -m uvicorn ari_api.main:app --host 127.0.0.1 --port 8000
+AUTHORIZED_TELEGRAM_USER_ID=replace-with-your-numeric-telegram-user-id
+ARI_TELEGRAM_INBOX_DIR=data/telegram/inbox
+ARI_TELEGRAM_EVENTS_DIR=data/telegram/events
+ARI_TELEGRAM_BOT_IDENTITY=ari_command
 ```
 
-Run the hub:
+5. Run locally:
 
 ```bash
-cd services/ari-hub
-npm run dev
+PYTHONPATH=packages/ari-telegram-gateway/src ./.venv312/bin/python -m ari_telegram_gateway.polling --max-updates 3
 ```
 
-For LAN access:
+The console script is also available after `./.venv312/bin/pip install -e .`:
 
 ```bash
-npm run build
-npm run start:lan
+./.venv312/bin/ari-telegram-gateway --max-updates 3
 ```
 
-## Verification Baseline
+The gateway writes ignored local runtime data under `data/telegram/`, including polling state at `data/telegram/state/ari_command_polling_state.json`. Delete that state file to reset the local Telegram offset. Never commit `.env` or `data/telegram/`.
+
+Smoke test without Telegram live access:
 
 ```bash
-./.venv/bin/python -m pytest tests/unit -q
+PYTHONPATH=packages/ari-telegram-gateway/src ./.venv312/bin/python scripts/dev/smoke_telegram_gateway.py
 ```
 
-```bash
-cd services/ari-hub
-node --import tsx --test --test-reporter spec tests/auth.test.ts tests/workspace.test.ts tests/orchestration-classifier.test.ts
-npm run build
-```
+See [docs/telegram-gateway.md](docs/telegram-gateway.md) for architecture, safety rules, BotFather setup, and future multi-bot or group expansion.
 
-## Documentation Map
+## Working rule
 
-- `docs/charter.md` — identity, purpose, and product principles
-- `docs/topology.md` — brain, API, hub, terminal, phone, and notifications
-- `docs/state-schema.md` — canonical state, events, signals, alerts, and orchestration runs
-- `docs/deployment-plan.md` — local-first deployment path
-- `docs/mvp-build-order.md` — sequencing rationale
-- `docs/product-narrative.md` — public-facing product story
-- `docs/roadmap.md` — near-term execution direction
+Keep ARI canonical.
+Keep ACE thin.
+Keep external providers pluggable.
+If a capability belongs to the brain, move it inward.
 
-## Working Rule
+## Surface simplicity
 
-Keep ARI canonical. Keep ACE thin. If a capability belongs to the brain, move it inward.
+ARI is the outward identity.
+
+The terminal-facing default should be:
+
+- one invocation surface
+- one response contract
+- one canonical authority
+
+External coding agents are workers under ARI's control, not the controller of the system. The worker seam is pluggable, but the controller remains canonical inside ARI.

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+if command -v figlet >/dev/null 2>&1 && command -v lolcat >/dev/null 2>&1; then
+  figlet "ARI" | lolcat
+else
+  echo "ARI"
+fi
+
+notes=(
+  "Local brain online."
+  "Operator recognized."
+  "Memory spine stable."
+  "Execution core standing by."
+  "No fires detected. Yet."
+  "Ambition level: unreasonable but useful."
+  "System stable. The human remains under review."
+  "All systems nominal. Calendar still hostile."
+)
+
+printf "%s\n" "${notes[$RANDOM % ${#notes[@]}]}"

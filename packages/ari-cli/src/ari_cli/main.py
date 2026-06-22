@@ -17,10 +17,16 @@ from ari_memory import DatabaseSettings, create_engine, create_session_factory
 from ari_state import OpenLoopKind, OpenLoopPriority
 from sqlalchemy.orm import Session, sessionmaker
 
+from ari_cli.approval_cli import (
+    handle_approve_pending_approval,
+    handle_deny_pending_approval,
+    handle_list_pending_approvals,
+)
 from ari_cli.history_cli import (
     handle_compare_latest_two_runs,
     handle_latest_run,
     handle_previous_run,
+    handle_run_orchestration,
 )
 from ari_cli.state_cli import (
     handle_loops_add,
@@ -44,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     orchestration_parser = surfaces.add_parser("orchestration")
     orchestration_subparsers = orchestration_parser.add_subparsers(dest="command")
+
+    run_parser = orchestration_subparsers.add_parser("run")
+    _add_state_date_argument(run_parser)
+    _add_database_url_argument(run_parser)
 
     for command in ("latest", "previous", "compare-latest-two"):
         command_parser = orchestration_subparsers.add_parser(command)
@@ -94,12 +104,29 @@ def build_parser() -> argparse.ArgumentParser:
     loops_add.add_argument("--kind", type=_parse_kind, default=parse_kind("task"))
     loops_add.add_argument("--priority", type=_parse_priority, default=parse_priority("medium"))
     loops_add.add_argument("--notes", default="")
+    loops_add.add_argument("--company", default=None)
     loops_add.add_argument("--project-id", type=UUID)
     loops_add.add_argument("--due-at", type=_parse_datetime)
 
     loops_resolve = loops_subparsers.add_parser("resolve")
     _add_database_url_argument(loops_resolve)
     loops_resolve.add_argument("--id", required=True, type=UUID)
+
+    approvals_parser = surfaces.add_parser("approvals")
+    approvals_subparsers = approvals_parser.add_subparsers(dest="command")
+
+    approvals_list = approvals_subparsers.add_parser("list")
+    _add_database_url_argument(approvals_list)
+
+    approvals_approve = approvals_subparsers.add_parser("approve")
+    _add_database_url_argument(approvals_approve)
+    approvals_approve.add_argument("--id", required=True, type=UUID)
+    approvals_approve.add_argument("--resolved-at", type=_parse_datetime)
+
+    approvals_deny = approvals_subparsers.add_parser("deny")
+    _add_database_url_argument(approvals_deny)
+    approvals_deny.add_argument("--id", required=True, type=UUID)
+    approvals_deny.add_argument("--resolved-at", type=_parse_datetime)
 
     return parser
 
@@ -119,6 +146,10 @@ def run_cli(
     session_factory = _resolve_session_factory(args.database_url)
 
     if args.surface == "orchestration":
+        if args.command == "run":
+            return handle_run_orchestration(
+                session_factory, state_date=args.state_date, stdout=output
+            )
         if args.command == "latest":
             return handle_latest_run(session_factory, state_date=args.state_date, stdout=output)
         if args.command == "previous":
@@ -180,12 +211,29 @@ def run_cli(
                     kind=args.kind,
                     priority=args.priority,
                     notes=args.notes,
+                    company=args.company,
                     project_id=args.project_id,
                     due_at=args.due_at,
                 ),
                 stdout=output,
             )
         return handle_loops_resolve(session_factory, loop_id=args.id, stdout=output)
+    if args.surface == "approvals":
+        if args.command == "list":
+            return handle_list_pending_approvals(session_factory, stdout=output)
+        if args.command == "approve":
+            return handle_approve_pending_approval(
+                session_factory,
+                approval_id=args.id,
+                approved_at=args.resolved_at,
+                stdout=output,
+            )
+        return handle_deny_pending_approval(
+            session_factory,
+            approval_id=args.id,
+            denied_at=args.resolved_at,
+            stdout=output,
+        )
     parser.print_help(file=stdout)
     return 1
 

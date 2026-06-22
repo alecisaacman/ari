@@ -1,7 +1,6 @@
 import argparse
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 from ...core.paths import DB_PATH
 from .storyboard import _sanitize_filename_part, build_short_video_storyboard_data
@@ -13,7 +12,7 @@ def _recording_goal(topic: str, demo_metadata: dict[str, str]) -> str:
     return f"Record a short piece that shows how {topic.strip()} turns into a concrete ARI workflow."
 
 
-def _assets(topic: str, demo_metadata: dict[str, str]) -> List[str]:
+def _assets(topic: str, demo_metadata: dict[str, str]) -> list[str]:
     assets = [
         "terminal open in the project folder",
         "recording window framed so the prompt and output are readable",
@@ -29,7 +28,7 @@ def _assets(topic: str, demo_metadata: dict[str, str]) -> List[str]:
     return assets
 
 
-def _recording_steps(topic: str, storyboard_data: dict[str, object]) -> List[str]:
+def _recording_steps(topic: str, storyboard_data: dict[str, object]) -> list[str]:
     beats = storyboard_data["beats"]
     demo_metadata = storyboard_data["demo_metadata"]
     command = demo_metadata.get("command")
@@ -54,7 +53,7 @@ def _recording_steps(topic: str, storyboard_data: dict[str, object]) -> List[str
     ]
 
 
-def _shot_timing(storyboard_data: dict[str, object]) -> List[str]:
+def _shot_timing(storyboard_data: dict[str, object]) -> list[str]:
     beats = storyboard_data["beats"]
     proof_end = 22 if len(beats) > 7 else 20
     close_end = 30 if len(beats) > 6 else 28
@@ -66,7 +65,7 @@ def _shot_timing(storyboard_data: dict[str, object]) -> List[str]:
     ]
 
 
-def _on_screen_text(topic: str, storyboard_data: dict[str, object]) -> List[str]:
+def _on_screen_text(topic: str, storyboard_data: dict[str, object]) -> list[str]:
     demo_metadata = storyboard_data["demo_metadata"]
     overlays = [
         topic.strip(),
@@ -83,7 +82,7 @@ def _on_screen_text(topic: str, storyboard_data: dict[str, object]) -> List[str]
     return overlays[:4]
 
 
-def _notes(storyboard_data: dict[str, object]) -> List[str]:
+def _notes(storyboard_data: dict[str, object]) -> list[str]:
     demo_metadata = storyboard_data["demo_metadata"]
     notes = [
         "Keep the cursor visible during setup and execution.",
@@ -100,7 +99,7 @@ def _notes(storyboard_data: dict[str, object]) -> List[str]:
 def generate_recording_plan(
     topic: str,
     style: str = "balanced",
-    demo_file: Optional[str] = None,
+    demo_file: str | None = None,
     db_path: Path = DB_PATH,
 ) -> str:
     storyboard_data = build_short_video_storyboard_data(
@@ -142,7 +141,7 @@ def generate_recording_plan(
     return "\n".join(lines)
 
 
-def _save_recording_plan(plan: str, topic: str, now: Optional[datetime] = None) -> Path:
+def _save_recording_plan(plan: str, topic: str, now: datetime | None = None) -> Path:
     now_value = now or datetime.now()
     output_dir = Path.home() / "ARI" / "recordings" / now_value.strftime("%Y-%m-%d")
     output_dir.mkdir(parents=True, exist_ok=True)

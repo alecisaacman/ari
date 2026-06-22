@@ -1,8 +1,8 @@
 import argparse
 from datetime import date, timedelta
 from pathlib import Path
-from typing import List, Optional
 
+from ...core.paths import DB_PATH
 from .db import (
     add_contact,
     add_followup,
@@ -19,7 +19,6 @@ from .db import (
     list_notes_for_contact,
     list_pending_followups,
 )
-from ...core.paths import DB_PATH
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -319,7 +318,7 @@ def handle_today(db_path: Path = DB_PATH) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None, db_path: Path = DB_PATH) -> int:
+def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     return dispatch(args, parser, db_path=db_path)

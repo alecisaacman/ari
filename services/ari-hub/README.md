@@ -2,6 +2,36 @@
 
 ARI v1 is the private local-first ARI runtime. ACE is the browser, phone, voice, and trigger access layer around it.
 
+## Current ACE dashboard shell
+
+The default home page is now the first minimal ACE read-only dashboard shell.
+It reads the ARI-owned `/overview` read model when `ari-api` is available and
+falls back to a clearly labeled static shell when it is not. It displays ARI
+doctrine, skill status, readiness surfaces, pending authority surfaces,
+coding-loop chain surfaces, memory surfaces, self-documentation surfaces, and
+system-health gaps. Summary counts for pending approvals, recent coding-loop
+results, and lifecycle lessons are shown only from the ARI-owned overview model;
+unavailable counts are labeled as partial. The pending approval detail panel reads
+the ARI-owned `/overview/pending-approvals` model and displays approval ids,
+source, reason, proposed goal/action summary, and created time when available.
+The coding-loop chain detail panel reads `/overview/coding-loop-chains` and
+displays recent result ids, goals, terminal statuses, chain depth, approval
+counts, retry execution counts, and inspection hints. The lifecycle lessons
+panel reads `/overview/lifecycle-lessons` and displays compact lesson summaries,
+source ids, confidence, importance, tags, and inspection hints from ARI-owned
+memory blocks. The self-documentation artifact panel reads
+`/overview/self-documentation` and displays persisted ContentSeed and
+ContentPackage summaries, readiness status, proof/redaction counts, and
+inspection hints from ARI-owned storage. The content ideas panel reads
+`/overview/content-ideas` and displays ARI-owned creator-content options,
+priority, risk, platform fit, proof counts, redaction counts, and inspection
+hints without generating, recording, editing, or publishing anything.
+
+The shell does not approve, reject, execute, advance chains, mutate memory,
+create skills, generate content, record, edit, upload, publish, call external
+services, or own independent state. Future controls must call ARI backend
+authority surfaces; this page only establishes the read-only product surface.
+
 ## What ships in v1
 
 - Responsive ARI interface through the ACE shell

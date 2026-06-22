@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+cd "/Users/alecisaacman/ARI (codex)/projects/ari-canonical" && ./.venv312/bin/python -m pytest tests/unit -q && npm --prefix services/ari-hub run build

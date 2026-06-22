@@ -1,6 +1,5 @@
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 from ...core.paths import DB_PATH
 from ..networking.db import get_connection, initialize_database
@@ -51,7 +50,7 @@ def list_ari_tasks(limit: int = 20, db_path: Path = DB_PATH) -> list[sqlite3.Row
         raise
 
 
-def get_ari_task(task_id: int, db_path: Path = DB_PATH) -> Optional[sqlite3.Row]:
+def get_ari_task(task_id: int, db_path: Path = DB_PATH) -> sqlite3.Row | None:
     if not db_path.exists():
         return None
     try:

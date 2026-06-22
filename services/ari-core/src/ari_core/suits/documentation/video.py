@@ -1,8 +1,8 @@
 import argparse
 from pathlib import Path
 
-from .demo import _format_execution_summary, execute_recorded_command
 from ...core.paths import DB_PATH
+from .demo import _format_execution_summary, execute_recorded_command
 
 
 def handle_video_build(args: argparse.Namespace, db_path: Path = DB_PATH) -> int:

@@ -2,6 +2,22 @@ import json
 from pathlib import Path
 
 from ...core.paths import DB_PATH
+from .coding_loop import (
+    advance_coding_loop_retry_chain,
+    approve_latest_pending_coding_loop_retry_approval,
+    approve_stored_coding_loop_retry_approval,
+    create_coding_loop_retry_approval_from_review,
+    decide_coding_loop_retry_continuation,
+    execute_approved_coding_loop_retry_approval,
+    get_coding_loop_retry_approval,
+    list_coding_loop_retry_approvals,
+    propose_next_coding_loop_retry_approval_from_chain,
+    reject_latest_pending_coding_loop_retry_approval,
+    reject_stored_coding_loop_retry_approval,
+    review_coding_loop_retry_execution,
+    run_one_step_coding_loop,
+)
+from .controller import build_repo_context, plan_execution_goal, run_execution_goal
 from .engine import (
     approve_operator_action,
     create_operator_action,
@@ -13,10 +29,36 @@ from .engine import (
     run_operator_action,
     write_file,
 )
+from .inspection import (
+    get_coding_loop_result,
+    get_execution_plan_preview,
+    get_execution_run,
+    inspect_coding_loop_chain,
+    inspect_coding_loop_chain_advancement,
+    inspect_coding_loop_chain_approval_mutation,
+    inspect_coding_loop_chain_next_approval_proposal,
+    inspect_coding_loop_continuation_decision,
+    inspect_coding_loop_result,
+    inspect_coding_loop_retry_approval,
+    inspect_coding_loop_retry_execution_review,
+    list_coding_loop_results,
+    list_execution_plan_previews,
+    list_execution_runs,
+)
+from .models import ExecutionGoal
+from .tools import get_execution_tool_registry
 
 
 def handle_api_execution_command(args, db_path: Path = DB_PATH) -> int:
-    print(json.dumps(execute_command(args.command, cwd=args.cwd, timeout_seconds=args.timeout_seconds)))
+    print(
+        json.dumps(
+            execute_command(
+                args.command,
+                cwd=args.cwd,
+                timeout_seconds=args.timeout_seconds,
+            )
+        )
+    )
     return 0
 
 
@@ -26,7 +68,16 @@ def handle_api_execution_read_file(args, db_path: Path = DB_PATH) -> int:
 
 
 def handle_api_execution_write_file(args, db_path: Path = DB_PATH) -> int:
-    print(json.dumps(write_file(args.path, args.content, action_id=args.action_id, db_path=db_path)))
+    print(
+        json.dumps(
+            write_file(
+                args.path,
+                args.content,
+                action_id=args.action_id,
+                db_path=db_path,
+            )
+        )
+    )
     return 0
 
 
@@ -45,11 +96,320 @@ def handle_api_execution_patch_file(args, db_path: Path = DB_PATH) -> int:
     return 0
 
 
+def handle_api_execution_goal(args, db_path: Path = DB_PATH) -> int:
+    result = run_execution_goal(
+        ExecutionGoal(
+            objective=args.goal,
+            max_cycles=args.max_cycles,
+        ),
+        execution_root=args.execution_root,
+        db_path=db_path,
+        planner_mode=args.planner,
+    )
+    print(json.dumps(result.to_dict()))
+    return 0
+
+
+def handle_api_execution_plan(args, db_path: Path = DB_PATH) -> int:
+    result = plan_execution_goal(
+        ExecutionGoal(
+            objective=args.goal,
+            max_cycles=args.max_cycles,
+        ),
+        execution_root=args.execution_root,
+        db_path=db_path,
+        planner_mode=args.planner,
+    )
+    print(json.dumps(result))
+    return 0
+
+
+def handle_api_execution_coding_loop(args, db_path: Path = DB_PATH) -> int:
+    result = run_one_step_coding_loop(
+        args.goal,
+        execution_root=args.execution_root,
+        db_path=db_path,
+        planner_mode=args.planner,
+    )
+    print(json.dumps({"coding_loop": inspect_coding_loop_result(result)}))
+    return 0
+
+
+def handle_api_execution_coding_loops_list(args, db_path: Path = DB_PATH) -> int:
+    print(json.dumps({"coding_loops": list_coding_loop_results(limit=args.limit, db_path=db_path)}))
+    return 0
+
+
+def handle_api_execution_coding_loops_show(args, db_path: Path = DB_PATH) -> int:
+    result = get_coding_loop_result(args.id, db_path=db_path)
+    if result is None:
+        print(json.dumps({"error": f"Coding-loop result {args.id} not found."}))
+        return 1
+    print(json.dumps({"coding_loop": result}))
+    return 0
+
+
+def handle_api_execution_coding_loops_chain(args, db_path: Path = DB_PATH) -> int:
+    chain = inspect_coding_loop_chain(
+        args.id,
+        max_depth=args.max_depth,
+        db_path=db_path,
+    )
+    if chain is None:
+        print(json.dumps({"error": f"Coding-loop result {args.id} not found."}))
+        return 1
+    print(json.dumps({"chain": chain}))
+    return 0
+
+
+def handle_api_execution_coding_loops_advance(args, db_path: Path = DB_PATH) -> int:
+    try:
+        advancement = advance_coding_loop_retry_chain(
+            args.id,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "advancement": inspect_coding_loop_chain_advancement(advancement),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_coding_loops_approve_latest(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        mutation = approve_latest_pending_coding_loop_retry_approval(
+            args.id,
+            approved_by=args.approved_by,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    mutation
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_coding_loops_reject_latest(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        mutation = reject_latest_pending_coding_loop_retry_approval(
+            args.id,
+            rejected_reason=args.reason,
+            rejected_by=args.rejected_by,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    mutation
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_coding_loops_propose_next(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        proposal = propose_next_coding_loop_retry_approval_from_chain(
+            args.id,
+            max_depth=args.max_depth,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "next_approval_proposal": (
+                    inspect_coding_loop_chain_next_approval_proposal(proposal)
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_retry_approvals_list(args, db_path: Path = DB_PATH) -> int:
+    approvals = [
+        inspect_coding_loop_retry_approval(approval)
+        for approval in list_coding_loop_retry_approvals(limit=args.limit, db_path=db_path)
+    ]
+    print(json.dumps({"retry_approvals": approvals}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_show(args, db_path: Path = DB_PATH) -> int:
+    approval = get_coding_loop_retry_approval(args.id, db_path=db_path)
+    if approval is None:
+        print(json.dumps({"error": f"Coding-loop retry approval {args.id} not found."}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_approve(args, db_path: Path = DB_PATH) -> int:
+    try:
+        approval = approve_stored_coding_loop_retry_approval(
+            args.id,
+            approved_by=args.approved_by,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_reject(args, db_path: Path = DB_PATH) -> int:
+    try:
+        approval = reject_stored_coding_loop_retry_approval(
+            args.id,
+            rejected_reason=args.reason,
+            rejected_by=args.rejected_by,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
+    return 0
+
+
+def handle_api_execution_retry_approvals_execute(args, db_path: Path = DB_PATH) -> int:
+    try:
+        approval, execution_run = execute_approved_coding_loop_retry_approval(
+            args.id,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "retry_approval": inspect_coding_loop_retry_approval(approval),
+                "execution_run": execution_run,
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_retry_approvals_review(args, db_path: Path = DB_PATH) -> int:
+    try:
+        review = review_coding_loop_retry_execution(args.id, db_path=db_path)
+        continuation = decide_coding_loop_retry_continuation(args.id, db_path=db_path)
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(
+        json.dumps(
+            {
+                "review": inspect_coding_loop_retry_execution_review(review),
+                "continuation": inspect_coding_loop_continuation_decision(
+                    continuation
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def handle_api_execution_retry_approvals_propose_next(
+    args,
+    db_path: Path = DB_PATH,
+) -> int:
+    try:
+        approval = create_coding_loop_retry_approval_from_review(
+            args.id,
+            db_path=db_path,
+        )
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    print(json.dumps({"retry_approval": inspect_coding_loop_retry_approval(approval)}))
+    return 0
+
+
+def handle_api_execution_plans_list(args, db_path: Path = DB_PATH) -> int:
+    print(json.dumps({"plans": list_execution_plan_previews(limit=args.limit, db_path=db_path)}))
+    return 0
+
+
+def handle_api_execution_plans_show(args, db_path: Path = DB_PATH) -> int:
+    preview = get_execution_plan_preview(args.id, db_path=db_path)
+    if preview is None:
+        print(json.dumps({"error": f"Execution plan preview {args.id} not found."}))
+        return 1
+    print(json.dumps({"plan": preview}))
+    return 0
+
+
+def handle_api_execution_tools(args, db_path: Path = DB_PATH) -> int:
+    del args, db_path
+    print(json.dumps(get_execution_tool_registry().prompt_payload()))
+    return 0
+
+
+def handle_api_execution_context(args, db_path: Path = DB_PATH) -> int:
+    del db_path
+    print(json.dumps({"context": build_repo_context(args.execution_root).to_dict()}))
+    return 0
+
+
+def handle_api_execution_runs_list(args, db_path: Path = DB_PATH) -> int:
+    print(json.dumps({"runs": list_execution_runs(limit=args.limit, db_path=db_path)}))
+    return 0
+
+
+def handle_api_execution_runs_show(args, db_path: Path = DB_PATH) -> int:
+    run = get_execution_run(args.id, db_path=db_path)
+    if run is None:
+        print(json.dumps({"error": f"Execution run {args.id} not found."}))
+        return 1
+    print(json.dumps({"run": run}))
+    return 0
+
+
 def handle_api_execution_action_create(args, db_path: Path = DB_PATH) -> int:
     operations = json.loads(args.operations_json)
     if not isinstance(operations, list):
         raise ValueError("operations_json must decode to a list.")
-    approval_required = None if args.approval_required == "auto" else args.approval_required == "true"
+    approval_required = (
+        None if args.approval_required == "auto" else args.approval_required == "true"
+    )
     print(
         json.dumps(
             create_operator_action(
@@ -93,4 +453,3 @@ def handle_api_execution_action_run(args, db_path: Path = DB_PATH) -> int:
 def handle_api_execution_snapshot(args, db_path: Path = DB_PATH) -> int:
     print(json.dumps(get_execution_snapshot(limit=args.limit, db_path=db_path)))
     return 0
-

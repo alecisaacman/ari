@@ -9,9 +9,15 @@ description = "Canonical ARI brain, API, and hub integration"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "alembic>=1.15.0",
+  "anthropic>=0.40.0",
   "fastapi>=0.115.0",
+  "openai>=2.32.0",
+  "psycopg[binary]>=3.2.0",
   "pydantic>=2.9.0",
+  "pydantic-settings>=2.6.1",
   "python-dotenv>=1.0.1",
+  "sqlalchemy>=2.0.36",
   "typing-extensions>=4.12.2",
   "uvicorn>=0.34.0",
 ]
@@ -27,6 +33,7 @@ dev = [
 
 [project.scripts]
 ari = "ari_core.ari:main"
+ari-telegram-gateway = "ari_telegram_gateway.polling:main"
 
 [tool.ruff]
 line-length = 100
@@ -34,12 +41,22 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [
   "services/ari-core/src",
   "services/ari-api/src",
+  "packages/ari-cli/src",
+  "packages/ari-events/src",
+  "packages/ari-memory/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-state/src",
+  "packages/ari-career-command/src",
+  "packages/ari-surface-status/src",
+  "packages/ari-telegram-gateway/src",
 ]
 
 [tool.mypy]
@@ -48,6 +65,15 @@ strict = true
 mypy_path = [
   "services/ari-core/src",
   "services/ari-api/src",
+  "packages/ari-cli/src",
+  "packages/ari-events/src",
+  "packages/ari-memory/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-state/src",
+  "packages/ari-career-command/src",
+  "packages/ari-surface-status/src",
+  "packages/ari-telegram-gateway/src",
 ]
 warn_unused_configs = true
 
@@ -58,5 +84,14 @@ py-modules = []
 where = [
   "services/ari-core/src",
   "services/ari-api/src",
+  "packages/ari-cli/src",
+  "packages/ari-events/src",
+  "packages/ari-memory/src",
+  "packages/ari-routines/src",
+  "packages/ari-signals/src",
+  "packages/ari-state/src",
+  "packages/ari-career-command/src",
+  "packages/ari-surface-status/src",
+  "packages/ari-telegram-gateway/src",
 ]
 include = ["ari_*"]
