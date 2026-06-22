@@ -1,33 +1,59 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
-
-from ari_api.schemas import (
-    CodingActionCreateRequest,
-    CoordinationUpsertRequest,
-    ExecutionCommandRequest,
-    ExecutionPatchFileRequest,
-    ExecutionReadFileRequest,
-    ExecutionWriteFileRequest,
-    MemoryCreateRequest,
-    NoteCreateRequest,
-    OrchestrationClassifyRequest,
-    PauseRequest,
-    PolicyPayloadRequest,
-    ProjectDraftRequest,
-    TaskCreateRequest,
+from ari_core import (
+    CreateOpenLoopInput,
+    DailyStateUpdate,
+    WeeklyPlanningUpdate,
+    WeeklyReflectionUpdate,
+    approve_pending_approval,
+    compare_latest_two_runs,
+    create_open_loop,
+    deny_pending_approval,
+    get_alert_details,
+    get_daily_state,
+    get_latest_run_details,
+    get_previous_run_details,
+    get_signal_details,
+    get_weekly_state,
+    list_open_loops,
+    list_pending_approvals,
+    resolve_open_loop,
+    update_daily_state,
+    update_weekly_plan,
+    update_weekly_reflection,
 )
-from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.core.paths import DB_PATH
+from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.modules.coordination.db import (
     ENTITY_CONFIG,
     get_coordination_entity,
     list_coordination_entities,
     put_coordination_entity,
+)
+from ari_core.modules.execution.coding_loop import (
+    advance_coding_loop_retry_chain,
+    approve_latest_pending_coding_loop_retry_approval,
+    approve_stored_coding_loop_retry_approval,
+    create_coding_loop_retry_approval_from_review,
+    decide_coding_loop_retry_continuation,
+    execute_approved_coding_loop_retry_approval,
+    get_coding_loop_retry_approval,
+    list_coding_loop_retry_approvals,
+    propose_next_coding_loop_retry_approval_from_chain,
+    reject_latest_pending_coding_loop_retry_approval,
+    reject_stored_coding_loop_retry_approval,
+    review_coding_loop_retry_execution,
+    run_one_step_coding_loop,
+)
+from ari_core.modules.execution.controller import (
+    build_repo_context,
+    plan_execution_goal,
+    run_execution_goal,
 )
 from ari_core.modules.execution.engine import (
     approve_operator_action,
@@ -40,13 +66,57 @@ from ari_core.modules.execution.engine import (
     run_operator_action,
     write_file,
 )
+from ari_core.modules.execution.inspection import (
+    get_coding_loop_result,
+    get_execution_plan_preview,
+    get_execution_run,
+    inspect_coding_loop_chain,
+    inspect_coding_loop_chain_advancement,
+    inspect_coding_loop_chain_approval_mutation,
+    inspect_coding_loop_chain_next_approval_proposal,
+    inspect_coding_loop_continuation_decision,
+    inspect_coding_loop_result,
+    inspect_coding_loop_retry_approval,
+    inspect_coding_loop_retry_execution_review,
+    list_coding_loop_results,
+    list_execution_plan_previews,
+    list_execution_runs,
+)
+from ari_core.modules.execution.models import ExecutionGoal
+from ari_core.modules.execution.tools import get_execution_tool_registry
+from ari_core.modules.memory.capture import (
+    capture_coding_loop_chain_lifecycle_memory,
+    capture_coding_loop_retry_approval_memory,
+    capture_execution_run_memory,
+    capture_recent_execution_run_memories,
+)
+from ari_core.modules.memory.context import build_memory_context
 from ari_core.modules.memory.db import (
+    create_memory_block,
     get_ari_memory,
+    get_memory_block,
     list_ari_memories,
+    list_memory_blocks,
+    memory_block_to_payload,
     remember_ari_memory,
     search_ari_memories,
+    search_memory_blocks,
 )
+from ari_core.modules.memory.explain import (
+    explain_coding_loop_chain_lifecycle,
+    explain_coding_loop_retry_approval,
+    explain_execution_run,
+)
+from ari_core.modules.memory.self_model import ensure_self_model_memory, get_self_model_memory
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
+from ari_core.modules.overview import (
+    get_ari_operating_overview,
+    get_coding_loop_chains_read_model,
+    get_content_ideas_read_model,
+    get_lifecycle_lessons_read_model,
+    get_pending_approvals_read_model,
+    get_self_documentation_read_model,
+)
 from ari_core.modules.policy.engine import (
     build_project_draft,
     classify_builder_output,
@@ -57,11 +127,77 @@ from ari_core.modules.policy.engine import (
     store_awareness_snapshot,
     sync_project_focus,
 )
-from ari_core.modules.tasks.db import create_ari_task, get_ari_task, list_ari_tasks, search_ari_tasks
+from ari_core.modules.tasks.db import (
+    create_ari_task,
+    get_ari_task,
+    list_ari_tasks,
+    search_ari_tasks,
+)
+from ari_memory import (
+    DatabaseSettings,
+    create_engine,
+    create_session_factory,
+)
+from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy.orm import Session, sessionmaker
+
+from ari_api.schemas import (
+    ActiveOpenLoopsResponse,
+    AlertResponse,
+    ApprovalActionRequest,
+    CodingActionCreateRequest,
+    CodingLoopGoalRequest,
+    CoordinationUpsertRequest,
+    DailyStateResponse,
+    DailyStateWriteRequest,
+    ExecutionCommandRequest,
+    ExecutionGoalRequest,
+    ExecutionPatchFileRequest,
+    ExecutionReadFileRequest,
+    ExecutionWriteFileRequest,
+    MemoryBlockCreateRequest,
+    MemoryCaptureExecutionRequest,
+    MemoryCreateRequest,
+    NoteCreateRequest,
+    OpenLoopCreateRequest,
+    OpenLoopResolveRequest,
+    OpenLoopResponse,
+    OrchestrationClassifyRequest,
+    OrchestrationRunComparisonResponse,
+    OrchestrationRunResponse,
+    PauseRequest,
+    PendingApprovalResponse,
+    PendingApprovalsResponse,
+    PolicyPayloadRequest,
+    ProjectDraftRequest,
+    RetryApprovalApproveRequest,
+    RetryApprovalRejectRequest,
+    SignalResponse,
+    TaskCreateRequest,
+    WeeklyPlanWriteRequest,
+    WeeklyReflectionWriteRequest,
+    WeeklyStateResponse,
+    build_active_open_loops_response,
+    build_alert_response,
+    build_daily_state_response,
+    build_open_loop_response,
+    build_pending_approvals_response,
+    build_run_comparison_response,
+    build_run_response,
+    build_signal_response,
+    build_weekly_state_response,
+)
+
+MEMORY_TYPES_QUERY = Query(default_factory=list)
 
 
-def create_app() -> FastAPI:
+def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
+    resolved_session_factory = session_factory or _build_session_factory()
     app = FastAPI(title="ARI API", version="0.1.0")
+
+    def get_session() -> Generator[Session, None, None]:
+        with resolved_session_factory() as session:
+            yield session
 
     def guard(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         try:
@@ -90,6 +226,372 @@ def create_app() -> FastAPI:
     def post_resume() -> dict[str, Any]:
         return resume()
 
+    @app.get(
+        "/orchestration-runs/latest",
+        response_model=OrchestrationRunResponse,
+    )
+    def latest_orchestration_run(
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> OrchestrationRunResponse:
+        details = get_latest_run_details(session, state_date=state_date)
+        if details is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No orchestration run found for {state_date.isoformat()}.",
+            )
+        return build_run_response(details)
+
+    @app.get(
+        "/pending-approvals",
+        response_model=PendingApprovalsResponse,
+    )
+    def pending_approvals(
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> PendingApprovalsResponse:
+        return build_pending_approvals_response(list_pending_approvals(session))
+
+    @app.post(
+        "/pending-approvals/{approval_id}/approve",
+        response_model=PendingApprovalResponse,
+    )
+    def approve_pending(
+        approval_id: str,
+        payload: ApprovalActionRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> PendingApprovalResponse:
+        from uuid import UUID
+
+        result = approve_pending_approval(
+            session,
+            approval_id=UUID(approval_id),
+            approved_at=payload.resolved_at,
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No pending approval found for {approval_id}.",
+            )
+        return PendingApprovalResponse.model_validate(result.approval.model_dump(mode="json"))
+
+    @app.post(
+        "/pending-approvals/{approval_id}/deny",
+        response_model=PendingApprovalResponse,
+    )
+    def deny_pending(
+        approval_id: str,
+        payload: ApprovalActionRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> PendingApprovalResponse:
+        from uuid import UUID
+
+        result = deny_pending_approval(
+            session,
+            approval_id=UUID(approval_id),
+            denied_at=payload.resolved_at,
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No pending approval found for {approval_id}.",
+            )
+        return PendingApprovalResponse.model_validate(result.approval.model_dump(mode="json"))
+
+    @app.get(
+        "/orchestration-runs/previous",
+        response_model=OrchestrationRunResponse,
+    )
+    def previous_orchestration_run(
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> OrchestrationRunResponse:
+        details = get_previous_run_details(session, state_date=state_date)
+        if details is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No previous orchestration run found for {state_date.isoformat()}."
+                ),
+            )
+        return build_run_response(details)
+
+    @app.get(
+        "/orchestration-runs/compare-latest-two",
+        response_model=OrchestrationRunComparisonResponse,
+    )
+    def compare_latest_two_orchestration_runs(
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> OrchestrationRunComparisonResponse:
+        comparison = compare_latest_two_runs(session, state_date=state_date)
+        latest = get_latest_run_details(session, state_date=state_date)
+        previous = get_previous_run_details(session, state_date=state_date)
+        if comparison is None or latest is None or previous is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Need at least two orchestration runs to compare "
+                    f"for {state_date.isoformat()}."
+                ),
+        )
+        return build_run_comparison_response(comparison, latest, previous)
+
+    @app.get(
+        "/signals/{signal_id}",
+        response_model=SignalResponse,
+    )
+    def signal_detail(
+        signal_id: str,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> SignalResponse:
+        from uuid import UUID
+
+        signal = get_signal_details(session, signal_id=UUID(signal_id))
+        if signal is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No signal found for {signal_id}.",
+            )
+        return build_signal_response(signal)
+
+    @app.get(
+        "/alerts/{alert_id}",
+        response_model=AlertResponse,
+    )
+    def alert_detail(
+        alert_id: str,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> AlertResponse:
+        from uuid import UUID
+
+        alert = get_alert_details(session, alert_id=UUID(alert_id))
+        if alert is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No alert found for {alert_id}.",
+            )
+        return build_alert_response(alert)
+
+    @app.get(
+        "/daily-states/current",
+        response_model=DailyStateResponse,
+    )
+    def current_daily_state(
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> DailyStateResponse:
+        state = get_daily_state(session, day=state_date)
+        if state is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No daily state found for {state_date.isoformat()}.",
+            )
+        return build_daily_state_response(state)
+
+    @app.put(
+        "/daily-states/current",
+        response_model=DailyStateResponse,
+    )
+    def write_daily_state(
+        payload: DailyStateWriteRequest,
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> DailyStateResponse:
+        result = update_daily_state(
+            session,
+            day=state_date,
+            update=DailyStateUpdate(
+                priorities=None if payload.priorities is None else [*payload.priorities],
+                win_condition=payload.win_condition,
+                movement=payload.movement,
+                stress=payload.stress,
+                next_action=payload.next_action,
+            ),
+            checked_at=payload.checked_at or datetime.now(tz=UTC),
+            source="ari.api.daily_state",
+        )
+        return build_daily_state_response(result.state)
+
+    @app.get(
+        "/weekly-states/current",
+        response_model=WeeklyStateResponse,
+    )
+    def current_weekly_state(
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> WeeklyStateResponse:
+        week_start = _week_start_for(state_date)
+        state = get_weekly_state(session, state_date=state_date)
+        if state is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No weekly state found for the week of "
+                    f"{week_start.isoformat()}."
+                ),
+            )
+        return build_weekly_state_response(state)
+
+    @app.put(
+        "/weekly-states/plan",
+        response_model=WeeklyStateResponse,
+    )
+    def write_weekly_plan(
+        payload: WeeklyPlanWriteRequest,
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> WeeklyStateResponse:
+        result = update_weekly_plan(
+            session,
+            state_date=state_date,
+            update=WeeklyPlanningUpdate(
+                outcomes=None if payload.outcomes is None else [*payload.outcomes],
+                cannot_drift=(
+                    None if payload.cannot_drift is None else [*payload.cannot_drift]
+                ),
+                blockers=None if payload.blockers is None else [*payload.blockers],
+            ),
+            reviewed_at=payload.reviewed_at or datetime.now(tz=UTC),
+            source="ari.api.weekly_plan",
+        )
+        return build_weekly_state_response(result.state)
+
+    @app.put(
+        "/weekly-states/reflection",
+        response_model=WeeklyStateResponse,
+    )
+    def write_weekly_reflection(
+        payload: WeeklyReflectionWriteRequest,
+        state_date: date = Query(...),  # noqa: B008
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> WeeklyStateResponse:
+        result = update_weekly_reflection(
+            session,
+            state_date=state_date,
+            update=WeeklyReflectionUpdate(
+                lesson=payload.lesson,
+                blockers=None if payload.blockers is None else [*payload.blockers],
+            ),
+            reviewed_at=payload.reviewed_at or datetime.now(tz=UTC),
+            source="ari.api.weekly_reflection",
+        )
+        return build_weekly_state_response(result.state)
+
+    @app.get(
+        "/open-loops/active",
+        response_model=ActiveOpenLoopsResponse,
+    )
+    def active_open_loops(
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> ActiveOpenLoopsResponse:
+        loops = list_open_loops(session)
+        return build_active_open_loops_response(loops)
+
+    @app.post(
+        "/open-loops",
+        response_model=OpenLoopResponse,
+        status_code=201,
+    )
+    def add_open_loop(
+        payload: OpenLoopCreateRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> OpenLoopResponse:
+        result = create_open_loop(
+            session,
+            loop=CreateOpenLoopInput(
+                title=payload.title,
+                source=payload.source,
+                kind=payload.kind,
+                priority=payload.priority,
+                notes=payload.notes,
+                project_id=payload.project_id,
+                due_at=payload.due_at,
+            ),
+            opened_at=payload.opened_at or datetime.now(tz=UTC),
+            source="ari.api.open_loops",
+        )
+        return build_open_loop_response(result.state)
+
+    @app.post(
+        "/open-loops/{loop_id}/resolve",
+        response_model=OpenLoopResponse,
+    )
+    def close_open_loop(
+        loop_id: str,
+        payload: OpenLoopResolveRequest,
+        session: Session = Depends(get_session),  # noqa: B008
+    ) -> OpenLoopResponse:
+        from uuid import UUID
+
+        result = resolve_open_loop(
+            session,
+            loop_id=UUID(loop_id),
+            resolved_at=payload.resolved_at or datetime.now(tz=UTC),
+            source="ari.api.open_loops",
+        )
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No open loop found for {loop_id}.",
+            )
+        return build_open_loop_response(result.state)
+
+    @app.get("/overview")
+    def overview() -> dict[str, Any]:
+        return {"overview": get_ari_operating_overview().to_dict()}
+
+    @app.get("/overview/pending-approvals")
+    def overview_pending_approvals(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "pending_approvals": get_pending_approvals_read_model(
+                limit=limit
+            ).to_dict()
+        }
+
+    @app.get("/overview/coding-loop-chains")
+    def overview_coding_loop_chains(
+        limit: int = Query(default=10, ge=1, le=100),
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {
+            "coding_loop_chains": get_coding_loop_chains_read_model(
+                limit=limit,
+                max_depth=max_depth,
+            ).to_dict()
+        }
+
+    @app.get("/overview/lifecycle-lessons")
+    def overview_lifecycle_lessons(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "lifecycle_lessons": get_lifecycle_lessons_read_model(
+                limit=limit
+            ).to_dict()
+        }
+
+    @app.get("/overview/self-documentation")
+    def overview_self_documentation(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "self_documentation": get_self_documentation_read_model(
+                limit=limit
+            ).to_dict()
+        }
+
+    @app.get("/overview/content-ideas")
+    def overview_content_ideas(
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return {
+            "content_ideas": get_content_ideas_read_model(
+                limit=limit
+            ).to_dict()
+        }
+
     @app.post("/notes")
     def create_note(payload: NoteCreateRequest) -> dict[str, Any]:
         return _row_to_note(save_ari_note(payload.title, payload.content))
@@ -113,7 +615,9 @@ def create_app() -> FastAPI:
         query: str = Query(default=""),
         limit: int = Query(default=20, ge=1, le=200),
     ) -> dict[str, Any]:
-        rows = search_ari_tasks(query, limit=limit) if query.strip() else list_ari_tasks(limit=limit)
+        rows = (
+            search_ari_tasks(query, limit=limit) if query.strip() else list_ari_tasks(limit=limit)
+        )
         return {"query": query, "tasks": [_row_to_task(row) for row in rows]}
 
     @app.get("/tasks/{task_id}")
@@ -137,7 +641,7 @@ def create_app() -> FastAPI:
     @app.get("/memory")
     def list_memory(
         query: str = Query(default=""),
-        types: list[str] = Query(default=[]),
+        types: list[str] = MEMORY_TYPES_QUERY,
         limit: int = Query(default=20, ge=1, le=200),
     ) -> dict[str, Any]:
         if query.strip():
@@ -145,6 +649,92 @@ def create_app() -> FastAPI:
         else:
             rows = list_ari_memories(memory_types=types, limit=limit)
         return {"query": query, "memories": [_row_to_memory(row) for row in rows]}
+
+    @app.post("/memory/blocks")
+    def create_memory_block_endpoint(payload: MemoryBlockCreateRequest) -> dict[str, Any]:
+        return memory_block_to_payload(
+            create_memory_block(
+                layer=payload.layer,
+                kind=payload.kind,
+                title=payload.title,
+                body=payload.body,
+                source=payload.source,
+                importance=payload.importance,
+                confidence=payload.confidence,
+                tags=payload.tags,
+                subject_ids=payload.subjectIds,
+                evidence=payload.evidence,
+            )
+        )
+
+    @app.get("/memory/blocks")
+    def list_memory_block_endpoint(
+        layer: str | None = Query(default=None),
+        query: str = Query(default=""),
+        limit: int = Query(default=20, ge=1, le=200),
+    ) -> dict[str, Any]:
+        rows = (
+            search_memory_blocks(query, layer=layer, limit=limit)
+            if query.strip()
+            else list_memory_blocks(layer=layer, limit=limit)
+        )
+        return {
+            "query": query,
+            "blocks": [memory_block_to_payload(row) for row in rows],
+        }
+
+    @app.get("/memory/blocks/{block_id}")
+    def get_memory_block_endpoint(block_id: str) -> dict[str, Any]:
+        block = get_memory_block(block_id)
+        if block is None:
+            raise HTTPException(status_code=404, detail=f"Memory block {block_id} not found.")
+        return memory_block_to_payload(block)
+
+    @app.get("/memory/context")
+    def memory_context(
+        query: str = Query(default=""),
+        layers: list[str] = MEMORY_TYPES_QUERY,
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return build_memory_context(query, layers=layers, limit=limit)
+
+    @app.post("/memory/capture/execution")
+    def capture_execution_memory(payload: MemoryCaptureExecutionRequest) -> dict[str, Any]:
+        if payload.runId:
+            return {"block": capture_execution_run_memory(payload.runId)}
+        return {"blocks": capture_recent_execution_run_memories(limit=payload.limit)}
+
+    @app.post("/memory/capture/coding-loop-retry-approvals/{approval_id}")
+    def capture_retry_approval_memory(approval_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: {"block": capture_coding_loop_retry_approval_memory(approval_id)}
+        )
+
+    @app.post("/memory/capture/coding-loop-chains/{result_id}")
+    def capture_coding_loop_chain_memory(result_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: {"block": capture_coding_loop_chain_lifecycle_memory(result_id)}
+        )
+
+    @app.get("/explain/execution/{run_id}")
+    def explain_execution(run_id: str) -> dict[str, Any]:
+        return explain_execution_run(run_id)
+
+    @app.get("/explain/coding-loop-retry-approvals/{approval_id}")
+    def explain_retry_approval(approval_id: str) -> dict[str, Any]:
+        return guard(lambda: explain_coding_loop_retry_approval(approval_id))
+
+    @app.get("/explain/coding-loop-chains/{result_id}")
+    def explain_coding_loop_chain(result_id: str) -> dict[str, Any]:
+        return guard(lambda: explain_coding_loop_chain_lifecycle(result_id))
+
+    @app.post("/memory/self-model/ensure")
+    def ensure_self_model() -> dict[str, Any]:
+        return {"blocks": ensure_self_model_memory()}
+
+    @app.get("/memory/self-model")
+    def get_self_model() -> dict[str, Any]:
+        return {"blocks": get_self_model_memory()}
 
     @app.get("/memory/{memory_id}")
     def get_memory(memory_id: int) -> dict[str, Any]:
@@ -165,7 +755,9 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         _ensure_entity(entity)
         return {
-            "records": [_row_to_record(row) for row in list_coordination_entities(entity, limit=limit)]
+            "records": [
+                _row_to_record(row) for row in list_coordination_entities(entity, limit=limit)
+            ]
         }
 
     @app.get("/coordination/{entity}/{record_id}")
@@ -228,7 +820,13 @@ def create_app() -> FastAPI:
 
     @app.post("/execution/command")
     def execution_command(payload: ExecutionCommandRequest) -> dict[str, Any]:
-        return guard(lambda: execute_command(payload.command, cwd=payload.cwd, timeout_seconds=payload.timeoutSeconds))
+        return guard(
+            lambda: execute_command(
+                payload.command,
+                cwd=payload.cwd,
+                timeout_seconds=payload.timeoutSeconds,
+            )
+        )
 
     @app.post("/execution/files/read")
     def execution_read_file(payload: ExecutionReadFileRequest) -> dict[str, Any]:
@@ -236,11 +834,286 @@ def create_app() -> FastAPI:
 
     @app.post("/execution/files/write")
     def execution_write_file(payload: ExecutionWriteFileRequest) -> dict[str, Any]:
-        return guard(lambda: write_file(payload.path, payload.content, action_id=payload.actionId))
+        return guard(
+            lambda: write_file(
+                payload.path,
+                payload.content,
+                action_id=payload.actionId,
+            )
+        )
 
     @app.post("/execution/files/patch")
     def execution_patch_file(payload: ExecutionPatchFileRequest) -> dict[str, Any]:
-        return guard(lambda: patch_file(payload.path, find_text=payload.find, replace_text=payload.replace, action_id=payload.actionId))
+        return guard(
+            lambda: patch_file(
+                payload.path,
+                find_text=payload.find,
+                replace_text=payload.replace,
+                action_id=payload.actionId,
+            )
+        )
+
+    @app.post("/execution/goals")
+    def execution_goal(payload: ExecutionGoalRequest) -> dict[str, Any]:
+        return guard(
+            lambda: run_execution_goal(
+                ExecutionGoal(
+                    objective=payload.goal,
+                    max_cycles=payload.maxCycles,
+                ),
+                planner_mode=payload.planner,
+            ).to_dict()
+        )
+
+    @app.post("/execution/plans")
+    def execution_plan(payload: ExecutionGoalRequest) -> dict[str, Any]:
+        return guard(
+            lambda: plan_execution_goal(
+                ExecutionGoal(
+                    objective=payload.goal,
+                    max_cycles=payload.maxCycles,
+                ),
+                planner_mode=payload.planner,
+            )
+        )
+
+    @app.post("/execution/coding-loop")
+    def execution_coding_loop(payload: CodingLoopGoalRequest) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "coding_loop": inspect_coding_loop_result(
+                    run_one_step_coding_loop(
+                        payload.goal,
+                        execution_root=payload.executionRoot,
+                        planner_mode=payload.planner,
+                    )
+                )
+            }
+        )
+
+    @app.get("/execution/coding-loop/results")
+    def execution_coding_loop_results(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"coding_loops": list_coding_loop_results(limit=limit)}
+
+    @app.get("/execution/coding-loop/results/{result_id}")
+    def execution_coding_loop_result(result_id: str) -> dict[str, Any]:
+        result = get_coding_loop_result(result_id)
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Coding-loop result {result_id} not found.",
+            )
+        return {"coding_loop": result}
+
+    @app.get("/execution/coding-loop/results/{result_id}/chain")
+    def execution_coding_loop_result_chain(
+        result_id: str,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        chain = inspect_coding_loop_chain(result_id, max_depth=max_depth)
+        if chain is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Coding-loop result {result_id} not found.",
+            )
+        return {"chain": chain}
+
+    @app.post("/execution/coding-loop/results/{result_id}/advance")
+    def execution_advance_coding_loop_result_chain(
+        result_id: str,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "advancement": inspect_coding_loop_chain_advancement(
+                    advance_coding_loop_retry_chain(
+                        result_id,
+                        max_depth=max_depth,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/results/{result_id}/approve-latest")
+    def execution_approve_latest_coding_loop_result_chain(
+        result_id: str,
+        payload: RetryApprovalApproveRequest,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    approve_latest_pending_coding_loop_retry_approval(
+                        result_id,
+                        approved_by=payload.approvedBy,
+                        max_depth=max_depth,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/results/{result_id}/reject-latest")
+    def execution_reject_latest_coding_loop_result_chain(
+        result_id: str,
+        payload: RetryApprovalRejectRequest,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "approval_mutation": inspect_coding_loop_chain_approval_mutation(
+                    reject_latest_pending_coding_loop_retry_approval(
+                        result_id,
+                        rejected_reason=payload.reason,
+                        rejected_by=payload.rejectedBy,
+                        max_depth=max_depth,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/results/{result_id}/propose-next")
+    def execution_propose_next_coding_loop_result_chain(
+        result_id: str,
+        max_depth: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "next_approval_proposal": (
+                    inspect_coding_loop_chain_next_approval_proposal(
+                        propose_next_coding_loop_retry_approval_from_chain(
+                            result_id,
+                            max_depth=max_depth,
+                        )
+                    )
+                )
+            }
+        )
+
+    @app.get("/execution/coding-loop/retry-approvals")
+    def execution_retry_approvals(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {
+            "retry_approvals": [
+                inspect_coding_loop_retry_approval(approval)
+                for approval in list_coding_loop_retry_approvals(limit=limit)
+            ]
+        }
+
+    @app.get("/execution/coding-loop/retry-approvals/{approval_id}")
+    def execution_retry_approval(approval_id: str) -> dict[str, Any]:
+        approval = get_coding_loop_retry_approval(approval_id)
+        if approval is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Coding-loop retry approval {approval_id} not found.",
+            )
+        return {"retry_approval": inspect_coding_loop_retry_approval(approval)}
+
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/approve")
+    def execution_approve_retry_approval(
+        approval_id: str,
+        payload: RetryApprovalApproveRequest,
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "retry_approval": inspect_coding_loop_retry_approval(
+                    approve_stored_coding_loop_retry_approval(
+                        approval_id,
+                        approved_by=payload.approvedBy,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/reject")
+    def execution_reject_retry_approval(
+        approval_id: str,
+        payload: RetryApprovalRejectRequest,
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "retry_approval": inspect_coding_loop_retry_approval(
+                    reject_stored_coding_loop_retry_approval(
+                        approval_id,
+                        rejected_reason=payload.reason,
+                        rejected_by=payload.rejectedBy,
+                    )
+                )
+            }
+        )
+
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/execute")
+    def execution_execute_retry_approval(approval_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: _retry_execution_response(
+                execute_approved_coding_loop_retry_approval(approval_id)
+            )
+        )
+
+    @app.get("/execution/coding-loop/retry-approvals/{approval_id}/review")
+    def execution_review_retry_approval(approval_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "review": inspect_coding_loop_retry_execution_review(
+                    review_coding_loop_retry_execution(approval_id)
+                ),
+                "continuation": inspect_coding_loop_continuation_decision(
+                    decide_coding_loop_retry_continuation(approval_id)
+                ),
+            }
+        )
+
+    @app.post("/execution/coding-loop/retry-approvals/{approval_id}/propose-next")
+    def execution_propose_next_retry_approval(approval_id: str) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "retry_approval": inspect_coding_loop_retry_approval(
+                    create_coding_loop_retry_approval_from_review(approval_id)
+                )
+            }
+        )
+
+    @app.get("/execution/plans")
+    def execution_plans(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"plans": list_execution_plan_previews(limit=limit)}
+
+    @app.get("/execution/plans/{preview_id}")
+    def execution_plan_preview(preview_id: str) -> dict[str, Any]:
+        preview = get_execution_plan_preview(preview_id)
+        if preview is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Execution plan preview {preview_id} not found.",
+            )
+        return {"plan": preview}
+
+    @app.get("/execution/tools")
+    def execution_tools() -> dict[str, Any]:
+        return get_execution_tool_registry().prompt_payload()
+
+    @app.get("/execution/context")
+    def execution_context(
+        execution_root: str | None = Query(default=None, alias="executionRoot"),
+    ) -> dict[str, Any]:
+        return {"context": build_repo_context(execution_root).to_dict()}
+
+    @app.get("/execution/runs")
+    def execution_runs(
+        limit: int = Query(default=10, ge=1, le=50),
+    ) -> dict[str, Any]:
+        return {"runs": list_execution_runs(limit=limit)}
+
+    @app.get("/execution/runs/{run_id}")
+    def execution_run(run_id: str) -> dict[str, Any]:
+        run = get_execution_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Execution run {run_id} not found.")
+        return {"run": run}
 
     @app.post("/execution/actions")
     def execution_create_action(payload: CodingActionCreateRequest) -> dict[str, Any]:
@@ -249,7 +1122,9 @@ def create_app() -> FastAPI:
                 "action": create_operator_action(
                     title=payload.title,
                     summary=payload.summary,
-                    operations=[operation.model_dump(exclude_none=True) for operation in payload.operations],
+                    operations=[
+                        operation.model_dump(exclude_none=True) for operation in payload.operations
+                    ],
                     verify_command=payload.verifyCommand,
                     working_directory=payload.workingDirectory,
                     approval_required=payload.approvalRequired,
@@ -285,6 +1160,16 @@ def create_app() -> FastAPI:
         return get_execution_snapshot(limit=limit)
 
     return app
+
+
+def _retry_execution_response(
+    result: tuple[Any, dict[str, Any]],
+) -> dict[str, Any]:
+    approval, execution_run = result
+    return {
+        "retry_approval": inspect_coding_loop_retry_approval(approval),
+        "execution_run": execution_run,
+    }
 
 
 def _ensure_entity(entity: str) -> None:
@@ -343,3 +1228,13 @@ def _json_array(raw: Any) -> list[str]:
     if not isinstance(decoded, list):
         return []
     return [str(value) for value in decoded]
+
+
+def _build_session_factory() -> sessionmaker[Session]:
+    settings = DatabaseSettings()
+    engine = create_engine(settings.database_url)
+    return create_session_factory(engine)
+
+
+def _week_start_for(day: date) -> date:
+    return day - timedelta(days=day.weekday())

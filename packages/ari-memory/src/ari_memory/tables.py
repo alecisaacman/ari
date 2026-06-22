@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Date, DateTime, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy import UUID as SQLUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -45,12 +55,27 @@ class OpenLoopRow(Base):
     priority: Mapped[str] = mapped_column(String(32), default="medium")
     source: Mapped[str] = mapped_column(String(64))
     notes: Mapped[str] = mapped_column(Text, default="")
+    company: Mapped[str | None] = mapped_column(String(255), nullable=True)
     project_id: Mapped[UUID | None] = mapped_column(SQLUUID(as_uuid=True), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_touched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class OpenLoopEnrichmentRow(Base):
+    __tablename__ = "open_loop_enrichments"
+    __table_args__ = (Index("ix_open_loop_enrichments_loop_id", "loop_id"),)
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    loop_id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True))
+    kind: Mapped[str] = mapped_column(String(64))
+    company: Mapped[str] = mapped_column(String(255))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    findings: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    source: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class EventRow(Base):
@@ -122,3 +147,90 @@ class OrchestrationRunRow(Base):
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     signal_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     alert_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    controller_trajectory: Mapped[dict[str, object] | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    controller_cycle_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class PendingApprovalRow(Base):
+    __tablename__ = "pending_approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            name="uq_pending_approvals_run_id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True))
+    decision_id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str] = mapped_column(Text)
+    decision_summary: Mapped[str] = mapped_column(Text)
+    proposed_action: Mapped[str] = mapped_column(Text)
+
+
+class ConversationStateRow(Base):
+    __tablename__ = "conversation_states"
+    __table_args__ = (UniqueConstraint("channel", name="uq_conversation_states_channel"),)
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(64))
+    cursor: Mapped[int] = mapped_column(BigInteger, default=0)
+    messages: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ControllerEventRow(Base):
+    __tablename__ = "controller_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "sequence_number",
+            name="uq_controller_events_run_id_sequence_number",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True))
+    sequence_number: Mapped[int]
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    event_type: Mapped[str] = mapped_column(String(64))
+    summary: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+
+class SkillRegistrationRow(Base):
+    __tablename__ = "skill_registrations"
+    __table_args__ = (UniqueConstraint("name", name="uq_skill_registrations_name"),)
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(32), default="mcp")
+    mcp_url: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    encrypted_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SkillInvocationRow(Base):
+    __tablename__ = "skill_invocations"
+    __table_args__ = (
+        Index("ix_skill_invocations_occurred_at", "occurred_at"),
+        Index("ix_skill_invocations_skill_name", "skill_name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    channel: Mapped[str] = mapped_column(String(64))
+    skill_kind: Mapped[str] = mapped_column(String(32))
+    skill_name: Mapped[str] = mapped_column(String(64))
+    tool_name: Mapped[str] = mapped_column(String(128))
+    summary: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    is_error: Mapped[bool] = mapped_column(Boolean, default=False)

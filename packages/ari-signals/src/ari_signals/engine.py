@@ -10,6 +10,7 @@ from ari_state import (
     DailyState,
     EvidenceItem,
     OpenLoop,
+    OpenLoopPriority,
     Signal,
     SignalSeverity,
     WeeklyState,
@@ -20,6 +21,7 @@ OPEN_LOOP_CRITICAL_THRESHOLD = 12
 ELEVATED_STRESS_WARNING_THRESHOLD = 8
 ELEVATED_STRESS_CRITICAL_THRESHOLD = 9
 STALE_OPEN_LOOP_DAYS = 7
+STALE_HIGH_PRIORITY_LOOP_DAYS = 3
 
 
 def generate_signals(
@@ -52,6 +54,20 @@ def generate_signals(
     )
     if stress_signal is not None:
         signals.append(stress_signal)
+
+    stale_hp_signal = _build_stale_high_priority_loop_signal(
+        open_loops=open_loops,
+        detected_at=detected_at,
+    )
+    if stale_hp_signal is not None:
+        signals.append(stale_hp_signal)
+
+    no_check_in_signal = _build_no_daily_check_in_signal(
+        daily_state=daily_state,
+        detected_at=detected_at,
+    )
+    if no_check_in_signal is not None:
+        signals.append(no_check_in_signal)
 
     return signals
 
@@ -230,12 +246,95 @@ def _build_elevated_stress_signal(
     )
 
 
+def _build_stale_high_priority_loop_signal(
+    *,
+    open_loops: Sequence[OpenLoop],
+    detected_at: datetime,
+) -> Signal | None:
+    stale_before = detected_at - timedelta(days=STALE_HIGH_PRIORITY_LOOP_DAYS)
+    stale_hp = [
+        loop
+        for loop in open_loops
+        if loop.priority in {OpenLoopPriority.HIGH, OpenLoopPriority.CRITICAL}
+        and (loop.last_touched_at or loop.opened_at) <= stale_before
+    ]
+    if not stale_hp:
+        return None
+
+    severity = (
+        SignalSeverity.CRITICAL if len(stale_hp) >= 3 else SignalSeverity.WARNING
+    )
+    return Signal(
+        kind="stale_high_priority_loop",
+        severity=severity,
+        summary=f"{len(stale_hp)} high-priority loop(s) have stalled for {STALE_HIGH_PRIORITY_LOOP_DAYS}+ days.",
+        reason=(
+            f"{len(stale_hp)} open loop(s) marked HIGH or CRITICAL have not been touched in "
+            f"{STALE_HIGH_PRIORITY_LOOP_DAYS} or more days, indicating stalled important work."
+        ),
+        evidence=[
+            EvidenceItem(
+                kind="stale_high_priority_loops",
+                summary="High-priority loops that have not been touched recently.",
+                payload={
+                    "stale_count": len(stale_hp),
+                    "threshold_days": STALE_HIGH_PRIORITY_LOOP_DAYS,
+                    "loops": [
+                        {
+                            "id": str(loop.id),
+                            "title": loop.title,
+                            "priority": loop.priority,
+                            "last_activity": (
+                                loop.last_touched_at or loop.opened_at
+                            ).isoformat(),
+                        }
+                        for loop in stale_hp
+                    ],
+                },
+            )
+        ],
+        detected_at=detected_at,
+    )
+
+
+def _build_no_daily_check_in_signal(
+    *,
+    daily_state: DailyState | None,
+    detected_at: datetime,
+) -> Signal | None:
+    if daily_state is not None:
+        return None
+
+    check_date = detected_at.date()
+    return Signal(
+        kind="no_daily_check_in",
+        severity=SignalSeverity.WARNING,
+        summary=f"No daily check-in recorded for {check_date.isoformat()}.",
+        reason=(
+            f"Orchestration ran for {check_date.isoformat()} but found no daily state entry. "
+            "Without a check-in, signal detection is operating blind."
+        ),
+        evidence=[
+            EvidenceItem(
+                kind="missing_daily_state",
+                summary="No daily state was found for this orchestration date.",
+                payload={"state_date": check_date.isoformat()},
+            )
+        ],
+        detected_at=detected_at,
+    )
+
+
 def _signal_to_escalation_level(signal: Signal) -> AlertEscalationLevel:
     if signal.severity == SignalSeverity.CRITICAL:
         return AlertEscalationLevel.INTERRUPTIVE
     if signal.kind == "elevated_stress":
         return AlertEscalationLevel.ELEVATED
     if signal.kind == "weekly_trajectory_drift":
+        return AlertEscalationLevel.ELEVATED
+    if signal.kind == "stale_high_priority_loop":
+        return AlertEscalationLevel.ELEVATED
+    if signal.kind == "no_daily_check_in":
         return AlertEscalationLevel.ELEVATED
     return AlertEscalationLevel.VISIBLE
 
@@ -247,6 +346,10 @@ def _signal_to_title(signal: Signal) -> str:
         return "Weekly trajectory is drifting"
     if signal.kind == "elevated_stress":
         return "Stress is elevated"
+    if signal.kind == "stale_high_priority_loop":
+        return "High-priority loops have stalled"
+    if signal.kind == "no_daily_check_in":
+        return "No daily check-in recorded"
     return "ARI surfaced a signal"
 
 
