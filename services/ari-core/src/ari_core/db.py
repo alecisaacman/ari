@@ -4,5 +4,4 @@ import sys
 
 from .modules.networking import db as _impl
 
-
 sys.modules[__name__] = _impl

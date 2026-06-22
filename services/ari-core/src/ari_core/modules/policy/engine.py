@@ -1,10 +1,14 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, TypedDict
 
 from ...core.paths import DB_PATH
-from ..coordination.db import get_coordination_entity, list_coordination_entities, put_coordination_entity
+from ..coordination.db import (
+    get_coordination_entity,
+    list_coordination_entities,
+    put_coordination_entity,
+)
 from ..memory.db import list_ari_memories
 from ..networking.db import get_connection, initialize_database
 from ..tasks.db import list_ari_tasks
@@ -13,13 +17,13 @@ from ..tasks.db import list_ari_tasks
 class EscalationPacket(TypedDict):
     whyEscalationIsNeeded: str
     whatChanged: str
-    availableOptions: List[str]
+    availableOptions: list[str]
     recommendedAction: str
     exactQuestionForAlec: str
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def compact_text(value: str, max_len: int = 96) -> str:
@@ -29,7 +33,7 @@ def compact_text(value: str, max_len: int = 96) -> str:
     return f"{normalized[: max_len - 3]}..."
 
 
-def parse_json_array(raw: Optional[str]) -> List[str]:
+def parse_json_array(raw: str | None) -> list[str]:
     if not raw:
         return []
     try:
@@ -41,7 +45,7 @@ def parse_json_array(raw: Optional[str]) -> List[str]:
     return [item for item in parsed if isinstance(item, str)]
 
 
-def parse_json_object(raw: Optional[str], fallback: Dict[str, Any]) -> Dict[str, Any]:
+def parse_json_object(raw: str | None, fallback: dict[str, Any]) -> dict[str, Any]:
     if not raw:
         return fallback
     try:
@@ -51,7 +55,7 @@ def parse_json_object(raw: Optional[str], fallback: Dict[str, Any]) -> Dict[str,
     return parsed if isinstance(parsed, dict) else fallback
 
 
-def parse_iso_sort(value: Optional[str]) -> float:
+def parse_iso_sort(value: str | None) -> float:
     if not value:
         return 0.0
     try:
@@ -64,7 +68,7 @@ def bool_to_int(value: bool) -> int:
     return 1 if value else 0
 
 
-def list_memories(memory_types: Optional[List[str]] = None, limit: int = 50, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_memories(memory_types: list[str] | None = None, limit: int = 50, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     rows = list_ari_memories(memory_types=memory_types, limit=limit, db_path=db_path)
     return [
         {
@@ -80,7 +84,7 @@ def list_memories(memory_types: Optional[List[str]] = None, limit: int = 50, db_
     ]
 
 
-def list_tasks(limit: int = 50, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_tasks(limit: int = 50, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     rows = list_ari_tasks(limit=limit, db_path=db_path)
     return [
         {
@@ -95,19 +99,19 @@ def list_tasks(limit: int = 50, db_path: Path = DB_PATH) -> List[Dict[str, Any]]
     ]
 
 
-def list_coordination(entity: str, limit: int = 100, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_coordination(entity: str, limit: int = 100, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     rows = list_coordination_entities(entity, limit=limit, db_path=db_path)
     return [{key: row[key] for key in row.keys()} for row in rows]
 
 
-def get_coordination(entity: str, identifier: str, db_path: Path = DB_PATH) -> Optional[Dict[str, Any]]:
+def get_coordination(entity: str, identifier: str, db_path: Path = DB_PATH) -> dict[str, Any] | None:
     row = get_coordination_entity(entity, identifier, db_path=db_path)
     if row is None:
         return None
     return {key: row[key] for key in row.keys()}
 
 
-def store_awareness_snapshot(snapshot: Dict[str, Any], db_path: Path = DB_PATH) -> Dict[str, Any]:
+def store_awareness_snapshot(snapshot: dict[str, Any], db_path: Path = DB_PATH) -> dict[str, Any]:
     initialize_database(db_path=db_path)
     latest = get_latest_awareness_snapshot(db_path=db_path)
     if latest and latest["signature"] == snapshot["signature"]:
@@ -144,7 +148,7 @@ def store_awareness_snapshot(snapshot: Dict[str, Any], db_path: Path = DB_PATH) 
     return {"snapshot": snapshot, "changed": True}
 
 
-def _row_to_awareness_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
+def _row_to_awareness_snapshot(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
         "mode": row["mode"],
@@ -157,7 +161,7 @@ def _row_to_awareness_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_latest_awareness_snapshot(db_path: Path = DB_PATH) -> Optional[Dict[str, Any]]:  # type: ignore[no-redef]
+def get_latest_awareness_snapshot(db_path: Path = DB_PATH) -> dict[str, Any] | None:  # type: ignore[no-redef]
     if not db_path.exists():
         return None
     try:
@@ -175,9 +179,9 @@ def get_latest_awareness_snapshot(db_path: Path = DB_PATH) -> Optional[Dict[str,
     return _row_to_awareness_snapshot({key: row[key] for key in row.keys()}) if row else None
 
 
-def list_improvements(limit: int = 100, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_improvements(limit: int = 100, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     rows = list_coordination("self_improvement", limit=limit, db_path=db_path)
-    mapped: List[Dict[str, Any]] = []
+    mapped: list[dict[str, Any]] = []
     for row in rows:
         mapped.append(
             {
@@ -233,7 +237,7 @@ def list_improvements(limit: int = 100, db_path: Path = DB_PATH) -> List[Dict[st
     return mapped
 
 
-def get_top_improvement_focus(db_path: Path = DB_PATH) -> Optional[Dict[str, Any]]:
+def get_top_improvement_focus(db_path: Path = DB_PATH) -> dict[str, Any] | None:
     items = list_improvements(limit=100, db_path=db_path)
     ordered = sorted(
         items,
@@ -260,7 +264,7 @@ def status_rank(status: str) -> int:
     }.get(status, 0)
 
 
-def list_execution_outcomes(limit: int = 100, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_execution_outcomes(limit: int = 100, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     return [
         {
             "itemKey": row["item_key"],
@@ -281,7 +285,7 @@ def list_execution_outcomes(limit: int = 100, db_path: Path = DB_PATH) -> List[D
     ]
 
 
-def list_projects(limit: int = 20, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_projects(limit: int = 20, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     return [
         {
             "id": row["id"],
@@ -297,7 +301,7 @@ def list_projects(limit: int = 20, db_path: Path = DB_PATH) -> List[Dict[str, An
     ]
 
 
-def list_milestones(project_id: str, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_milestones(project_id: str, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     rows = [row for row in list_coordination("project_milestone", limit=500, db_path=db_path) if row["project_id"] == project_id]
     return [
         {
@@ -314,7 +318,7 @@ def list_milestones(project_id: str, db_path: Path = DB_PATH) -> List[Dict[str, 
     ]
 
 
-def list_steps(project_id: str, db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_steps(project_id: str, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     rows = [row for row in list_coordination("project_step", limit=1000, db_path=db_path) if row["project_id"] == project_id]
     return [
         {
@@ -336,7 +340,7 @@ def list_steps(project_id: str, db_path: Path = DB_PATH) -> List[Dict[str, Any]]
     ]
 
 
-def _put_project(project: Dict[str, Any], db_path: Path = DB_PATH) -> None:
+def _put_project(project: dict[str, Any], db_path: Path = DB_PATH) -> None:
     put_coordination_entity(
         "project",
         {
@@ -353,7 +357,7 @@ def _put_project(project: Dict[str, Any], db_path: Path = DB_PATH) -> None:
     )
 
 
-def _put_milestone(milestone: Dict[str, Any], db_path: Path = DB_PATH) -> None:
+def _put_milestone(milestone: dict[str, Any], db_path: Path = DB_PATH) -> None:
     put_coordination_entity(
         "project_milestone",
         {
@@ -370,7 +374,7 @@ def _put_milestone(milestone: Dict[str, Any], db_path: Path = DB_PATH) -> None:
     )
 
 
-def _put_step(step: Dict[str, Any], db_path: Path = DB_PATH) -> None:
+def _put_step(step: dict[str, Any], db_path: Path = DB_PATH) -> None:
     put_coordination_entity(
         "project_step",
         {
@@ -392,7 +396,7 @@ def _put_step(step: Dict[str, Any], db_path: Path = DB_PATH) -> None:
     )
 
 
-def sync_project_focus(db_path: Path = DB_PATH) -> Optional[Dict[str, Any]]:
+def sync_project_focus(db_path: Path = DB_PATH) -> dict[str, Any] | None:
     project = list_projects(limit=1, db_path=db_path)[0] if list_projects(limit=1, db_path=db_path) else None
     if not project:
         return None
@@ -414,7 +418,7 @@ def sync_project_focus(db_path: Path = DB_PATH) -> Optional[Dict[str, Any]]:
 
     for step in steps:
         next_status = step["status"]
-        blocked_by: List[str] = []
+        blocked_by: list[str] = []
         if step["id"] in completed_step_ids:
             next_status = "completed"
         else:
@@ -521,11 +525,11 @@ ESCALATION_RULES = [
 ]
 
 
-def normalize_lines(raw: str) -> List[str]:
+def normalize_lines(raw: str) -> list[str]:
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
-def extract_highlights(lines: List[str]) -> List[str]:
+def extract_highlights(lines: list[str]) -> list[str]:
     candidates = []
     for line in lines:
         lowered = line.lower()
@@ -551,7 +555,7 @@ def infer_focus(raw: str) -> str:
     return "the next smallest planned slice"
 
 
-def classify_builder_output(raw_output: str, current_priority: str = "", latest_decision: str = "") -> Dict[str, Any]:
+def classify_builder_output(raw_output: str, current_priority: str = "", latest_decision: str = "") -> dict[str, Any]:
     trimmed = raw_output.strip()
     lines = normalize_lines(trimmed)
     highlights = extract_highlights(lines)
@@ -636,7 +640,7 @@ def clamp_count(value: int) -> int:
     return min(int(round(value)), 4)
 
 
-def count_trigger_matches(values: List[str], triggers: List[str]) -> int:
+def count_trigger_matches(values: list[str], triggers: list[str]) -> int:
     lowered_values = [value.lower() for value in values]
     count = 0
     for value in lowered_values:
@@ -645,7 +649,7 @@ def count_trigger_matches(values: List[str], triggers: List[str]) -> int:
     return count
 
 
-def compute_priority(scores: Dict[str, int], reflection: Dict[str, int]) -> Dict[str, Any]:
+def compute_priority(scores: dict[str, int], reflection: dict[str, int]) -> dict[str, Any]:
     base = (
         scores["leverage"] * 4
         + scores["urgency"] * 3
@@ -667,9 +671,9 @@ def compute_priority(scores: Dict[str, int], reflection: Dict[str, int]) -> Dict
 def build_improvement_draft(
     capability: str,
     message: str,
-    reflection: Dict[str, int],
-    scores: Dict[str, int],
-) -> Dict[str, Any]:
+    reflection: dict[str, int],
+    scores: dict[str, int],
+) -> dict[str, Any]:
     normalized = compact_text(message, 160)
     recurring = reflection["total"] >= 3
     if capability == "interface-control":
@@ -730,7 +734,7 @@ def build_improvement_draft(
     }
 
 
-def detect_capability_gaps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+def detect_capability_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
     message = (payload.get("message") or "").strip()
     if not message:
         return []
@@ -739,7 +743,7 @@ def detect_capability_gaps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     escalation_texts = [item for item in payload.get("escalationTexts", []) if isinstance(item, str)]
     approval_counts = payload.get("approvalCounts", {}) if isinstance(payload.get("approvalCounts", {}), dict) else {}
     lowered_message = message.lower()
-    drafts: List[Dict[str, Any]] = []
+    drafts: list[dict[str, Any]] = []
 
     for rule in IMPROVEMENT_RULES:
         if not any(trigger in lowered_message for trigger in rule["triggers"]):
@@ -776,7 +780,7 @@ def detect_capability_gaps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return sorted(drafts, key=lambda item: (-int(item["priorityScore"]), int(item["implementationEffort"])))
 
 
-def build_project_draft(payload: Dict[str, Any], db_path: Path = DB_PATH) -> Dict[str, Any]:
+def build_project_draft(payload: dict[str, Any], db_path: Path = DB_PATH) -> dict[str, Any]:
     goal = (payload.get("goal") or "").strip()
     source = payload.get("source") or "manual"
     normalized_goal = " ".join(goal.split())
@@ -837,7 +841,7 @@ def build_project_draft(payload: Dict[str, Any], db_path: Path = DB_PATH) -> Dic
     }
 
 
-def score_task(task: Dict[str, Any], priorities: List[Dict[str, Any]], recent_decisions: List[Dict[str, Any]]) -> int:
+def score_task(task: dict[str, Any], priorities: list[dict[str, Any]], recent_decisions: list[dict[str, Any]]) -> int:
     lowered = f'{task["title"]} {task["notes"]}'.lower()
     score = 50
     if priorities:
@@ -849,7 +853,7 @@ def score_task(task: Dict[str, Any], priorities: List[Dict[str, Any]], recent_de
     return score
 
 
-def list_pending_escalations(db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
+def list_pending_escalations(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     rows = list_coordination("orchestration_record", limit=200, db_path=db_path)
     pending = [row for row in rows if row["escalation_required"] == 1 and not (row["alec_decision"] or "").strip()]
     pending.sort(key=lambda row: row["created_at"], reverse=True)
@@ -864,7 +868,7 @@ def list_pending_escalations(db_path: Path = DB_PATH) -> List[Dict[str, Any]]:
     ]
 
 
-def derive_awareness(payload: Dict[str, Any], db_path: Path = DB_PATH) -> Dict[str, Any]:
+def derive_awareness(payload: dict[str, Any], db_path: Path = DB_PATH) -> dict[str, Any]:
     pending_approvals = payload.get("pendingApprovals", []) if isinstance(payload.get("pendingApprovals", []), list) else []
     recent_intent = [item for item in payload.get("recentIntent", []) if isinstance(item, str)][:3]
     recent_decisions = payload.get("recentDecisions", []) if isinstance(payload.get("recentDecisions", []), list) else []
@@ -874,7 +878,7 @@ def derive_awareness(payload: Dict[str, Any], db_path: Path = DB_PATH) -> Dict[s
     top_improvement = get_top_improvement_focus(db_path=db_path)
     project_focus = sync_project_focus(db_path=db_path)
     pending_escalations = list_pending_escalations(db_path=db_path)
-    current_focus: List[Dict[str, Any]] = []
+    current_focus: list[dict[str, Any]] = []
 
     if pending_escalations:
         escalation = pending_escalations[0]
@@ -973,7 +977,7 @@ def derive_awareness(payload: Dict[str, Any], db_path: Path = DB_PATH) -> Dict[s
         )
 
     current_focus = sorted(current_focus, key=lambda item: -int(item["score"]))[:2]
-    tracking: List[str] = []
+    tracking: list[str] = []
     if priorities:
         tracking.append(f'Priority in memory: {compact_text(priorities[0]["content"], 84)}')
     if active_projects:

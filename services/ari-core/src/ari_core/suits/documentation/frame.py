@@ -6,11 +6,9 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from .demo import _sanitize_save_name
 from ...core.paths import DB_PATH
-
+from .demo import _sanitize_save_name
 
 TERMINAL_APPS = {"Terminal", "iTerm2", "iTerm"}
 BROWSER_APPS = {"Google Chrome", "Arc", "Safari"}
@@ -41,7 +39,7 @@ class CropBounds:
     height: int
 
 
-def _frame_artifact_slug(source_video: Path, save_name: Optional[str] = None) -> str:
+def _frame_artifact_slug(source_video: Path, save_name: str | None = None) -> str:
     if save_name:
         return _sanitize_save_name(save_name)
 
@@ -53,8 +51,8 @@ def _frame_artifact_slug(source_video: Path, save_name: Optional[str] = None) ->
 def _frame_output_paths(
     source_video: Path,
     *,
-    save_name: Optional[str] = None,
-    now: Optional[datetime] = None,
+    save_name: str | None = None,
+    now: datetime | None = None,
 ) -> tuple[Path, Path]:
     now_value = now or datetime.now()
     output_dir = Path.home() / "ARI" / "frames" / now_value.strftime("%Y-%m-%d")
@@ -136,7 +134,7 @@ def _run_osascript(script: str) -> str:
     return result.stdout.strip()
 
 
-def _parse_window_listing(raw_output: str, frontmost_app: Optional[str] = None) -> list[WindowBounds]:
+def _parse_window_listing(raw_output: str, frontmost_app: str | None = None) -> list[WindowBounds]:
     windows: list[WindowBounds] = []
     for raw_line in raw_output.splitlines():
         line = raw_line.strip()
@@ -169,7 +167,7 @@ def _parse_window_listing(raw_output: str, frontmost_app: Optional[str] = None) 
     return windows
 
 
-def _frontmost_app_name() -> Optional[str]:
+def _frontmost_app_name() -> str | None:
     script = """
 tell application "System Events"
     set frontmostProcess to first application process whose frontmost is true
@@ -314,7 +312,7 @@ def _calculate_crop_bounds(
     video_height: int,
     crop_width: int,
     crop_height: int,
-    target_bounds: Optional[CropBounds],
+    target_bounds: CropBounds | None,
 ) -> CropBounds:
     if mode == "vertical":
         crop_width, crop_height = _vertical_crop_size(video_width, video_height)
@@ -339,7 +337,7 @@ def _frame_filter(crop_bounds: CropBounds, mode: str) -> str:
     return base
 
 
-def _first_title_match(windows: list[WindowBounds], window_title: Optional[str]) -> Optional[WindowBounds]:
+def _first_title_match(windows: list[WindowBounds], window_title: str | None) -> WindowBounds | None:
     if not window_title:
         return None
     needle = window_title.strip().lower()
@@ -355,7 +353,7 @@ def _filter_windows_by_apps(windows: list[WindowBounds], app_names: set[str]) ->
     return [window for window in windows if window.app_name in app_names]
 
 
-def _frontmost_window(windows: list[WindowBounds]) -> Optional[WindowBounds]:
+def _frontmost_window(windows: list[WindowBounds]) -> WindowBounds | None:
     for window in windows:
         if window.is_frontmost:
             return window
@@ -365,9 +363,9 @@ def _frontmost_window(windows: list[WindowBounds]) -> Optional[WindowBounds]:
 def _select_anchor_window(
     *,
     anchor: str,
-    window_title: Optional[str],
+    window_title: str | None,
     windows: list[WindowBounds],
-) -> tuple[Optional[WindowBounds], bool, str]:
+) -> tuple[WindowBounds | None, bool, str]:
     if not windows:
         return None, True, "no suitable window detected"
 
@@ -420,11 +418,11 @@ def _resolve_anchor_crop(
     source_video: Path,
     mode: str,
     anchor: str,
-    window_title: Optional[str],
+    window_title: str | None,
     padding: int,
     width: int,
     height: int,
-) -> tuple[CropBounds, Optional[WindowBounds], bool]:
+) -> tuple[CropBounds, WindowBounds | None, bool]:
     video_width, video_height = _probe_video_dimensions(source_video)
     windows = _visible_windows()
     selected_window, should_fallback, reason = _select_anchor_window(
@@ -491,7 +489,7 @@ def _run_frame_command(source_video: Path, output_frame_path: Path, crop_bounds:
 def _failure_guidance(
     notes: str,
     source_video: Path,
-    metadata_path: Optional[Path],
+    metadata_path: Path | None,
 ) -> str:
     reason = notes.strip() or "Frame build failed."
     next_step = "review the error details and rerun the frame build command"
@@ -581,14 +579,14 @@ def _format_frame_result(result: dict[str, object]) -> str:
 def build_frame(
     source_video: str,
     *,
-    save_name: Optional[str] = None,
+    save_name: str | None = None,
     mode: str = "terminal",
     anchor: str = "auto",
-    window_title: Optional[str] = None,
+    window_title: str | None = None,
     padding: int = 40,
     width: int = 800,
     height: int = 600,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
 ) -> dict[str, object]:
     timestamp = now or datetime.now()
     source_path = Path(source_video).expanduser()
@@ -598,7 +596,7 @@ def build_frame(
     notes = "Frame build did not start."
     exit_code = 1
     crop_bounds = CropBounds(x=0, y=0, width=width, height=height)
-    detected_window: Optional[WindowBounds] = None
+    detected_window: WindowBounds | None = None
     fallback_used = False
 
     try:

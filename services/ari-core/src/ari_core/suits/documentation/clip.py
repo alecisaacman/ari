@@ -4,13 +4,13 @@ import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from .demo import _sanitize_save_name
 from ...core.paths import DB_PATH
+from .demo import _sanitize_save_name
 
 
-def _clip_artifact_slug(source_video: Path, save_name: Optional[str] = None) -> str:
+def _clip_artifact_slug(source_video: Path, save_name: str | None = None) -> str:
     if save_name:
         return _sanitize_save_name(save_name)
 
@@ -22,8 +22,8 @@ def _clip_artifact_slug(source_video: Path, save_name: Optional[str] = None) -> 
 def _clip_output_paths(
     source_video: Path,
     *,
-    save_name: Optional[str] = None,
-    now: Optional[datetime] = None,
+    save_name: str | None = None,
+    now: datetime | None = None,
 ) -> tuple[Path, Path]:
     now_value = now or datetime.now()
     output_dir = Path.home() / "ARI" / "clips" / now_value.strftime("%Y-%m-%d")
@@ -88,7 +88,7 @@ def _source_metadata_path(source_video: Path) -> Path:
     return source_video.with_suffix(".txt")
 
 
-def _approximate_proof_trim(duration: float, metadata: dict[str, Any]) -> Optional[tuple[float, float]]:
+def _approximate_proof_trim(duration: float, metadata: dict[str, Any]) -> tuple[float, float] | None:
     try:
         pre_delay = float(metadata.get("pre-delay", "0") or 0)
         post_delay = float(metadata.get("post-delay", "0") or 0)
@@ -123,7 +123,7 @@ def _resolve_clip_window(
     trim_start: float,
     trim_end: float,
     source_video: Path,
-) -> tuple[float, float, Optional[dict[str, Any]]]:
+) -> tuple[float, float, dict[str, Any] | None]:
     if mode != "proof":
         clip_duration = _validate_clip_request(source_video, trim_start, trim_end, duration)
         return trim_start, clip_duration, None
@@ -145,8 +145,8 @@ def _resolve_clip_window(
 def _failure_guidance(
     notes: str,
     source_video: Path,
-    metadata_path: Optional[Path],
-    clip_path: Optional[Path] = None,
+    metadata_path: Path | None,
+    clip_path: Path | None = None,
 ) -> str:
     reason = notes.strip() or "Clip build failed."
     next_step = "review the error details and rerun the clip build command"
@@ -174,7 +174,7 @@ def _failure_guidance(
         f"  {next_step}",
     ]
 
-    rerun_save_name: Optional[str] = None
+    rerun_save_name: str | None = None
     if clip_path is not None:
         rerun_save_name = re.sub(r"^\d{6}-", "", clip_path.stem)
 
@@ -267,7 +267,7 @@ def _ffprobe_available() -> bool:
     return shutil.which("ffprobe") is not None
 
 
-def _parse_ffmpeg_duration(stderr_text: str) -> Optional[float]:
+def _parse_ffmpeg_duration(stderr_text: str) -> float | None:
     match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", stderr_text)
     if not match:
         return None
@@ -359,11 +359,11 @@ def _run_clip_command(source_video: Path, output_clip_path: Path, trim_start: fl
 def build_clip(
     source_video: str,
     *,
-    save_name: Optional[str] = None,
+    save_name: str | None = None,
     mode: str = "default",
     trim_start: float = 0.5,
     trim_end: float = 0.5,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
 ) -> dict[str, object]:
     timestamp = now or datetime.now()
     source_path = Path(source_video).expanduser()

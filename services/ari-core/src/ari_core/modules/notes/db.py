@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from ...core.paths import DB_PATH
-from ..networking.db import initialize_database, get_connection
+from ..networking.db import get_connection, initialize_database
 
 
 def save_ari_note(title: str, body: str, db_path: Path = DB_PATH) -> sqlite3.Row:

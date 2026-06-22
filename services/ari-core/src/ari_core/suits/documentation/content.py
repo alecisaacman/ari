@@ -2,13 +2,11 @@ import argparse
 import random
 from datetime import date
 from pathlib import Path
-from typing import Dict, List
 
 from ...core.paths import DB_PATH
 from ...modules.networking.db import get_connection
 
-
-MODE_SETTINGS: Dict[str, Dict[str, object]] = {
+MODE_SETTINGS: dict[str, dict[str, object]] = {
     "short": {
         "reflection": False,
         "extra_context": False,
@@ -26,7 +24,7 @@ MODE_SETTINGS: Dict[str, Dict[str, object]] = {
     },
 }
 
-STYLE_SETTINGS: Dict[str, Dict[str, str]] = {
+STYLE_SETTINGS: dict[str, dict[str, str]] = {
     "balanced": {
         "hook_prefix": "One thing I keep returning to in ARI is",
         "built_open": "I built a thin local drafting layer around {topic} so the post starts close to the work instead of hours after it.",
@@ -153,7 +151,7 @@ SHORT_MATTERS_LINES = {
     "insight": "It matters because systems compound faster when they improve both action and legibility.",
 }
 
-VIDEO_SCRIPT_STYLE_SETTINGS: Dict[str, Dict[str, List[str]]] = {
+VIDEO_SCRIPT_STYLE_SETTINGS: dict[str, dict[str, list[str]]] = {
     "balanced": {
         "hook": [
             "I did not expect {topic} to become one of the clearest tests for ARI.",
@@ -304,7 +302,7 @@ VIDEO_SCRIPT_STYLE_SETTINGS: Dict[str, Dict[str, List[str]]] = {
     },
 }
 
-HOOK_STYLE_POOLS: Dict[str, List[str]] = {
+HOOK_STYLE_POOLS: dict[str, list[str]] = {
     "pattern_interrupt": [
         "I stopped trying to explain {topic} the polished way.",
         "I do not approach {topic} the old way anymore.",
@@ -465,18 +463,18 @@ def _compose_hook(topic: str, style: str) -> str:
     return f"{style_config['hook_prefix']} {topic}."
 
 
-def _mode_config(mode: str) -> Dict[str, object]:
+def _mode_config(mode: str) -> dict[str, object]:
     try:
         return MODE_SETTINGS[mode]
     except KeyError as exc:
         raise ValueError(f"Unsupported mode: {mode}") from exc
 
 
-def _style_config(style: str) -> Dict[str, str]:
+def _style_config(style: str) -> dict[str, str]:
     return STYLE_SETTINGS[_normalize_style(style)]
 
 
-def _pick(options: List[str]) -> str:
+def _pick(options: list[str]) -> str:
     return random.choice(options)
 
 
@@ -501,7 +499,7 @@ def _resolve_mode(args: argparse.Namespace) -> str:
 def _compose_built_learned_section(topic: str, context: dict[str, object], mode: str, style: str) -> str:
     config = _mode_config(mode)
     style_config = _style_config(style)
-    sentences: List[str] = [
+    sentences: list[str] = [
         style_config["built_open"].format(topic=topic),
         f"{_maybe_human_opener('built', mode)}{_pick(POINT_LINES)} {_pick(CAPTURE_SIGNAL_LINES)}",
         _compose_context_line(context, include_detail=bool(config["extra_context"])),
@@ -519,7 +517,7 @@ def _compose_built_learned_section(topic: str, context: dict[str, object], mode:
 def _compose_why_it_matters_section(mode: str, style: str) -> str:
     config = _mode_config(mode)
     style_config = _style_config(style)
-    sentences: List[str] = [
+    sentences: list[str] = [
         style_config["matters_open"],
         f"{_maybe_human_opener('matters', mode)}{_pick(SYSTEM_LINES)}",
         style_config["matters_close"],
@@ -547,7 +545,7 @@ def _compose_forward_looking_line(mode: str, style: str) -> str:
 
 
 def _compose_short_format(topic: str, context: dict[str, object], mode: str, style: str) -> str:
-    sentences: List[str] = [_compose_hook(topic, style)]
+    sentences: list[str] = [_compose_hook(topic, style)]
 
     build_line = SHORT_BUILD_LINES[style].format(topic=topic)
     sentences.append(build_line)
@@ -572,7 +570,7 @@ def _word_count(text: str) -> int:
     return len(text.split())
 
 
-def _line_pool(style: str, section: str) -> List[str]:
+def _line_pool(style: str, section: str) -> list[str]:
     return VIDEO_SCRIPT_STYLE_SETTINGS[_normalize_style(style)][section]
 
 
@@ -583,11 +581,11 @@ def _pick_line(style: str, section: str, used_lines: set[str]) -> str:
     return choice
 
 
-def _render_lines(lines: List[str]) -> str:
+def _render_lines(lines: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _pick_hook(topic: str) -> List[str]:
+def _pick_hook(topic: str) -> list[str]:
     hook_style = random.choice(list(HOOK_STYLE_POOLS))
     hook_line = _pick(HOOK_STYLE_POOLS[hook_style]).format(topic=topic)
     hook_line = hook_line[:1].upper() + hook_line[1:] if hook_line else hook_line
@@ -595,7 +593,7 @@ def _pick_hook(topic: str) -> List[str]:
     return [hook_line, follow_line]
 
 
-def _maybe_pause_lines() -> List[str]:
+def _maybe_pause_lines() -> list[str]:
     pause_count = random.choices([0, 1, 2], weights=[6, 3, 1], k=1)[0]
     if pause_count == 0:
         return []

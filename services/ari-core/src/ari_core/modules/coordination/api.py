@@ -1,12 +1,12 @@
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from ...core.paths import DB_PATH
 from .db import get_coordination_entity, list_coordination_entities, put_coordination_entity
 
 
-def _row_to_payload(row) -> Dict[str, Any]:
+def _row_to_payload(row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
@@ -29,6 +29,9 @@ def handle_api_coordination_get(args, db_path: Path = DB_PATH) -> int:
 
 
 def handle_api_coordination_list(args, db_path: Path = DB_PATH) -> int:
-    rows = [_row_to_payload(row) for row in list_coordination_entities(args.entity, limit=args.limit, db_path=db_path)]
+    rows = [
+        _row_to_payload(row)
+        for row in list_coordination_entities(args.entity, limit=args.limit, db_path=db_path)
+    ]
     print(json.dumps({"records": rows}))
     return 0

@@ -2,7 +2,6 @@ import argparse
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from ...core.paths import DB_PATH
 from .content import generate_short_video_script
@@ -17,9 +16,9 @@ def _expand_path(path_value: str) -> Path:
     return Path(path_value).expanduser()
 
 
-def _parse_script_sections(script: str) -> Dict[str, List[str]]:
-    sections: Dict[str, List[str]] = {}
-    current_label: Optional[str] = None
+def _parse_script_sections(script: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current_label: str | None = None
     for raw_line in script.splitlines():
         line = raw_line.strip()
         if not line:
@@ -33,13 +32,13 @@ def _parse_script_sections(script: str) -> Dict[str, List[str]]:
     return sections
 
 
-def _read_demo_metadata(demo_file: Optional[str]) -> Dict[str, str]:
+def _read_demo_metadata(demo_file: str | None) -> dict[str, str]:
     if not demo_file:
         return {}
 
     artifact_path = _expand_path(demo_file)
     content = artifact_path.read_text(encoding="utf-8")
-    metadata: Dict[str, str] = {"artifact_path": str(artifact_path)}
+    metadata: dict[str, str] = {"artifact_path": str(artifact_path)}
     for line in content.splitlines():
         if line.startswith("Demo command: "):
             metadata["command"] = line.removeprefix("Demo command: ").strip()
@@ -50,7 +49,7 @@ def _read_demo_metadata(demo_file: Optional[str]) -> Dict[str, str]:
     return metadata
 
 
-def _title_for(topic: str, style: str, demo_metadata: Dict[str, str]) -> str:
+def _title_for(topic: str, style: str, demo_metadata: dict[str, str]) -> str:
     style_label = "balanced" if style == "balanced" else style
     if demo_metadata.get("command"):
         return f"{topic.strip()} | {style_label} short with live demo"
@@ -68,7 +67,7 @@ def _beat(beat_number: int, visual: str, spoken: str, notes: str) -> str:
     )
 
 
-def _generic_beat_plan(topic: str, hook_lines: List[str], context_lines: List[str], core_lines: List[str], close_lines: List[str]) -> List[Dict[str, str]]:
+def _generic_beat_plan(topic: str, hook_lines: list[str], context_lines: list[str], core_lines: list[str], close_lines: list[str]) -> list[dict[str, str]]:
     hook_spoken = " ".join(hook_lines[:2]).strip()
     beats = [
         {
@@ -83,7 +82,7 @@ def _generic_beat_plan(topic: str, hook_lines: List[str], context_lines: List[st
         },
         {
             "visual": "type a relevant ARI command or show the command area before execution",
-            "spoken": context_lines[1] if len(context_lines) > 1 else f"The system is still thin, but the workflow is already real.",
+            "spoken": context_lines[1] if len(context_lines) > 1 else "The system is still thin, but the workflow is already real.",
             "notes": "show intent before showing output",
         },
         {
@@ -110,7 +109,7 @@ def _generic_beat_plan(topic: str, hook_lines: List[str], context_lines: List[st
     return beats
 
 
-def _apply_demo_enrichment(beats: List[Dict[str, str]], demo_metadata: Dict[str, str]) -> List[Dict[str, str]]:
+def _apply_demo_enrichment(beats: list[dict[str, str]], demo_metadata: dict[str, str]) -> list[dict[str, str]]:
     command = demo_metadata.get("command")
     if not command:
         return beats
@@ -131,7 +130,7 @@ def _apply_demo_enrichment(beats: List[Dict[str, str]], demo_metadata: Dict[str,
         insert_index,
         {
             "visual": f"brief overlay of saved demo artifact or filename `{artifact_path}`",
-            "spoken": f"This is already grounded in a real demo capture, not a mockup.",
+            "spoken": "This is already grounded in a real demo capture, not a mockup.",
             "notes": f"use a quick text overlay; optional caption reference: {caption or 'keep it minimal'}",
         },
     )
@@ -141,9 +140,9 @@ def _apply_demo_enrichment(beats: List[Dict[str, str]], demo_metadata: Dict[str,
 def build_short_video_storyboard_data(
     topic: str,
     style: str = "balanced",
-    demo_file: Optional[str] = None,
+    demo_file: str | None = None,
     db_path: Path = DB_PATH,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     style_value = style or "balanced"
     script = generate_short_video_script(topic=topic, style=style_value, db_path=db_path)
     sections = _parse_script_sections(script)
@@ -172,7 +171,7 @@ def build_short_video_storyboard_data(
 def generate_short_video_storyboard(
     topic: str,
     style: str = "balanced",
-    demo_file: Optional[str] = None,
+    demo_file: str | None = None,
     db_path: Path = DB_PATH,
 ) -> str:
     data = build_short_video_storyboard_data(
@@ -182,7 +181,6 @@ def generate_short_video_storyboard(
         db_path=db_path,
     )
     beats = data["beats"]
-    demo_metadata = data["demo_metadata"]
 
     lines = [
         "TITLE",
@@ -208,7 +206,7 @@ def generate_short_video_storyboard(
     return "\n".join(lines).rstrip()
 
 
-def _save_storyboard(storyboard: str, topic: str, now: Optional[datetime] = None) -> Path:
+def _save_storyboard(storyboard: str, topic: str, now: datetime | None = None) -> Path:
     now_value = now or datetime.now()
     output_dir = Path.home() / "ARI" / "storyboards" / now_value.strftime("%Y-%m-%d")
     output_dir.mkdir(parents=True, exist_ok=True)

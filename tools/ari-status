@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+cd "/Users/alecisaacman/ARI (codex)/projects/ari-canonical" && git status && git log --oneline -n 5
