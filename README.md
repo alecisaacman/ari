@@ -1,18 +1,14 @@
-# ARI — Agentic Recursive Intelligence
+# ARI — Local-First Operational Intelligence
 
-ARI is a personal intelligence system designed to move from passive AI assistance to active execution.
+ARI is a local-first personal intelligence system for structured execution, memory, decision support, and approval-gated automation.
 
 **ARI is the brain. ACE is the interface.**
 
 ## Core Identity
 
-ARI is not a single application or folder.
-
 This repository contains the current canonical implementation of ARI's local-first brain and runtime.
 
-ARI itself is a local-first intelligence system designed to operate across surfaces and devices, beginning with the user's primary computer as the execution host.
-
-The code in this repository is the source-of-truth implementation of ARI's core loop, decision system, and execution capabilities. It should be treated as the canonical brain, not the full boundary of the system.
+ARI is designed to operate across surfaces and devices, beginning with the user's primary computer as the execution host. The code in this repository is the source-of-truth implementation for ARI's core loop, decision system, state model, and execution boundaries.
 
 ## What this repository contains
 
@@ -23,74 +19,79 @@ The code in this repository is the source-of-truth implementation of ARI's core 
 
 ## Current capabilities
 
-ARI now has:
+ARI currently includes:
+
 - canonical notes, tasks, and structured memory
 - canonical coordination and policy state
 - API-first hub-to-brain architecture
 - bounded coding/operator execution
 - execution lifecycle tracking and verification
-- a governed decision, dispatch, evaluation, and persistence loop
-- a canonical decision layer that turns signals into typed act / escalate / defer / ignore decisions with explicit reasoning
-- a local-first worker backend seam controlled by ARI, with deterministic stub and real command-backed modes
-- a bounded self-improvement runner over the same worker seam
-- a single outward `ari` CLI entrypoint with natural-language routing
-- controller-quality self-improvement slice selection tied to repo state and execution intent
-- stronger self-improvement verification using repo evidence and explicit verification commands
-- persisted controller decision records for each self-improvement cycle
-- semantic verification profiles with slice-aware checks instead of generic success heuristics
-- bounded action plans that give Codex concrete local tasks, structural targets, and retry guidance under ARI control
-- a first Telegram polling gateway foundation that converts private natural-language Telegram messages into structured ARI events, role assignments, assets, and pending Codex tasks
+- governed decision, dispatch, evaluation, and persistence loop
+- typed signal decisions: act, escalate, defer, or ignore, with explicit reasoning
+- local-first worker backend seam controlled by ARI, with deterministic stub and command-backed modes
+- bounded self-improvement runner over the same worker seam
+- single outward `ari` CLI entrypoint with natural-language routing
+- self-improvement slice selection tied to repo state and execution intent
+- verification profiles based on changed paths, expected symbols, targeted tests, output checks, and unexpected-change detection
+- persisted controller decision records for bounded self-improvement cycles
+- bounded action plans that give worker agents concrete local tasks, structural targets, and retry guidance
+- Telegram polling gateway foundation that converts private natural-language Telegram messages into structured ARI events, role assignments, assets, and pending local tasks
 
 ## Current milestone
 
 **v0.12 — Bounded action generation**
 
 This means:
-- the real brain is canonical
+
+- the canonical brain/runtime is real
 - the API seam is real
-- the hub is no longer the brain
-- execution is now a real capability
-- ARI can invoke Codex as a worker inside ARI's own bounded loop
-- the terminal surface now starts from one outward identity: `ari`
+- the hub is a surface, not the brain
+- execution exists as a bounded, policy-aware capability
+- ARI can invoke worker agents inside its own controlled loop
+- the terminal surface starts from one outward identity: `ari`
 - ARI leaves a typed controller trail for bounded self-improvement cycles
-- bounded self-improvement no longer trusts plausible stdout alone
-- ARI now generates explicit bounded action plans and tighter retry prompts for Codex worker runs
-- ARI can switch between stub and real worker backends without changing the controller loop or outward `ari` identity
+- bounded self-improvement does not trust plausible stdout alone
+- ARI generates explicit bounded action plans and tighter retry prompts for worker runs
+- ARI can switch between stub and command-backed worker backends without changing the controller loop or outward interface
 
 ## Next milestone
 
-**v1.0 — Governed Autonomous Coding Loop**
+**v1.0 — Governed autonomous coding loop**
 
 Goal:
-- generate coding actions
-- execute them
+
+- generate bounded coding actions
+- execute them under policy
 - verify results
 - retry intelligently
-- move ARI toward replacing external coding agents over time
+- reduce dependence on external coding agents for well-scoped local tasks over time
 
 ## Direction
 
 Long-term, ARI is being built toward:
-- a coding/operator system that can gradually replace Codex-like workflows
-- persistent self-documentation
-- premium multi-surface access
-- a future Inspection Cabinet
-- clean iOS and clean access points
 
-## Local-First Execution Model
+- durable local execution memory
+- persistent self-documentation
+- multi-surface access
+- explicit inspection and review tools
+- clean mobile and desktop access points
+
+## Local-first execution model
 
 ARI is designed as a local-first system.
 
 Primary execution host:
+
 - The user's local computer is the main execution environment.
 - File access, command execution, and state mutation occur locally by default.
 
 Future extension:
+
 - Additional nodes such as mobile devices, remote workers, and cloud services may interface with the canonical brain.
 - These nodes act as surfaces or extensions, not replacements for the core runtime.
 
-Local-first does not mean single-machine forever.
-It means:
+Local-first does not mean single-machine forever. It means:
+
 - local control
 - local execution by default
 - external systems are optional extensions, not dependencies
@@ -105,9 +106,9 @@ It means:
 - `tests/`
 - `docs/`
 
-## Telegram Gateway
+## Telegram gateway
 
-The Telegram Gateway is the first mobile natural-language command intake surface for ARI. Telegram captures user intent; ARI remains the brain, memory, router, and authority layer.
+The Telegram gateway is the first mobile natural-language command intake surface for ARI. Telegram captures user intent; ARI remains the brain, memory, router, and authority layer.
 
 Setup:
 
@@ -140,9 +141,7 @@ The console script is also available after `./.venv312/bin/pip install -e .`:
 ./.venv312/bin/ari-telegram-gateway --max-updates 3
 ```
 
-The gateway writes ignored local runtime data under `data/telegram/`, including polling
-state at `data/telegram/state/ari_command_polling_state.json`. Delete that state file to
-reset the local Telegram offset. Never commit `.env` or `data/telegram/`.
+The gateway writes ignored local runtime data under `data/telegram/`, including polling state at `data/telegram/state/ari_command_polling_state.json`. Delete that state file to reset the local Telegram offset. Never commit `.env` or `data/telegram/`.
 
 Smoke test without Telegram live access:
 
@@ -150,7 +149,7 @@ Smoke test without Telegram live access:
 PYTHONPATH=packages/ari-telegram-gateway/src ./.venv312/bin/python scripts/dev/smoke_telegram_gateway.py
 ```
 
-See [docs/telegram-gateway.md](docs/telegram-gateway.md) for architecture, safety rules, BotFather setup, and future multi-bot or boardroom-group expansion.
+See [docs/telegram-gateway.md](docs/telegram-gateway.md) for architecture, safety rules, BotFather setup, and future multi-bot or group expansion.
 
 ## Working rule
 
@@ -159,14 +158,14 @@ Keep ACE thin.
 Keep external providers pluggable.
 If a capability belongs to the brain, move it inward.
 
-## Surface Simplicity
+## Surface simplicity
 
 ARI is the outward identity.
 
 The terminal-facing default should be:
+
 - one invocation surface
 - one response contract
 - one canonical authority
 
-Codex is a worker under ARI's control, not the controller of the system.
-The worker seam is pluggable, but the controller remains canonical inside ARI.
+External coding agents are workers under ARI's control, not the controller of the system. The worker seam is pluggable, but the controller remains canonical inside ARI.
