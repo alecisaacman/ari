@@ -4,8 +4,30 @@
 .mypy_cache/
 .venv/
 .venv312/
+.venv-tux/
 __pycache__/
 *.pyc
 dist/
 build/
 ari.egg-info/
+
+# macOS
+.DS_Store
+
+# Local scratch artifacts
+sample.txt
+EXECUTION_INTENT.html
+README.backup.pre_v1_docs.md
+
+# Runtime artifacts
+services/ari-hub/runtime/
+
+data/telegram/
+data/telegram/events/
+data/telegram/inbox/
+data/telegram/logs/
+data/telegram/run/
+data/telegram/state/
+data/surface/
+logs/
+state/
