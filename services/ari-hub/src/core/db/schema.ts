@@ -218,6 +218,12 @@ CREATE TABLE IF NOT EXISTS execution_outcomes (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS channel_cursors (
+  channel TEXT PRIMARY KEY,
+  cursor INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS awareness_snapshots (
   id TEXT PRIMARY KEY,
   mode TEXT NOT NULL,
