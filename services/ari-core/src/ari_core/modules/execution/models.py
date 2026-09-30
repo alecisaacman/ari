@@ -30,6 +30,15 @@ class ExecutionGoal:
     id: str = field(default_factory=lambda: f"goal-{uuid4()}")
     created_at: str = field(default_factory=lambda: _now_iso())
     metadata: dict[str, Any] = field(default_factory=dict)
+    task_id: str = field(default_factory=lambda: f"task-{uuid4()}")
+    success_criteria: tuple[str, ...] = ()
+    requirements: tuple[str, ...] = ()
+    linked_project_id: str | None = None
+    linked_task_id: str | None = None
+    linked_milestone_id: str | None = None
+    linked_goal_id: str | None = None
+    authority_snapshot_ref: str | None = None
+    authority_snapshot_hash: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -264,6 +273,9 @@ class ExecutionRun:
     updated_at: str
     planner_config: dict[str, Any] = field(default_factory=dict)
     persisted_run: dict[str, object] | None = None
+    task_id: str | None = None
+    attempt_id: str | None = None
+    canonical_result: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -279,6 +291,9 @@ class ExecutionRun:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "persisted_run": self.persisted_run,
+            "task_id": self.task_id,
+            "attempt_id": self.attempt_id,
+            "canonical_result": self.canonical_result,
         }
 
 

@@ -236,6 +236,8 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
             json={
                 "goal": "write file goal-proof.txt with canonical goal execution",
                 "maxCycles": 1,
+                "successCriteria": ["The proof file is verified."],
+                "authoritySnapshotRef": "api-approval-snapshot",
             },
         )
         assert goal.status_code == 200
@@ -595,6 +597,19 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         assert run.status_code == 200
         assert run.json()["run"]["status"] == "completed"
         assert run.json()["run"]["results"][0]["verified"] is True
+
+        execution_task = client.get(f"/execution/tasks/{goal.json()['task_id']}")
+        assert execution_task.status_code == 200
+        execution_task_payload = execution_task.json()["execution_task"]
+        assert execution_task_payload["task"]["status"] == "completed"
+        assert execution_task_payload["task"]["success_criteria"] == [
+            "The proof file is verified."
+        ]
+        assert execution_task_payload["task"]["authority_snapshot_ref"] == (
+            "api-approval-snapshot"
+        )
+        assert execution_task_payload["checkpoints"][-1]["trigger"] == "execution_terminal"
+        assert execution_task_payload["result"]["status"] == "completed"
 
         tools = client.get("/execution/tools")
         assert tools.status_code == 200

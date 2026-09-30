@@ -16,6 +16,8 @@
 - coordination state
 - policy / derivation
 - execution layer for bounded coding actions
+- durable execution tasks, worker attempts, ordered events, append-only
+  checkpoints, and normalized terminal results
 - compact lifecycle memory for bounded coding-loop chains
 - self-documentation/content creation skill design and readiness docs
 - read-only self-documentation content seed generator from git commit ranges
@@ -32,6 +34,7 @@
   ARI-owned overview model when available
 
 ## Still evolving
+- provider-capability routing and automatic worker failover
 - autonomous coding loop
 - outbound notifications
 - interface control
@@ -41,6 +44,10 @@
 
 ## Important principle
 External model providers should remain pluggable services, not the identity of the brain itself.
+
+The existing bounded controller now records continuous ARI-owned state at plan,
+risky-operation, action-result, verification, and terminal boundaries. This is a
+continuity ledger, not yet a provider router or automatic failover engine.
 
 Native skills must follow `docs/skills/ari-native-skill-contract.md`: they plug
 into ARI's shared memory, authority, validation, execution, verification,

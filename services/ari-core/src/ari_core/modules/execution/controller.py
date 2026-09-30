@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from ...core.paths import DB_PATH
 from ..coordination.db import put_coordination_entity
 from ..memory.context import build_memory_context
+from .contracts import CheckpointState, ExecutionResultContract, ExecutionTaskSpec
 from .executor import execute_action
+from .ledger import ExecutionLedger
 from .models import (
     ExecutionGoal,
     ExecutionRun,
+    ExecutionRunStatus,
     FailureContext,
     PlannerResult,
     RepoContext,
@@ -83,6 +87,7 @@ class ExecutionController:
         planner_completion_fn: Callable[[dict[str, object]], str] | None = None,
         memory_context_layers: list[str] | None = None,
         memory_context_limit: int = 5,
+        lifecycle_hook: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.execution_root = ExecutionRoot(execution_root)
         self.db_path = db_path
@@ -92,6 +97,8 @@ class ExecutionController:
             "session",
         ]
         self.memory_context_limit = memory_context_limit
+        self.lifecycle_hook = lifecycle_hook
+        self.ledger = ExecutionLedger(db_path)
         self.tool_registry = get_execution_tool_registry()
         self.planner, self.planner_selection = resolve_execution_planner(
             planner=planner,
@@ -142,10 +149,86 @@ class ExecutionController:
         contexts: list[RepoContext] = []
         decisions: list[WorkerDecision] = []
         results: list[dict[str, Any]] = []
-        status = "failed"
+        status: ExecutionRunStatus = "failed"
         reason = "Execution did not run."
         failure_context: FailureContext | None = None
         planner_config = self.planner_selection.to_dict()
+        success_criteria = execution_goal.success_criteria or (
+            f"Complete the objective: {execution_goal.objective}",
+        )
+        provider: dict[str, Any] = {
+            "executor_id": "ari.execution-controller",
+            "backend_id": planner_config["selected"],
+            "model_ref": None,
+        }
+        provenance = {
+            "run_id": run_id,
+            "goal_id": execution_goal.id,
+            "planner_config": planner_config,
+        }
+        _, attempt_id = self.ledger.create_task(
+            ExecutionTaskSpec(
+                task_id=execution_goal.task_id,
+                objective=execution_goal.objective,
+                success_criteria=success_criteria,
+                requirements=execution_goal.requirements,
+                linked_project_id=execution_goal.linked_project_id,
+                linked_task_id=execution_goal.linked_task_id,
+                linked_milestone_id=execution_goal.linked_milestone_id,
+                linked_goal_id=execution_goal.linked_goal_id,
+                authority_snapshot_ref=execution_goal.authority_snapshot_ref,
+                authority_snapshot_hash=execution_goal.authority_snapshot_hash,
+            ),
+            executor_id=provider["executor_id"],
+            backend_id=provider["backend_id"],
+            provenance=provenance,
+        )
+        current_plan: dict[str, Any] = {}
+        completed_steps: list[dict[str, Any]] = []
+        pending_steps: list[dict[str, Any]] = []
+        artifacts: list[dict[str, Any]] = []
+        actions_taken: list[dict[str, Any]] = []
+        verification_results: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        def checkpoint(
+            trigger: str,
+            event_type: str,
+            *,
+            event_payload: dict[str, Any] | None = None,
+            next_action: str | None = None,
+        ) -> dict[str, Any]:
+            stored = self.ledger.record_boundary(
+                task_id=execution_goal.task_id,
+                attempt_id=attempt_id,
+                trigger=trigger,
+                event_type=event_type,
+                state=CheckpointState(
+                    objective=execution_goal.objective,
+                    success_criteria=success_criteria,
+                    current_plan=current_plan,
+                    completed_steps=tuple(completed_steps),
+                    pending_steps=tuple(pending_steps),
+                    artifacts=tuple(artifacts),
+                    actions_taken=tuple(actions_taken),
+                    verification_results=tuple(verification_results),
+                    errors=tuple(errors),
+                    provider=provider,
+                    next_recommended_action=next_action,
+                    provenance=provenance,
+                ),
+                event_payload=event_payload,
+            )
+            if self.lifecycle_hook is not None:
+                self.lifecycle_hook(
+                    trigger,
+                    {
+                        "task_id": execution_goal.task_id,
+                        "attempt_id": attempt_id,
+                        "checkpoint": stored,
+                    },
+                )
+            return stored
 
         for cycle_index in range(1, execution_goal.max_cycles + 1):
             context = build_repo_context(self.execution_root.root)
@@ -166,19 +249,35 @@ class ExecutionController:
                 break
 
             if decision.status == "reject" or decision.plan is None:
-                results.append(
-                    _rejected_result(
-                        planner_result,
-                        decision.reason,
-                        planner_config=planner_config,
-                        memory_context=memory_context,
-                    )
+                rejected = _rejected_result(
+                    planner_result,
+                    decision.reason,
+                    planner_config=planner_config,
+                    memory_context=memory_context,
                 )
+                results.append(rejected)
+                errors.append({"cycle": cycle_index, "error": decision.reason})
                 status = "rejected"
                 reason = decision.reason
                 break
 
             plan = decision.plan
+            current_plan = plan.to_dict()
+            pending_steps = [
+                {
+                    "action_id": action.id,
+                    "action_type": action.action_type,
+                    "reason": action.reason,
+                }
+                for action in plan.actions
+            ]
+            plan_trigger = "plan_created" if cycle_index == 1 else "plan_revised"
+            checkpoint(
+                plan_trigger,
+                "plan.created" if cycle_index == 1 else "plan.revised",
+                event_payload={"cycle": cycle_index, "plan": current_plan},
+                next_action=pending_steps[0]["reason"] if pending_steps else None,
+            )
             validation_error = self._validate_plan(plan)
             if validation_error is not None:
                 result = {
@@ -196,11 +295,67 @@ class ExecutionController:
                     "memory_context": memory_context,
                 }
                 results.append(result)
+                errors.append({"cycle": cycle_index, "error": validation_error})
                 status = "rejected"
                 reason = validation_error
                 break
 
-            result = self._execute_plan(plan)
+            def action_boundary(
+                trigger: str,
+                action: WorkerAction,
+                action_result: dict[str, Any] | None,
+                action_index: int,
+                cycle: int = cycle_index,
+                cycle_pending: list[dict[str, Any]] = pending_steps,
+            ) -> None:
+                if action_result is not None:
+                    actions_taken.append(
+                        {
+                            "cycle": cycle,
+                            "action_id": action.id,
+                            "action_type": action.action_type,
+                            "result": action_result,
+                        }
+                    )
+                    if cycle_pending and cycle_pending[0]["action_id"] == action.id:
+                        cycle_pending.pop(0)
+                    completed_steps.append(
+                        {
+                            "cycle": cycle,
+                            "action_index": action_index,
+                            "action_id": action.id,
+                            "action_type": action.action_type,
+                            "verified": bool(action_result.get("verified")),
+                        }
+                    )
+                    artifact = self._artifact_for_action(action, action_result)
+                    if artifact is not None:
+                        artifacts.append(artifact)
+                    if not bool(action_result.get("verified")):
+                        errors.append(
+                            {
+                                "cycle": cycle,
+                                "action_id": action.id,
+                                "error": action_result.get("stderr") or "Action verification failed.",
+                            }
+                        )
+                checkpoint(
+                    trigger,
+                    f"action.{trigger}",
+                    event_payload={
+                        "cycle": cycle,
+                        "action_id": action.id,
+                        "action_type": action.action_type,
+                        "result": action_result,
+                    },
+                    next_action=(
+                        cycle_pending[0]["reason"]
+                        if cycle_pending
+                        else "Run plan verification."
+                    ),
+                )
+
+            result = self._execute_plan(plan, boundary_callback=action_boundary)
             result["planner"] = planner_result.planner_name
             result["confidence"] = planner_result.confidence
             result["failure_context"] = (
@@ -209,6 +364,23 @@ class ExecutionController:
             result["planner_config"] = planner_config
             result["memory_context"] = memory_context
             results.append(result)
+            verification_results.extend(
+                cast(list[dict[str, Any]], result["verification_results"])
+            )
+            checkpoint(
+                "verification_completed",
+                "verification.completed",
+                event_payload={
+                    "cycle": cycle_index,
+                    "verified": result["verified"],
+                    "verification_results": result["verification_results"],
+                },
+                next_action=(
+                    "Finalize the canonical result."
+                    if result["verified"]
+                    else "Replan from the recorded failure context."
+                ),
+            )
 
             if result["verified"]:
                 status = "completed"
@@ -235,6 +407,51 @@ class ExecutionController:
                 reason = "Action failed verification and is not retryable."
                 break
 
+        if status != "completed":
+            checkpoint(
+                "execution_failed",
+                "execution.failed",
+                event_payload={"status": status, "reason": reason, "errors": errors},
+                next_action="Inspect unresolved execution errors.",
+            )
+        final_checkpoint = checkpoint(
+            "execution_terminal",
+            "execution.terminal",
+            event_payload={"status": status, "reason": reason},
+            next_action=None if status == "completed" else "Inspect unresolved execution errors.",
+        )
+        criteria_evaluation = tuple(
+            {
+                "criterion": criterion,
+                "satisfied": status == "completed",
+                "evidence": "Execution verification passed." if status == "completed" else reason,
+            }
+            for criterion in success_criteria
+        )
+        canonical_result = self.ledger.record_result(
+            task_id=execution_goal.task_id,
+            attempt_id=attempt_id,
+            final_checkpoint_id=final_checkpoint["checkpoint_id"],
+            result=ExecutionResultContract(
+                task_id=execution_goal.task_id,
+                status=status,
+                objective=execution_goal.objective,
+                outcome=reason,
+                success_criteria_evaluation=criteria_evaluation,
+                artifacts=tuple(artifacts),
+                evidence=tuple(
+                    {"cycle": index + 1, "result": result}
+                    for index, result in enumerate(results)
+                ),
+                verification=tuple(verification_results),
+                unresolved_issues=tuple(errors),
+                recommended_next_action=(
+                    None if status == "completed" else "Inspect the latest checkpoint and retry safely."
+                ),
+                provider_provenance=(provider,),
+                execution_history=tuple(decision.to_dict() for decision in decisions),
+            ),
+        )
         updated_at = _now_iso()
         run = ExecutionRun(
             id=run_id,
@@ -248,6 +465,9 @@ class ExecutionController:
             created_at=created_at,
             updated_at=updated_at,
             planner_config=planner_config,
+            task_id=execution_goal.task_id,
+            attempt_id=attempt_id,
+            canonical_result=canonical_result,
         )
         persisted = self._persist_run(run)
         return ExecutionRun(
@@ -263,6 +483,9 @@ class ExecutionController:
             updated_at=run.updated_at,
             planner_config=run.planner_config,
             persisted_run=persisted,
+            task_id=run.task_id,
+            attempt_id=run.attempt_id,
+            canonical_result=run.canonical_result,
         )
 
     def _validate_action(self, action: WorkerAction) -> str | None:
@@ -292,9 +515,23 @@ class ExecutionController:
                 return validation_error
         return None
 
-    def _execute_plan(self, plan: WorkerPlan) -> dict[str, Any]:
+    def _execute_plan(
+        self,
+        plan: WorkerPlan,
+        *,
+        boundary_callback: Callable[
+            [str, WorkerAction, dict[str, Any] | None, int], None
+        ]
+        | None = None,
+    ) -> dict[str, Any]:
         action_results: list[dict[str, Any]] = []
-        for action in plan.actions:
+        for action_index, action in enumerate(plan.actions, start=1):
+            if boundary_callback is not None and action.action_type in {
+                "write_file",
+                "patch_file",
+                "run_command",
+            }:
+                boundary_callback("before_risky_operation", action, None, action_index)
             action_result = execute_action(
                 action.to_execution_action(),
                 execution_root=self.execution_root.root,
@@ -307,6 +544,13 @@ class ExecutionController:
                 "action": action.to_execution_action(),
             }
             action_results.append(normalized_result)
+            if boundary_callback is not None:
+                boundary_callback(
+                    "action_completed",
+                    action,
+                    normalized_result,
+                    action_index,
+                )
             if not action_verified:
                 break
 
@@ -329,6 +573,26 @@ class ExecutionController:
             "plan": plan.to_dict(),
             "action_results": action_results,
             "verification_results": expectation_results,
+        }
+
+    def _artifact_for_action(
+        self,
+        action: WorkerAction,
+        result: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if action.action_type not in {"write_file", "patch_file"}:
+            return None
+        if not bool(result.get("verified")):
+            return None
+        relative_path = str(action.payload["path"])
+        resolved = self.execution_root.resolve_path(relative_path)
+        content = resolved.read_bytes()
+        return {
+            "path": relative_path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+            "action_id": action.id,
+            "action_type": action.action_type,
         }
 
     def _verify_action(self, action: WorkerAction, result: dict[str, Any]) -> bool:

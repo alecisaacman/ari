@@ -82,6 +82,7 @@ from ari_core.modules.execution.inspection import (
     list_execution_plan_previews,
     list_execution_runs,
 )
+from ari_core.modules.execution.ledger import ExecutionLedger
 from ari_core.modules.execution.models import ExecutionGoal
 from ari_core.modules.execution.tools import get_execution_tool_registry
 from ari_core.modules.memory.capture import (
@@ -860,6 +861,15 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                 ExecutionGoal(
                     objective=payload.goal,
                     max_cycles=payload.maxCycles,
+                    **({"task_id": payload.taskId} if payload.taskId else {}),
+                    success_criteria=tuple(payload.successCriteria),
+                    requirements=tuple(payload.requirements),
+                    linked_project_id=payload.linkedProjectId,
+                    linked_task_id=payload.linkedTaskId,
+                    linked_milestone_id=payload.linkedMilestoneId,
+                    linked_goal_id=payload.linkedGoalId,
+                    authority_snapshot_ref=payload.authoritySnapshotRef,
+                    authority_snapshot_hash=payload.authoritySnapshotHash,
                 ),
                 planner_mode=payload.planner,
             ).to_dict()
@@ -872,6 +882,15 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                 ExecutionGoal(
                     objective=payload.goal,
                     max_cycles=payload.maxCycles,
+                    **({"task_id": payload.taskId} if payload.taskId else {}),
+                    success_criteria=tuple(payload.successCriteria),
+                    requirements=tuple(payload.requirements),
+                    linked_project_id=payload.linkedProjectId,
+                    linked_task_id=payload.linkedTaskId,
+                    linked_milestone_id=payload.linkedMilestoneId,
+                    linked_goal_id=payload.linkedGoalId,
+                    authority_snapshot_ref=payload.authoritySnapshotRef,
+                    authority_snapshot_hash=payload.authoritySnapshotHash,
                 ),
                 planner_mode=payload.planner,
             )
@@ -1107,6 +1126,13 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         limit: int = Query(default=10, ge=1, le=50),
     ) -> dict[str, Any]:
         return {"runs": list_execution_runs(limit=limit)}
+
+    @app.get("/execution/tasks/{task_id}")
+    def execution_task(task_id: str) -> dict[str, Any]:
+        task = ExecutionLedger().get_task_bundle(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail=f"Execution task {task_id} not found.")
+        return {"execution_task": task}
 
     @app.get("/execution/runs/{run_id}")
     def execution_run(run_id: str) -> dict[str, Any]:

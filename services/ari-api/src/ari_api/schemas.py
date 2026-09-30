@@ -638,6 +638,15 @@ class ExecutionGoalRequest(APIModel):
     goal: str
     maxCycles: int = 1
     planner: Literal["rule_based", "model"] = "rule_based"
+    taskId: str | None = None
+    successCriteria: list[str] = Field(default_factory=list)
+    requirements: list[str] = Field(default_factory=list)
+    linkedProjectId: str | None = None
+    linkedTaskId: str | None = None
+    linkedMilestoneId: str | None = None
+    linkedGoalId: str | None = None
+    authoritySnapshotRef: str | None = None
+    authoritySnapshotHash: str | None = None
 
 
 class CodingLoopGoalRequest(APIModel):

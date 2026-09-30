@@ -28,6 +28,7 @@ from .coding_loop import (
     store_coding_loop_retry_approval,
 )
 from .command_policy import CommandPolicyResult, validate_command
+from .contracts import CheckpointState, ExecutionResultContract, ExecutionTaskSpec
 from .controller import (
     ExecutionController,
     build_repo_context,
@@ -36,6 +37,7 @@ from .controller import (
     run_execution_goal,
 )
 from .executor import execute_action
+from .ledger import ExecutionLedger
 from .models import (
     ExecutionGoal,
     ExecutionResult,
@@ -60,11 +62,15 @@ from .tools import ExecutionTool, ExecutionToolRegistry, get_execution_tool_regi
 
 __all__ = [
     "ExecutionController",
+    "ExecutionLedger",
     "ExecutionGoal",
     "ExecutionPlanner",
     "ExecutionRoot",
     "ExecutionResult",
+    "ExecutionResultContract",
     "ExecutionRun",
+    "ExecutionTaskSpec",
+    "CheckpointState",
     "ExecutionTool",
     "ExecutionToolRegistry",
     "FailureContext",

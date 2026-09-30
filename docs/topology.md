@@ -5,6 +5,8 @@
 - This repository contains the current canonical implementation of ARI's local-first brain and runtime.
 - The local computer is the primary execution host for ARI today.
 - SQLite is the current durable local system record.
+- The Execution Fabric ledger in that SQLite store owns durable tasks, attempts,
+  checkpoints, events, and common results independently of any model provider.
 - `ari-core` is the canonical state and logic owner.
 - `ari-api` is the default contract into the brain.
 - `ari-hub` is the primary interface surface.
@@ -12,6 +14,7 @@
 - The current system includes real bounded execution, but not yet a full autonomous coding loop.
 - The terminal-facing default identity is `ari`, which routes natural-language goals into canonical runtime paths.
 - Codex is currently an external worker ARI can invoke locally inside bounded loops.
+- Provider routing and automatic failover are not implemented yet.
 
 ## Local-First Execution Model
 
@@ -61,6 +64,7 @@ Responsibilities:
 - show important execution and coordination state
 - support explainable inspection of why items were surfaced
 - remain a client of canonical ARI state
+- consume Execution Fabric state through `ari-api`; never infer a separate task truth
 
 ### Telegram Gateway
 
@@ -118,6 +122,13 @@ Responsibilities:
 - `ari-hub`: primary web surface and ambient interface
 - `ari-telegram-gateway`: Telegram polling intake and local event persistence
 - notifications / phone / voice: future surfaces that should remain clients of the same canonical brain
+
+Execution persistence flows in one direction:
+
+`ingress -> ari-core ExecutionController -> ARI SQLite execution ledger -> ari-api -> ACE/surfaces`
+
+Filesystem queues and JSON snapshots can carry ingress or derived status, but do
+not replace the ledger.
 
 ## System Boundary
 

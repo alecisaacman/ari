@@ -5,6 +5,11 @@ own memory, and acts under explicit policy rather than unconstrained autonomy.
 
 **ARI is the brain. ACE is how it shows up across surfaces.**
 
+The source-bearing Git checkout is the canonical implementation. ARI-owned SQLite is the
+canonical local execution store; provider processes and interface surfaces are replaceable
+workers and clients, not sources of task truth. See
+[ADR 0001](docs/adr/0001-canonical-source-and-execution-store.md).
+
 ## What's here
 
 | Path | Role |
@@ -20,6 +25,8 @@ own memory, and acts under explicit policy rather than unconstrained autonomy.
   runtime. Nothing lives only in a surface.
 - **Bounded execution.** ARI acts under policy: typed decisions (act, escalate, defer,
   ignore), verified results, and a persisted trail for every autonomous step.
+- **Durable continuity.** Execution tasks, attempts, ordered events, append-only
+  checkpoints, and normalized results live independently of the executing worker.
 - **Local-first, not local-only.** Your machine is the primary execution host today.
   Other surfaces — mobile, cloud workers — extend the brain; they never replace it.
 

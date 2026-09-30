@@ -8,7 +8,8 @@ The canonical source of truth lives in:
 
 - `services/ari-core` for domain logic and persistence access
 - `services/ari-api` for the default contract into that logic
-- `config/schema.sql` for the durable SQLite schema
+- `config/schema.sql` for the legacy baseline SQLite schema
+- `config/migrations/` for ordered, checksum-verified additive schema evolution
 
 The hub, CLI, notifications, and later mobile surfaces must consume this canonical state instead of inventing local ownership.
 
@@ -149,6 +150,26 @@ Runtime execution runs retain:
 - verification results
 - retry / stop outcome
 
+### Execution Fabric
+
+The provider-neutral continuity ledger adds:
+
+- `ari_execution_tasks` — stable objective, success criteria, requirements,
+  authority references, current plan, status, and latest-checkpoint pointer
+- `ari_execution_attempts` — each bounded worker session and its provenance
+- `ari_execution_checkpoints` — append-only normalized recovery state
+- `ari_execution_events` — append-only per-task ordered lifecycle facts
+- `ari_execution_results` — one common terminal result contract per task
+
+Events and checkpoints use independent monotonic task sequences and are committed
+together at each boundary. A checkpoint contains completed and pending steps,
+findings, assumptions, decisions, artifacts, actions, verification, errors,
+provider observations, next action, authority references, and provenance. Stored
+payloads redact common secret fields and bound large output.
+
+The legacy runtime execution records remain available during compatibility work;
+they are not a second canonical task state.
+
 ## Explainability
 
 Canonical state must remain explainable.
@@ -182,6 +203,8 @@ ARI can now:
 - execute and verify multi-action plans
 - persist command results and mutation history
 - surface execution truth through the API and hub
+- recover the latest durable task checkpoint after an interrupted worker process
+- inspect a complete task bundle through `GET /execution/tasks/{task_id}`
 
 ARI cannot yet:
 
@@ -189,13 +212,15 @@ ARI cannot yet:
 - retry intelligently after failure
 - run a full model-driven decision-and-repair loop
 - control a live terminal session broadly
+- route by provider capability or fail over automatically
 
 That remaining gap is the current product bottleneck.
 
 ## Persistence Strategy
 
 - SQLite is the durable local store.
-- `config/schema.sql` is the canonical schema source.
+- `config/schema.sql` plus immutable `config/migrations/*.sql` are the canonical
+  schema sources.
 - `services/ari-core` owns repository and mutation logic.
 - `services/ari-api` is the default service contract.
 - `services/ari-hub` consumes canonical state and should not become a second brain.

@@ -1,8 +1,17 @@
+import hashlib
 import shutil
 import sqlite3
 from pathlib import Path
 
-from ...core.paths import ARTIFACTS_DIR, DB_PATH, LEGACY_DB_PATH, LOGS_DIR, SCHEMA_PATH, STATE_DIR
+from ...core.paths import (
+    ARTIFACTS_DIR,
+    DB_PATH,
+    LEGACY_DB_PATH,
+    LOGS_DIR,
+    MIGRATIONS_DIR,
+    SCHEMA_PATH,
+    STATE_DIR,
+)
 
 
 def ensure_runtime_dirs(db_path: Path = DB_PATH) -> None:
@@ -30,8 +39,46 @@ def initialize_database(db_path: Path = DB_PATH, schema_path: Path = SCHEMA_PATH
         _ensure_followups_completed_at_column(connection)
         _ensure_retry_approval_execution_columns(connection)
         _ensure_coding_loop_result_table(connection)
+        _apply_versioned_migrations(connection)
         connection.commit()
     return db_path
+
+
+def _apply_versioned_migrations(
+    connection: sqlite3.Connection,
+    migrations_dir: Path = MIGRATIONS_DIR,
+) -> None:
+    connection.execute(
+        """
+        create table if not exists ari_schema_migrations (
+            version text primary key,
+            checksum text not null,
+            applied_at text not null
+                default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        )
+        """
+    )
+    if not migrations_dir.exists():
+        return
+    applied = {
+        row["version"]: row["checksum"]
+        for row in connection.execute(
+            "select version, checksum from ari_schema_migrations"
+        ).fetchall()
+    }
+    for migration_path in sorted(migrations_dir.glob("*.sql")):
+        version = migration_path.stem
+        sql = migration_path.read_text(encoding="utf-8")
+        checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        if version in applied:
+            if applied[version] != checksum:
+                raise RuntimeError(f"Applied migration {version} has changed on disk.")
+            continue
+        connection.executescript(sql)
+        connection.execute(
+            "insert into ari_schema_migrations (version, checksum) values (?, ?)",
+            (version, checksum),
+        )
 
 
 def _ensure_followups_completed_at_column(connection: sqlite3.Connection) -> None:
