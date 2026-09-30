@@ -34,6 +34,7 @@ from .planners import (
     resolve_execution_planner,
 )
 from .sandbox import ExecutionRoot
+from .session import ExecutionSessionManager
 from .tools import get_execution_tool_registry
 
 
@@ -88,6 +89,8 @@ class ExecutionController:
         memory_context_layers: list[str] | None = None,
         memory_context_limit: int = 5,
         lifecycle_hook: Callable[[str, dict[str, Any]], None] | None = None,
+        session_manager: ExecutionSessionManager | None = None,
+        worker_lease_seconds: int = 60,
     ) -> None:
         self.execution_root = ExecutionRoot(execution_root)
         self.db_path = db_path
@@ -99,6 +102,8 @@ class ExecutionController:
         self.memory_context_limit = memory_context_limit
         self.lifecycle_hook = lifecycle_hook
         self.ledger = ExecutionLedger(db_path)
+        self.session_manager = session_manager or ExecutionSessionManager(db_path)
+        self.worker_lease_seconds = worker_lease_seconds
         self.tool_registry = get_execution_tool_registry()
         self.planner, self.planner_selection = resolve_execution_planner(
             planner=planner,
@@ -178,10 +183,20 @@ class ExecutionController:
                 linked_goal_id=execution_goal.linked_goal_id,
                 authority_snapshot_ref=execution_goal.authority_snapshot_ref,
                 authority_snapshot_hash=execution_goal.authority_snapshot_hash,
+                restrictions=execution_goal.restrictions,
+                authority_scope=execution_goal.authority_scope,
+                approval_state=execution_goal.approval_state,
             ),
             executor_id=provider["executor_id"],
             backend_id=provider["backend_id"],
             provenance=provenance,
+        )
+        self.session_manager.acquire_lease(
+            task_id=execution_goal.task_id,
+            attempt_id=attempt_id,
+            worker_identity="ari.execution-controller",
+            worker_session_ref=run_id,
+            lease_seconds=self.worker_lease_seconds,
         )
         current_plan: dict[str, Any] = {}
         completed_steps: list[dict[str, Any]] = []
@@ -216,6 +231,9 @@ class ExecutionController:
                     provider=provider,
                     next_recommended_action=next_action,
                     provenance=provenance,
+                    restrictions=execution_goal.restrictions,
+                    authority_scope=execution_goal.authority_scope,
+                    approval_state=execution_goal.approval_state,
                 ),
                 event_payload=event_payload,
             )

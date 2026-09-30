@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
@@ -11,7 +12,13 @@ from uuid import uuid4
 
 from ...core.paths import DB_PATH
 from ..networking.db import get_connection, initialize_database
-from .contracts import CheckpointState, ExecutionResultContract, ExecutionTaskSpec
+from .contracts import (
+    AttemptLifecycleState,
+    CheckpointState,
+    ExecutionResultContract,
+    ExecutionTaskSpec,
+    TaskLifecycleState,
+)
 from .models import _now_iso
 
 _SENSITIVE_KEY = re.compile(r"(api.?key|authorization|cookie|password|secret|token)", re.I)
@@ -44,14 +51,27 @@ _JSON_COLUMNS = {
     "decisions_requiring_alec_json",
     "provider_provenance_json",
     "execution_history_json",
+    "restrictions_json",
+    "authority_scope_json",
+    "approval_state_json",
+    "recovery_json",
+    "metadata_json",
+    "packet_json",
+    "acknowledgement_json",
 }
 
 
 class ExecutionLedger:
     """Durable, provider-neutral state for bounded execution work."""
 
-    def __init__(self, db_path: Path = DB_PATH) -> None:
+    def __init__(
+        self,
+        db_path: Path = DB_PATH,
+        *,
+        initialization_hook: Callable[[str], None] | None = None,
+    ) -> None:
         self.db_path = db_path
+        self.initialization_hook = initialization_hook
         initialize_database(db_path)
 
     def create_task(
@@ -66,6 +86,20 @@ class ExecutionLedger:
         attempt_id = f"attempt-{uuid4()}"
         now = _now_iso()
         clean_provenance = sanitize_payload(provenance or {})
+        initial = CheckpointState(
+            objective=spec.objective,
+            success_criteria=spec.success_criteria,
+            next_recommended_action="Create and validate the first bounded execution plan.",
+            provider={
+                "executor_id": executor_id,
+                "backend_id": backend_id,
+                "model_ref": model_ref,
+            },
+            provenance=clean_provenance,
+            restrictions=spec.restrictions,
+            authority_scope=spec.authority_scope,
+            approval_state=spec.approval_state,
+        )
         with self._transaction() as connection:
             connection.execute(
                 """
@@ -73,8 +107,11 @@ class ExecutionLedger:
                     task_id, objective, success_criteria_json, requirements_json,
                     status, current_plan_json, linked_project_id, linked_task_id,
                     linked_milestone_id, linked_goal_id, authority_snapshot_ref,
-                    authority_snapshot_hash, created_at, updated_at
-                ) values (?, ?, ?, ?, 'running', '{}', ?, ?, ?, ?, ?, ?, ?, ?)
+                    authority_snapshot_hash, restrictions_json, authority_scope_json,
+                    approval_state_json, lifecycle_state, active_attempt_id,
+                    created_at, updated_at
+                ) values (?, ?, ?, ?, 'running', '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    'waiting_for_worker', ?, ?, ?)
                 """,
                 (
                     spec.task_id,
@@ -87,10 +124,15 @@ class ExecutionLedger:
                     spec.linked_goal_id,
                     spec.authority_snapshot_ref,
                     spec.authority_snapshot_hash,
+                    _json(spec.restrictions),
+                    _json(spec.authority_scope),
+                    _json(spec.approval_state),
+                    attempt_id,
                     now,
                     now,
                 ),
             )
+            self._initialization_boundary("task_inserted")
             self._insert_attempt(
                 connection,
                 attempt_id=attempt_id,
@@ -102,25 +144,23 @@ class ExecutionLedger:
                 provenance=clean_provenance,
                 now=now,
             )
-        initial = CheckpointState(
-            objective=spec.objective,
-            success_criteria=spec.success_criteria,
-            next_recommended_action="Create and validate the first bounded execution plan.",
-            provider={
-                "executor_id": executor_id,
-                "backend_id": backend_id,
-                "model_ref": model_ref,
-            },
-            provenance=clean_provenance,
-        )
-        self.record_boundary(
-            task_id=spec.task_id,
-            attempt_id=attempt_id,
-            trigger="task_accepted",
-            event_type="task.accepted",
-            state=initial,
-            event_payload={"task_spec": spec.to_dict()},
-        )
+            self._initialization_boundary("attempt_inserted")
+            self._insert_boundary(
+                connection,
+                checkpoint_id=f"checkpoint-{uuid4()}",
+                event_id=f"event-{uuid4()}",
+                task_id=spec.task_id,
+                attempt_id=attempt_id,
+                trigger="task_accepted",
+                event_type="task.accepted",
+                state_payload=sanitize_payload(asdict(initial)),
+                event_payload=sanitize_payload({"task_spec": spec.to_dict()}),
+                idempotency_key=f"task-initialized:{spec.task_id}",
+                now=now,
+                initialization=True,
+                initialization_hook=self.initialization_hook,
+            )
+            self._initialization_boundary("initialization_complete")
         return spec.task_id, attempt_id
 
     def start_attempt(
@@ -164,97 +204,20 @@ class ExecutionLedger:
         event_id = f"event-{uuid4()}"
         now = _now_iso()
         state_payload = sanitize_payload(asdict(state))
-        payload_hash = hashlib.sha256(_json(state_payload).encode("utf-8")).hexdigest()
         clean_event = sanitize_payload(event_payload or {})
         with self._transaction() as connection:
-            task = self._require_task(connection, task_id)
-            attempt = connection.execute(
-                "select * from ari_execution_attempts where attempt_id = ? and task_id = ?",
-                (attempt_id, task_id),
-            ).fetchone()
-            if attempt is None:
-                raise ValueError(f"Attempt {attempt_id} does not belong to task {task_id}.")
-            checkpoint_sequence = self._next_sequence(
-                connection, "ari_execution_checkpoints", task_id
-            )
-            event_sequence = self._next_sequence(connection, "ari_execution_events", task_id)
-            parent_id = task["latest_checkpoint_id"]
-            connection.execute(
-                """
-                insert into ari_execution_events (
-                    event_id, task_id, attempt_id, sequence, event_type,
-                    idempotency_key, payload_json, provenance_json, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    task_id,
-                    attempt_id,
-                    event_sequence,
-                    event_type,
-                    idempotency_key,
-                    _json(clean_event),
-                    _json(state_payload["provenance"]),
-                    now,
-                ),
-            )
-            connection.execute(
-                """
-                insert into ari_execution_checkpoints (
-                    checkpoint_id, task_id, attempt_id, sequence, trigger, objective,
-                    success_criteria_json, current_plan_json, completed_steps_json,
-                    pending_steps_json, important_findings_json, assumptions_json,
-                    decisions_json, artifacts_json, actions_taken_json,
-                    verification_results_json, errors_json, provider_json,
-                    capacity_observations_json, next_recommended_action,
-                    authority_snapshot_ref, authority_snapshot_hash,
-                    parent_checkpoint_id, payload_sha256, provenance_json, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    checkpoint_id,
-                    task_id,
-                    attempt_id,
-                    checkpoint_sequence,
-                    trigger,
-                    state_payload["objective"],
-                    _json(state_payload["success_criteria"]),
-                    _json(state_payload["current_plan"]),
-                    _json(state_payload["completed_steps"]),
-                    _json(state_payload["pending_steps"]),
-                    _json(state_payload["important_findings"]),
-                    _json(state_payload["assumptions"]),
-                    _json(state_payload["decisions"]),
-                    _json(state_payload["artifacts"]),
-                    _json(state_payload["actions_taken"]),
-                    _json(state_payload["verification_results"]),
-                    _json(state_payload["errors"]),
-                    _json(state_payload["provider"]),
-                    _json(state_payload["capacity_observations"]),
-                    state_payload["next_recommended_action"],
-                    task["authority_snapshot_ref"],
-                    task["authority_snapshot_hash"],
-                    parent_id,
-                    payload_hash,
-                    _json(state_payload["provenance"]),
-                    now,
-                ),
-            )
-            connection.execute(
-                """
-                update ari_execution_tasks
-                set current_plan_json = ?, plan_revision = plan_revision + ?,
-                    latest_checkpoint_id = ?, updated_at = ?,
-                    row_version = row_version + 1
-                where task_id = ?
-                """,
-                (
-                    _json(state_payload["current_plan"]),
-                    int(trigger in {"plan_created", "plan_revised"}),
-                    checkpoint_id,
-                    now,
-                    task_id,
-                ),
+            self._insert_boundary(
+                connection,
+                checkpoint_id=checkpoint_id,
+                event_id=event_id,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                trigger=trigger,
+                event_type=event_type,
+                state_payload=state_payload,
+                event_payload=clean_event,
+                idempotency_key=idempotency_key,
+                now=now,
             )
         checkpoint = self.get_checkpoint(checkpoint_id)
         assert checkpoint is not None
@@ -273,6 +236,20 @@ class ExecutionLedger:
         payload = sanitize_payload(result.to_dict())
         if payload["task_id"] != task_id:
             raise ValueError("Result task_id must match the canonical execution task.")
+        attempt_lifecycle = (
+            AttemptLifecycleState.SUCCEEDED
+            if payload["status"] == "completed"
+            else AttemptLifecycleState.CANCELLED
+            if payload["status"] == "cancelled"
+            else AttemptLifecycleState.FAILED
+        )
+        task_lifecycle = (
+            TaskLifecycleState.SUCCEEDED
+            if payload["status"] == "completed"
+            else TaskLifecycleState.CANCELLED
+            if payload["status"] == "cancelled"
+            else TaskLifecycleState.FAILED
+        )
         with self._transaction() as connection:
             self._require_task(connection, task_id)
             event_sequence = self._next_sequence(connection, "ari_execution_events", task_id)
@@ -330,16 +307,21 @@ class ExecutionLedger:
                 ),
             )
             connection.execute(
-                "update ari_execution_attempts set status = ?, ended_at = ? where attempt_id = ?",
-                (payload["status"], now, attempt_id),
+                """
+                update ari_execution_attempts
+                set status = ?, lifecycle_state = ?, ended_at = ?
+                where attempt_id = ?
+                """,
+                (payload["status"], attempt_lifecycle, now, attempt_id),
             )
             connection.execute(
                 """
                 update ari_execution_tasks
-                set status = ?, result_id = ?, updated_at = ?, row_version = row_version + 1
+                set status = ?, lifecycle_state = ?, result_id = ?, updated_at = ?,
+                    row_version = row_version + 1
                 where task_id = ?
                 """,
-                (payload["status"], result_id, now, task_id),
+                (payload["status"], task_lifecycle, result_id, now, task_id),
             )
         stored = self.get_result(task_id)
         assert stored is not None
@@ -431,6 +413,131 @@ class ExecutionLedger:
         return int(row["next_sequence"])
 
     @staticmethod
+    def _insert_boundary(
+        connection: sqlite3.Connection,
+        *,
+        checkpoint_id: str,
+        event_id: str,
+        task_id: str,
+        attempt_id: str,
+        trigger: str,
+        event_type: str,
+        state_payload: dict[str, Any],
+        event_payload: dict[str, Any],
+        idempotency_key: str | None,
+        now: str,
+        initialization: bool = False,
+        initialization_hook: Callable[[str], None] | None = None,
+    ) -> None:
+        task = ExecutionLedger._require_task(connection, task_id)
+        attempt = connection.execute(
+            "select * from ari_execution_attempts where attempt_id = ? and task_id = ?",
+            (attempt_id, task_id),
+        ).fetchone()
+        if attempt is None:
+            raise ValueError(f"Attempt {attempt_id} does not belong to task {task_id}.")
+        checkpoint_sequence = ExecutionLedger._next_sequence(
+            connection, "ari_execution_checkpoints", task_id
+        )
+        event_sequence = ExecutionLedger._next_sequence(
+            connection, "ari_execution_events", task_id
+        )
+        parent_id = task["latest_checkpoint_id"]
+        payload_hash = hashlib.sha256(_json(state_payload).encode("utf-8")).hexdigest()
+        connection.execute(
+            """
+            insert into ari_execution_events (
+                event_id, task_id, attempt_id, sequence, event_type,
+                idempotency_key, payload_json, provenance_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                task_id,
+                attempt_id,
+                event_sequence,
+                event_type,
+                idempotency_key,
+                _json(event_payload),
+                _json(state_payload["provenance"]),
+                now,
+            ),
+        )
+        if initialization and initialization_hook is not None:
+            initialization_hook("event_inserted")
+        connection.execute(
+            """
+            insert into ari_execution_checkpoints (
+                checkpoint_id, task_id, attempt_id, sequence, trigger, objective,
+                success_criteria_json, current_plan_json, completed_steps_json,
+                pending_steps_json, important_findings_json, assumptions_json,
+                decisions_json, artifacts_json, actions_taken_json,
+                verification_results_json, errors_json, provider_json,
+                capacity_observations_json, next_recommended_action,
+                authority_snapshot_ref, authority_snapshot_hash, restrictions_json,
+                authority_scope_json, approval_state_json, parent_checkpoint_id,
+                payload_sha256, provenance_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                checkpoint_id,
+                task_id,
+                attempt_id,
+                checkpoint_sequence,
+                trigger,
+                state_payload["objective"],
+                _json(state_payload["success_criteria"]),
+                _json(state_payload["current_plan"]),
+                _json(state_payload["completed_steps"]),
+                _json(state_payload["pending_steps"]),
+                _json(state_payload["important_findings"]),
+                _json(state_payload["assumptions"]),
+                _json(state_payload["decisions"]),
+                _json(state_payload["artifacts"]),
+                _json(state_payload["actions_taken"]),
+                _json(state_payload["verification_results"]),
+                _json(state_payload["errors"]),
+                _json(state_payload["provider"]),
+                _json(state_payload["capacity_observations"]),
+                state_payload["next_recommended_action"],
+                task["authority_snapshot_ref"],
+                task["authority_snapshot_hash"],
+                _json(state_payload["restrictions"]),
+                _json(state_payload["authority_scope"]),
+                _json(state_payload["approval_state"]),
+                parent_id,
+                payload_hash,
+                _json(state_payload["provenance"]),
+                now,
+            ),
+        )
+        if initialization and initialization_hook is not None:
+            initialization_hook("checkpoint_inserted")
+        connection.execute(
+            """
+            update ari_execution_tasks
+            set current_plan_json = ?, plan_revision = plan_revision + ?,
+                latest_checkpoint_id = ?, updated_at = ?,
+                row_version = row_version + 1
+            where task_id = ?
+            """,
+            (
+                _json(state_payload["current_plan"]),
+                int(trigger in {"plan_created", "plan_revised"}),
+                checkpoint_id,
+                now,
+                task_id,
+            ),
+        )
+        if initialization and initialization_hook is not None:
+            initialization_hook("task_linked")
+
+    def _initialization_boundary(self, stage: str) -> None:
+        if self.initialization_hook is not None:
+            self.initialization_hook(stage)
+
+    @staticmethod
     def _insert_attempt(
         connection: sqlite3.Connection,
         *,
@@ -447,8 +554,8 @@ class ExecutionLedger:
             """
             insert into ari_execution_attempts (
                 attempt_id, task_id, executor_id, backend_id, model_ref, status,
-                continuation_checkpoint_id, provenance_json, started_at
-            ) values (?, ?, ?, ?, ?, 'running', ?, ?, ?)
+                continuation_checkpoint_id, provenance_json, started_at, lifecycle_state
+            ) values (?, ?, ?, ?, ?, 'running', ?, ?, ?, 'waiting_for_worker')
             """,
             (
                 attempt_id,

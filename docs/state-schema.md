@@ -160,12 +160,22 @@ The provider-neutral continuity ledger adds:
 - `ari_execution_checkpoints` — append-only normalized recovery state
 - `ari_execution_events` — append-only per-task ordered lifecycle facts
 - `ari_execution_results` — one common terminal result contract per task
+- `ari_execution_worker_heartbeats` — durable lease-renewal observations
+- `ari_execution_continuation_packets` — canonical recovery input for one
+  replacement attempt
+- `ari_execution_continuation_acknowledgements` — replacement-worker evidence
+  required before execution-ready state
 
 Events and checkpoints use independent monotonic task sequences and are committed
 together at each boundary. A checkpoint contains completed and pending steps,
 findings, assumptions, decisions, artifacts, actions, verification, errors,
 provider observations, next action, authority references, and provenance. Stored
 payloads redact common secret fields and bound large output.
+
+Migration `0002_execution_sessions` adds explicit task and attempt lifecycle
+state, lease ownership/timestamps, prior/replacement attempt links, restrictions,
+authority scope, approval state, continuation references, and recovery reasons.
+See [Execution Session Recovery](execution/session-recovery.md).
 
 The legacy runtime execution records remain available during compatibility work;
 they are not a second canonical task state.

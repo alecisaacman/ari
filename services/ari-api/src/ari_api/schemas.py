@@ -647,6 +647,9 @@ class ExecutionGoalRequest(APIModel):
     linkedGoalId: str | None = None
     authoritySnapshotRef: str | None = None
     authoritySnapshotHash: str | None = None
+    restrictions: list[str] = Field(default_factory=list)
+    authorityScope: dict[str, Any] = Field(default_factory=dict)
+    approvalState: dict[str, Any] = Field(default_factory=dict)
 
 
 class CodingLoopGoalRequest(APIModel):

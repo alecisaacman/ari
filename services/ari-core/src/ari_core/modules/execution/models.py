@@ -39,6 +39,9 @@ class ExecutionGoal:
     linked_goal_id: str | None = None
     authority_snapshot_ref: str | None = None
     authority_snapshot_hash: str | None = None
+    restrictions: tuple[str, ...] = ()
+    authority_scope: dict[str, Any] = field(default_factory=dict)
+    approval_state: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

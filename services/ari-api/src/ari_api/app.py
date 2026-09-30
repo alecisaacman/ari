@@ -82,8 +82,8 @@ from ari_core.modules.execution.inspection import (
     list_execution_plan_previews,
     list_execution_runs,
 )
-from ari_core.modules.execution.ledger import ExecutionLedger
 from ari_core.modules.execution.models import ExecutionGoal
+from ari_core.modules.execution.session import ExecutionSessionManager
 from ari_core.modules.execution.tools import get_execution_tool_registry
 from ari_core.modules.memory.capture import (
     capture_coding_loop_chain_lifecycle_memory,
@@ -870,6 +870,9 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                     linked_goal_id=payload.linkedGoalId,
                     authority_snapshot_ref=payload.authoritySnapshotRef,
                     authority_snapshot_hash=payload.authoritySnapshotHash,
+                    restrictions=tuple(payload.restrictions),
+                    authority_scope=payload.authorityScope,
+                    approval_state=payload.approvalState,
                 ),
                 planner_mode=payload.planner,
             ).to_dict()
@@ -891,6 +894,9 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                     linked_goal_id=payload.linkedGoalId,
                     authority_snapshot_ref=payload.authoritySnapshotRef,
                     authority_snapshot_hash=payload.authoritySnapshotHash,
+                    restrictions=tuple(payload.restrictions),
+                    authority_scope=payload.authorityScope,
+                    approval_state=payload.approvalState,
                 ),
                 planner_mode=payload.planner,
             )
@@ -1129,7 +1135,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
 
     @app.get("/execution/tasks/{task_id}")
     def execution_task(task_id: str) -> dict[str, Any]:
-        task = ExecutionLedger().get_task_bundle(task_id)
+        task = ExecutionSessionManager().inspect_task(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail=f"Execution task {task_id} not found.")
         return {"execution_task": task}

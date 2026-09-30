@@ -50,6 +50,49 @@ def test_task_creation_produces_initial_durable_checkpoint(tmp_path: Path) -> No
     assert bundle["events"][0]["event_type"] == "task.accepted"
 
 
+@pytest.mark.parametrize(
+    "failure_stage",
+    [
+        "task_inserted",
+        "attempt_inserted",
+        "event_inserted",
+        "checkpoint_inserted",
+        "task_linked",
+        "initialization_complete",
+    ],
+)
+def test_task_initialization_rolls_back_at_every_boundary(
+    tmp_path: Path,
+    failure_stage: str,
+) -> None:
+    db_path = tmp_path / failure_stage / "ari.db"
+
+    def fail_at_boundary(stage: str) -> None:
+        if stage == failure_stage:
+            raise RuntimeError(f"injected initialization failure at {stage}")
+
+    ledger = ExecutionLedger(db_path, initialization_hook=fail_at_boundary)
+    with pytest.raises(RuntimeError, match="injected initialization failure"):
+        _create_ledger_task(ledger)
+
+    with get_connection(db_path) as connection:
+        counts = {
+            table: connection.execute(f"select count(*) from {table}").fetchone()[0]
+            for table in (
+                "ari_execution_tasks",
+                "ari_execution_attempts",
+                "ari_execution_events",
+                "ari_execution_checkpoints",
+            )
+        }
+    assert counts == {
+        "ari_execution_tasks": 0,
+        "ari_execution_attempts": 0,
+        "ari_execution_events": 0,
+        "ari_execution_checkpoints": 0,
+    }
+
+
 def test_schema_migration_is_versioned_and_idempotent(tmp_path: Path) -> None:
     db_path = tmp_path / "state" / "ari.db"
 
@@ -66,7 +109,10 @@ def test_schema_migration_is_versioned_and_idempotent(tmp_path: Path) -> None:
                 "select name from sqlite_master where type = 'table'"
             ).fetchall()
         }
-    assert [row["version"] for row in migrations] == ["0001_execution_fabric"]
+    assert [row["version"] for row in migrations] == [
+        "0001_execution_fabric",
+        "0002_execution_sessions",
+    ]
     assert len(migrations[0]["checksum"]) == 64
     assert {
         "ari_execution_tasks",

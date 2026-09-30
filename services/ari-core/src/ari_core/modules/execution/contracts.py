@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from typing import Any
 
 
@@ -16,6 +17,9 @@ class ExecutionTaskSpec:
     linked_goal_id: str | None = None
     authority_snapshot_ref: str | None = None
     authority_snapshot_hash: str | None = None
+    restrictions: tuple[str, ...] = ()
+    authority_scope: dict[str, Any] = field(default_factory=dict)
+    approval_state: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -39,6 +43,9 @@ class CheckpointState:
     capacity_observations: tuple[dict[str, Any], ...] = ()
     next_recommended_action: str | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
+    restrictions: tuple[str, ...] = ()
+    authority_scope: dict[str, Any] = field(default_factory=dict)
+    approval_state: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,3 +69,133 @@ class ExecutionResultContract:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+class TaskLifecycleState(StrEnum):
+    ACTIVE = "active"
+    WAITING_FOR_WORKER = "waiting_for_worker"
+    RECOVERING = "recovering"
+    AWAITING_CONTINUATION_ACKNOWLEDGEMENT = "awaiting_continuation_acknowledgement"
+    EXECUTION_READY = "execution_ready"
+    AWAITING_APPROVAL = "awaiting_approval"
+    BLOCKED = "blocked"
+    PAUSED = "paused"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AttemptLifecycleState(StrEnum):
+    ACTIVE = "active"
+    WAITING_FOR_WORKER = "waiting_for_worker"
+    STALE = "stale"
+    RECOVERING = "recovering"
+    AWAITING_CONTINUATION_ACKNOWLEDGEMENT = "awaiting_continuation_acknowledgement"
+    EXECUTION_READY = "execution_ready"
+    AWAITING_APPROVAL = "awaiting_approval"
+    BLOCKED = "blocked"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class RecoveryClassification(StrEnum):
+    HEALTHY = "healthy"
+    WAITING_FOR_WORKER = "waiting_for_worker"
+    STALE = "stale"
+    TERMINAL = "terminal"
+    AWAITING_APPROVAL = "awaiting_approval"
+    BLOCKED = "blocked"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
+    RECOVERABLE = "recoverable"
+    UNRECOVERABLE = "unrecoverable"
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerLease:
+    owner: str
+    started_at: str
+    expires_at: str
+    last_seen_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerSession:
+    session_id: str
+    task_id: str
+    attempt_id: str
+    worker_identity: str
+    backend_id: str
+    state: AttemptLifecycleState
+    lease: WorkerLease
+    prior_attempt_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerHeartbeat:
+    heartbeat_id: str
+    task_id: str
+    attempt_id: str
+    session_id: str
+    lease_owner: str
+    observed_at: str
+    lease_expires_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuationPacket:
+    packet_id: str
+    task_id: str
+    attempt_id: str
+    prior_attempt_id: str
+    checkpoint_id: str
+    objective: str
+    success_criteria: tuple[str, ...]
+    current_plan: dict[str, Any]
+    completed_steps: tuple[dict[str, Any], ...]
+    pending_steps: tuple[dict[str, Any], ...]
+    important_findings: tuple[dict[str, Any], ...]
+    assumptions: tuple[dict[str, Any], ...]
+    decisions: tuple[dict[str, Any], ...]
+    artifacts: tuple[dict[str, Any], ...]
+    actions_taken: tuple[dict[str, Any], ...]
+    verification_results: tuple[dict[str, Any], ...]
+    restrictions: tuple[str, ...]
+    authority_scope: dict[str, Any]
+    approval_state: dict[str, Any]
+    authority_snapshot_ref: str | None
+    authority_snapshot_hash: str | None
+    prior_attempt_provenance: dict[str, Any]
+    recovery_reason: str
+    recommended_next_action: str | None
+    acknowledgement_required: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuationAcknowledgement:
+    objective: str
+    completed_steps: tuple[dict[str, Any], ...]
+    pending_steps: tuple[dict[str, Any], ...]
+    restrictions: tuple[str, ...]
+    authority_scope: dict[str, Any]
+    authority_snapshot_ref: str | None
+    next_proposed_action: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptRecoveryDecision:
+    task_id: str
+    attempt_id: str
+    classification: RecoveryClassification
+    reason: str
+    recoverable: bool
+    latest_checkpoint_id: str | None
+    replacement_attempt_id: str | None = None
+    continuation_packet_id: str | None = None

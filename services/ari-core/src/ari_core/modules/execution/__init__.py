@@ -28,7 +28,20 @@ from .coding_loop import (
     store_coding_loop_retry_approval,
 )
 from .command_policy import CommandPolicyResult, validate_command
-from .contracts import CheckpointState, ExecutionResultContract, ExecutionTaskSpec
+from .contracts import (
+    AttemptLifecycleState,
+    AttemptRecoveryDecision,
+    CheckpointState,
+    ContinuationAcknowledgement,
+    ContinuationPacket,
+    ExecutionResultContract,
+    ExecutionTaskSpec,
+    RecoveryClassification,
+    TaskLifecycleState,
+    WorkerHeartbeat,
+    WorkerLease,
+    WorkerSession,
+)
 from .controller import (
     ExecutionController,
     build_repo_context,
@@ -58,11 +71,13 @@ from .planners import (
     resolve_execution_planner,
 )
 from .sandbox import ExecutionRoot
+from .session import ExecutionSessionManager
 from .tools import ExecutionTool, ExecutionToolRegistry, get_execution_tool_registry
 
 __all__ = [
     "ExecutionController",
     "ExecutionLedger",
+    "ExecutionSessionManager",
     "ExecutionGoal",
     "ExecutionPlanner",
     "ExecutionRoot",
@@ -71,6 +86,15 @@ __all__ = [
     "ExecutionRun",
     "ExecutionTaskSpec",
     "CheckpointState",
+    "AttemptLifecycleState",
+    "AttemptRecoveryDecision",
+    "ContinuationAcknowledgement",
+    "ContinuationPacket",
+    "RecoveryClassification",
+    "TaskLifecycleState",
+    "WorkerHeartbeat",
+    "WorkerLease",
+    "WorkerSession",
     "ExecutionTool",
     "ExecutionToolRegistry",
     "FailureContext",

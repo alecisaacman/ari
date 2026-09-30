@@ -610,6 +610,11 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         )
         assert execution_task_payload["checkpoints"][-1]["trigger"] == "execution_terminal"
         assert execution_task_payload["result"]["status"] == "completed"
+        assert execution_task_payload["session"]["active_attempt_id"] == goal.json()[
+            "attempt_id"
+        ]
+        assert execution_task_payload["session"]["lease_classification"] == "terminal"
+        assert execution_task_payload["session"]["execution_resumed"] is False
 
         tools = client.get("/execution/tools")
         assert tools.status_code == 200

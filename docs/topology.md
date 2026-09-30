@@ -15,6 +15,8 @@
 - The terminal-facing default identity is `ari`, which routes natural-language goals into canonical runtime paths.
 - Codex is currently an external worker ARI can invoke locally inside bounded loops.
 - Provider routing and automatic failover are not implemented yet.
+- The current backend uses an ARI-owned lease and continuation handshake; a stale
+  session can be reconstructed but cannot automatically resume side effects.
 
 ## Local-First Execution Model
 
