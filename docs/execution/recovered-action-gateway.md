@@ -56,6 +56,8 @@ action digest. Its durable states are:
 - `effect_may_have_occurred`
 - `verification_failed`
 - `already_completed` (derived from the canonical checkpoint)
+- `effect_confirmed` and `effect_confirmed_absent` (set only by
+  [uncertain-effect reconciliation](effect-reconciliation.md))
 
 Dispatch is reserved before the tool runs. A duplicate or concurrent request
 cannot reserve the same key; it receives a durable `deny` decision. Exceptions
@@ -63,10 +65,15 @@ after dispatch are recorded as uncertain and are never blindly retried.
 
 Idempotency is governed per canonical `action_id`, not only per digest. The exact
 key always governs; otherwise any earlier execution of the same `action_id`
-governs unless it stopped before effect. A revised plan digest therefore cannot
-re-run an action whose effect is executing, uncertain, unverified, or succeeded.
-An action that stopped before effect can run only under a new digest, meaning an
-explicit canonical plan revision.
+governs unless it stopped before effect or its effect was reconciled as
+confirmed absent. A revised plan digest therefore cannot re-run an action whose
+effect is executing, uncertain, unverified, confirmed, or succeeded. An action
+that stopped before effect, or was confirmed absent, can run only under a new
+digest, meaning an explicit canonical plan revision.
+
+A superseded attempt that reports after its execution was reconciled cannot
+overwrite that truth. The report is recorded as an event, and a confirmed-absent
+effect returns to uncertain.
 
 When the reserving attempt has been superseded, ARI derives and persists its
 state for the replacement worker:
@@ -99,11 +106,11 @@ they do not yet share this decision/idempotency/checkpoint sequence.
   both are checked immediately before dispatch but are not one database transaction.
 - API caller authentication and proof that `approvedBy` represents Alec remain an
   outer service/authentication concern.
-- Uncertain effects require human or future reconciliation evidence; this slice
-  deliberately does not infer or retry them.
+- Uncertain and unverified effects are resolved only by explicit
+  [reconciliation](effect-reconciliation.md); the gateway never infers or retries them.
 - `failed_before_effect` for an unchanged digest stays denied. Re-running it
   requires a canonical plan revision or a future explicit retry design.
 - A crash after `executing` commits always resolves to uncertainty, even when the
-  result was already recorded. Reconciliation is left to a human or a later slice.
+  result was already recorded, until it is reconciled.
 - The gateway uses the current backend only. Provider routing and failover are not
   part of this slice.

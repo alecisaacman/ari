@@ -35,8 +35,12 @@ from .contracts import (
     CheckpointState,
     ContinuationAcknowledgement,
     ContinuationPacket,
+    EffectReconciliationOutcome,
+    EffectReconciliationResult,
+    EvidenceIndication,
     ExecutionResultContract,
     ExecutionTaskSpec,
+    ReconciliationEvidence,
     RecoveredActionProposal,
     RecoveredActionResumeResult,
     RecoveryClassification,
@@ -75,6 +79,7 @@ from .planners import (
     RuleBasedPlanner,
     resolve_execution_planner,
 )
+from .reconciliation import EffectReconciler, ReconciliationRefused
 from .sandbox import ExecutionRoot
 from .session import ExecutionSessionManager
 from .tools import ExecutionTool, ExecutionToolRegistry, get_execution_tool_registry
@@ -84,6 +89,12 @@ __all__ = [
     "ExecutionLedger",
     "ExecutionSessionManager",
     "RecoveredActionGateway",
+    "EffectReconciler",
+    "EffectReconciliationOutcome",
+    "EffectReconciliationResult",
+    "EvidenceIndication",
+    "ReconciliationEvidence",
+    "ReconciliationRefused",
     "ExecutionGoal",
     "ExecutionPlanner",
     "ExecutionRoot",

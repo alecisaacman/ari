@@ -128,6 +128,102 @@ class ActionIdempotencyState(StrEnum):
     EFFECT_UNCERTAIN = "effect_may_have_occurred"
     VERIFICATION_FAILED = "verification_failed"
     ALREADY_COMPLETED = "already_completed"
+    EFFECT_CONFIRMED = "effect_confirmed"
+    EFFECT_CONFIRMED_ABSENT = "effect_confirmed_absent"
+
+
+class EffectReconciliationOutcome(StrEnum):
+    EFFECT_CONFIRMED = "effect_confirmed"
+    EFFECT_CONFIRMED_ABSENT = "effect_confirmed_absent"
+    INCONCLUSIVE = "inconclusive"
+
+
+class EvidenceIndication(StrEnum):
+    EFFECT_PRESENT = "effect_present"
+    EFFECT_ABSENT = "effect_absent"
+    INCONCLUSIVE = "inconclusive"
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationEvidence:
+    """One observation about whether an uncertain external effect occurred."""
+
+    kind: str
+    summary: str
+    indicates: EvidenceIndication
+    reference: str | None = None
+    observed_at: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_value(cls, value: Any) -> ReconciliationEvidence:
+        """Normalize one evidence item, refusing anything malformed."""
+        if isinstance(value, ReconciliationEvidence):
+            item = value
+        elif isinstance(value, dict):
+            unknown = set(value) - {
+                "kind",
+                "summary",
+                "indicates",
+                "reference",
+                "observed_at",
+                "details",
+            }
+            if unknown:
+                raise ValueError(f"Evidence has unknown fields: {sorted(unknown)}.")
+            try:
+                indicates = EvidenceIndication(str(value.get("indicates")))
+            except ValueError as error:
+                raise ValueError(
+                    "Evidence indicates must be effect_present, effect_absent, or inconclusive."
+                ) from error
+            item = cls(
+                kind=value.get("kind"),  # type: ignore[arg-type]
+                summary=value.get("summary"),  # type: ignore[arg-type]
+                indicates=indicates,
+                reference=value.get("reference"),
+                observed_at=value.get("observed_at"),
+                details=value.get("details") or {},
+            )
+        else:
+            raise ValueError("Each evidence item must be a mapping or ReconciliationEvidence.")
+        if not isinstance(item.kind, str) or not item.kind.strip():
+            raise ValueError("Evidence kind is required.")
+        if not isinstance(item.summary, str) or not item.summary.strip():
+            raise ValueError("Evidence summary is required.")
+        if not isinstance(item.indicates, EvidenceIndication):
+            raise ValueError("Evidence indicates must be an EvidenceIndication.")
+        for name in ("reference", "observed_at"):
+            optional = getattr(item, name)
+            if optional is not None and (not isinstance(optional, str) or not optional.strip()):
+                raise ValueError(f"Evidence {name} must be a non-empty string when given.")
+        if not isinstance(item.details, dict):
+            raise ValueError("Evidence details must be a mapping.")
+        return item
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class EffectReconciliationResult:
+    reconciliation_id: str
+    task_id: str
+    execution_id: str
+    action_id: str
+    attempt_id: str
+    requested_outcome: EffectReconciliationOutcome
+    outcome: EffectReconciliationOutcome
+    previous_state: ActionIdempotencyState
+    resulting_state: ActionIdempotencyState
+    transitioned: bool
+    duplicate: bool
+    retry_eligible: bool
+    assessment: str
+    checkpoint_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)

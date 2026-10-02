@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict
@@ -33,6 +34,20 @@ BeforeExecuteHook = Callable[[RecoveredActionProposal], None]
 _SUPERSEDED_REASON = (
     "The attempt was superseded while the action ran; its result is recorded as evidence "
     "only and the effect requires reconciliation before any retry."
+)
+_RECONCILED_STATES = frozenset(
+    {
+        ActionIdempotencyState.EFFECT_CONFIRMED,
+        ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT,
+    }
+)
+# States that prove an earlier execution of the same action_id left no effect, so a
+# separately authorized canonical plan revision (a new digest) may run it again.
+_NO_EFFECT_STATES = frozenset(
+    {
+        ActionIdempotencyState.FAILED_BEFORE_EFFECT,
+        ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT,
+    }
 )
 
 
@@ -953,6 +968,10 @@ class RecoveredActionGateway:
         now = self._now()
         with self.ledger._transaction() as connection:
             if not self._owns_execution(connection, proposal, execution_id):
+                if self._late_evidence_after_reconciliation(
+                    connection, proposal, execution_id, now=now, result=action_result
+                ):
+                    return None
                 self._set_execution(
                     connection,
                     execution_id,
@@ -1015,6 +1034,15 @@ class RecoveredActionGateway:
         verified = bool(verification["verified"])
         with self.ledger._transaction() as connection:
             if not self._owns_execution(connection, proposal, execution_id):
+                if self._late_evidence_after_reconciliation(
+                    connection,
+                    proposal,
+                    execution_id,
+                    now=now,
+                    result=action_result,
+                    verification=verification,
+                ):
+                    return None
                 self._set_execution(
                     connection,
                     execution_id,
@@ -1118,6 +1146,10 @@ class RecoveredActionGateway:
         now = self._now()
         with self.ledger._transaction() as connection:
             owned = self._owns_execution(connection, proposal, execution_id)
+            if not owned and self._late_evidence_after_reconciliation(
+                connection, proposal, execution_id, now=now, error=error
+            ):
+                return None
             self._set_execution(
                 connection,
                 execution_id,
@@ -1164,6 +1196,65 @@ class RecoveredActionGateway:
             and execution["state"] == ActionIdempotencyState.EXECUTING
             and task["active_attempt_id"] == proposal.attempt_id
         )
+
+    def _late_evidence_after_reconciliation(
+        self,
+        connection: sqlite3.Connection,
+        proposal: RecoveredActionProposal,
+        execution_id: str,
+        *,
+        now: datetime,
+        result: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> bool:
+        """Keep a superseded attempt's late report from overwriting reconciled truth.
+
+        The late report is recorded as an event. A late report on an effect confirmed
+        absent contradicts that reconciliation, so the action returns to uncertain and
+        blocks any retry until it is reconciled again.
+        """
+        row = connection.execute(
+            "select state, error_json from ari_execution_action_executions where execution_id = ?",
+            (execution_id,),
+        ).fetchone()
+        if row is None or row["state"] not in _RECONCILED_STATES:
+            return False
+        reopened = row["state"] == ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT
+        if reopened:
+            self._set_execution(
+                connection,
+                execution_id,
+                now=now,
+                state=ActionIdempotencyState.EFFECT_UNCERTAIN,
+                effect_status="late_report_contradicts_reconciliation",
+                error={
+                    "reason": "A superseded attempt reported on this action after its "
+                    "effect was confirmed absent; the effect is uncertain again.",
+                    "late_error": error,
+                    "previous_error": (
+                        None if row["error_json"] is None else json.loads(row["error_json"])
+                    ),
+                },
+            )
+        self._insert_event(
+            connection,
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            event_type="action.late_report_after_reconciliation",
+            payload={
+                "execution_id": execution_id,
+                "action_id": proposal.action_id,
+                "reconciled_state": row["state"],
+                "reopened_as_uncertain": reopened,
+                "result": result,
+                "verification": verification,
+                "error": error,
+            },
+            provenance={"authority": "ari", "operation": "late_report_after_reconciliation"},
+            now=now,
+        )
+        return True
 
     def _insert_checkpoint(
         self,
@@ -1624,15 +1715,16 @@ class RecoveredActionGateway:
         """Pick the execution record that decides whether this action may dispatch.
 
         The exact idempotency key always governs. Otherwise any earlier execution of the
-        same canonical action_id governs unless it provably stopped before effect, so a
-        revised digest cannot re-run an action whose effect is uncertain or unverified.
+        same canonical action_id governs unless it provably stopped before effect or its
+        effect was reconciled as confirmed absent, so a revised digest cannot re-run an
+        action whose effect is uncertain, unverified, or confirmed.
         """
         for row in rows:
             if row["idempotency_key"] == idempotency_key:
                 return row, cls._effective_state(row, attempt_id)
         for row in rows:
             state = cls._effective_state(row, attempt_id)
-            if state is not ActionIdempotencyState.FAILED_BEFORE_EFFECT:
+            if state not in _NO_EFFECT_STATES:
                 return row, state
         return None
 
@@ -1801,6 +1893,13 @@ class RecoveredActionGateway:
                 "The canonical checkpoint already marks this action complete."
             ),
             ActionIdempotencyState.NEVER_ATTEMPTED: "The action has never been attempted.",
+            ActionIdempotencyState.EFFECT_CONFIRMED: (
+                "Reconciliation confirmed the action's effect occurred; it is never re-dispatched."
+            ),
+            ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT: (
+                "Reconciliation confirmed the effect is absent; a retry requires an explicit "
+                "canonical plan revision and a new ARI decision."
+            ),
         }
         return reasons[state]
 

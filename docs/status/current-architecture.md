@@ -58,7 +58,9 @@ declare an expired worker stale, create a linked replacement attempt, reconstruc
 continuation state, and require acknowledgement. Recovery reaches
 `execution_ready`, then the recovered-action gateway can authorize and execute
 exactly one pending action. It checkpoints before dispatch, persists and verifies
-the result, and returns control to ARI before any next action.
+the result, and returns control to ARI before any next action. An effect the
+gateway cannot prove stays blocked until evidence-backed reconciliation records it
+as confirmed, confirmed absent, or still inconclusive. Reconciliation never retries.
 
 Native skills must follow `docs/skills/ari-native-skill-contract.md`: they plug
 into ARI's shared memory, authority, validation, execution, verification,

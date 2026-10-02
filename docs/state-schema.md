@@ -170,7 +170,10 @@ The provider-neutral continuity ledger adds:
 - `ari_execution_resume_decisions` — ARI allow/deny/require-approval/block
   decisions for one recovered pending action
 - `ari_execution_action_executions` — idempotency reservation, action result,
-  effect certainty, verification evidence, and checkpoint links
+  effect certainty, verification evidence, checkpoint links, and the
+  reconciliation that last resolved an uncertain effect
+- `ari_execution_effect_reconciliations` — append-only, evidence-backed
+  resolutions of uncertain or unverified external effects
 
 Events and checkpoints use independent monotonic task sequences and are committed
 together at each boundary. A checkpoint contains completed and pending steps,
@@ -186,6 +189,10 @@ See [Execution Session Recovery](execution/session-recovery.md).
 Migration `0003_recovered_action_gateway` adds the durable approval, decision,
 and idempotent execution records used by the one-action recovered execution
 boundary. See [Recovered Action Authority Gateway](execution/recovered-action-gateway.md).
+
+Migration `0004_effect_reconciliation` adds the reconciliation record and the
+execution's `reconciliation_id` link. See
+[Uncertain-Effect Reconciliation](execution/effect-reconciliation.md).
 
 The legacy runtime execution records remain available during compatibility work;
 they are not a second canonical task state.
