@@ -1,6 +1,10 @@
 import hashlib
+import os
 import shutil
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...core.paths import (
@@ -12,6 +16,25 @@ from ...core.paths import (
     SCHEMA_PATH,
     STATE_DIR,
 )
+
+LOCK_TIMEOUT_ENV = "ARI_SQLITE_LOCK_TIMEOUT_SECONDS"
+DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
+
+# Statements that would end or nest the transaction a migration runs inside.
+_TRANSACTION_CONTROL_KEYWORDS = frozenset(
+    {"begin", "commit", "end", "rollback", "savepoint", "release", "vacuum"}
+)
+
+
+class MigrationLockTimeout(RuntimeError):
+    """Another connection held the database write lock longer than ARI will wait."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Migration:
+    version: str
+    sql: str
+    checksum: str
 
 
 def ensure_runtime_dirs(db_path: Path = DB_PATH) -> None:
@@ -31,23 +54,79 @@ def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
     return connection
 
 
-def initialize_database(db_path: Path = DB_PATH, schema_path: Path = SCHEMA_PATH) -> Path:
+def initialize_database(
+    db_path: Path = DB_PATH,
+    schema_path: Path = SCHEMA_PATH,
+    migrations_dir: Path = MIGRATIONS_DIR,
+) -> Path:
+    """Bring the database to the current schema.
+
+    Every step runs in an explicit BEGIN IMMEDIATE transaction, so concurrent
+    initializers serialize on SQLite's write lock and each versioned migration commits
+    together with its `ari_schema_migrations` row or not at all.
+    """
     ensure_runtime_dirs(db_path)
     schema_sql = schema_path.read_text(encoding="utf-8")
-    with get_connection(db_path) as connection:
-        connection.executescript(schema_sql)
-        _ensure_followups_completed_at_column(connection)
-        _ensure_retry_approval_execution_columns(connection)
-        _ensure_coding_loop_result_table(connection)
-        _apply_versioned_migrations(connection)
-        connection.commit()
+    migrations = _load_migrations(migrations_dir)
+    with closing(_migration_connection(db_path)) as connection:
+        with _immediate_transaction(connection):
+            _execute_script(connection, schema_sql)
+            _ensure_followups_completed_at_column(connection)
+            _ensure_retry_approval_execution_columns(connection)
+            _ensure_coding_loop_result_table(connection)
+            _ensure_migration_table(connection)
+        _apply_versioned_migrations(connection, migrations)
     return db_path
 
 
-def _apply_versioned_migrations(
-    connection: sqlite3.Connection,
-    migrations_dir: Path = MIGRATIONS_DIR,
-) -> None:
+def _migration_connection(db_path: Path) -> sqlite3.Connection:
+    # isolation_level=None stops the sqlite3 module from opening or committing
+    # transactions on its own; the runner issues BEGIN IMMEDIATE / COMMIT explicitly.
+    connection = sqlite3.connect(db_path, timeout=_lock_timeout(), isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("pragma foreign_keys = on")
+    return connection
+
+
+def _lock_timeout() -> float:
+    raw = os.environ.get(LOCK_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_LOCK_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = 0.0
+    if not seconds > 0:
+        raise ValueError(f"{LOCK_TIMEOUT_ENV} must be a positive number of seconds: {raw!r}")
+    return seconds
+
+
+@contextmanager
+def _immediate_transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    _execute_waiting_for_lock(connection, "begin immediate")
+    try:
+        yield
+        _execute_waiting_for_lock(connection, "commit")
+    except BaseException:
+        if connection.in_transaction:
+            connection.execute("rollback")
+        raise
+
+
+def _execute_waiting_for_lock(connection: sqlite3.Connection, statement: str) -> None:
+    try:
+        connection.execute(statement)
+    except sqlite3.OperationalError as error:
+        message = str(error).lower()
+        if "locked" in message or "busy" in message:
+            raise MigrationLockTimeout(
+                f"Could not {statement} on the ARI database: the write lock was held "
+                f"longer than {_lock_timeout():g}s ({LOCK_TIMEOUT_ENV})."
+            ) from error
+        raise
+
+
+def _ensure_migration_table(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
         create table if not exists ari_schema_migrations (
@@ -58,27 +137,97 @@ def _apply_versioned_migrations(
         )
         """
     )
+
+
+def _load_migrations(migrations_dir: Path) -> list[_Migration]:
     if not migrations_dir.exists():
-        return
+        return []
+    migrations = []
+    for migration_path in sorted(migrations_dir.glob("*.sql")):
+        sql = migration_path.read_text(encoding="utf-8")
+        checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        migrations.append(_Migration(migration_path.stem, sql, checksum))
+    return migrations
+
+
+def _apply_versioned_migrations(
+    connection: sqlite3.Connection,
+    migrations: list[_Migration],
+) -> None:
+    """Apply pending migrations one transaction at a time.
+
+    Which migrations are pending is decided only while holding the write lock, so a
+    migration another process committed meanwhile is seen as applied, not re-run.
+    """
+    while True:
+        with _immediate_transaction(connection):
+            pending = _pending_migrations(connection, migrations)
+            if not pending:
+                return
+            migration = pending[0]
+            _execute_script(connection, migration.sql)
+            connection.execute(
+                "insert into ari_schema_migrations (version, checksum) values (?, ?)",
+                (migration.version, migration.checksum),
+            )
+
+
+def _pending_migrations(
+    connection: sqlite3.Connection,
+    migrations: list[_Migration],
+) -> list[_Migration]:
     applied = {
         row["version"]: row["checksum"]
         for row in connection.execute(
             "select version, checksum from ari_schema_migrations"
         ).fetchall()
     }
-    for migration_path in sorted(migrations_dir.glob("*.sql")):
-        version = migration_path.stem
-        sql = migration_path.read_text(encoding="utf-8")
-        checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-        if version in applied:
-            if applied[version] != checksum:
-                raise RuntimeError(f"Applied migration {version} has changed on disk.")
-            continue
-        connection.executescript(sql)
-        connection.execute(
-            "insert into ari_schema_migrations (version, checksum) values (?, ?)",
-            (version, checksum),
-        )
+    for migration in migrations:
+        if migration.version in applied and applied[migration.version] != migration.checksum:
+            raise RuntimeError(f"Applied migration {migration.version} has changed on disk.")
+    return [migration for migration in migrations if migration.version not in applied]
+
+
+def _execute_script(connection: sqlite3.Connection, sql: str) -> None:
+    """Run each statement of a script inside the caller's open transaction.
+
+    Unlike `executescript`, this never commits; the caller's transaction stays the
+    only unit of work.
+    """
+    for statement in _split_statements(sql):
+        keyword = _strip_leading_comments(statement).split(None, 1)[0].rstrip(";").lower()
+        if keyword in _TRANSACTION_CONTROL_KEYWORDS:
+            raise ValueError(
+                f"Schema scripts may not control the transaction they run in: {keyword}"
+            )
+        connection.execute(statement)
+
+
+def _split_statements(sql: str) -> list[str]:
+    statements: list[str] = []
+    buffer = ""
+    for character in sql:
+        buffer += character
+        if character == ";" and sqlite3.complete_statement(buffer):
+            if _strip_leading_comments(buffer).strip(" \t\r\n;"):
+                statements.append(buffer.strip())
+            buffer = ""
+    if _strip_leading_comments(buffer).strip():
+        raise ValueError("Schema script ends with an incomplete statement.")
+    return statements
+
+
+def _strip_leading_comments(text: str) -> str:
+    remaining = text.lstrip()
+    while True:
+        if remaining.startswith("--"):
+            newline = remaining.find("\n")
+            remaining = "" if newline == -1 else remaining[newline + 1 :].lstrip()
+        elif remaining.startswith("/*"):
+            end = remaining.find("*/")
+            remaining = "" if end == -1 else remaining[end + 2 :].lstrip()
+        else:
+            return remaining
 
 
 def _ensure_followups_completed_at_column(connection: sqlite3.Connection) -> None:

@@ -263,6 +263,13 @@ That remaining gap is the current product bottleneck.
 - SQLite is the durable local store.
 - `config/schema.sql` plus immutable `config/migrations/*.sql` are the canonical
   schema sources.
+- `initialize_database` applies them under explicit `BEGIN IMMEDIATE` transactions:
+  each versioned migration's statements and its `ari_schema_migrations` row commit
+  together or not at all, and which migrations are pending is decided only while
+  holding SQLite's write lock, so concurrent initializers serialize instead of
+  re-running the same migration. Migration files may not contain transaction
+  control statements. An initializer waits up to `ARI_SQLITE_LOCK_TIMEOUT_SECONDS`
+  (default 30) for the write lock, then fails with `MigrationLockTimeout`.
 - `services/ari-core` owns repository and mutation logic.
 - `services/ari-api` is the default service contract.
 - `services/ari-hub` consumes canonical state and should not become a second brain.
