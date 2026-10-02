@@ -175,7 +175,9 @@ The provider-neutral continuity ledger adds:
 - `ari_execution_effect_reconciliations` — append-only, evidence-backed
   resolutions of uncertain or unverified external effects
 - `ari_execution_dispatch_fences` — one per reserved execution: monotonic
-  per-action generation, crossing/returned/revoked/quiesced lifecycle, and the
+  per-action generation, effect terminality (`in_process`/`unbounded`),
+  issued/crossing/returned/lock_released/revoked lifecycle, the held lock's
+  path/device/inode, the landing token once landing is ruled out, and the
   recorded dispatch outcome
 
 Events and checkpoints use independent monotonic task sequences and are committed
@@ -199,7 +201,13 @@ execution's `reconciliation_id` link. See
 
 Migration `0005_dispatch_fences` adds dispatch fences and records the fence state
 on each reconciliation. Per-action dispatch lock files live in `dispatch-locks/`
-next to the database. See [Dispatch Safety Boundary](execution/dispatch-safety.md).
+next to the canonical database path. See [Dispatch Safety Boundary](execution/dispatch-safety.md).
+
+Migration `0006_redispatch_safety` renames fence state `quiesced` to
+`lock_released`. It adds effect terminality, the held lock's identity, and the
+landing token to fences. It replaces the reconciliation's `retry_eligible` with
+`redispatch_safe` plus the bound `landing_token`, and resets every legacy record
+to not safe. Legacy fences have no terminality and are treated as `unbounded`.
 
 The legacy runtime execution records remain available during compatibility work;
 they are not a second canonical task state.

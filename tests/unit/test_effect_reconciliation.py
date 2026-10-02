@@ -104,6 +104,17 @@ def _reconcile(
     )
 
 
+def _landing_token(recovered: RecoveredFixture, execution: dict[str, Any] | None = None) -> str:
+    """Rule out the dispatch landing, before any observation is made."""
+    row = execution or _execution_rows(recovered)[-1]
+    return recovered.gateway.dispatch_fences.rule_out_landing(
+        task_id=recovered.task_id,
+        execution_id=row["execution_id"],
+        proven_by="alec",
+        reason="Establish the dispatch can no longer land before observing.",
+    ).landing_token
+
+
 def _records(recovered: RecoveredFixture) -> list[dict[str, Any]]:
     return EffectReconciler(recovered.db_path).list_reconciliations(recovered.task_id)
 
@@ -136,7 +147,7 @@ def test_confirmed_effect_completes_step_and_is_never_redispatched(tmp_path: Pat
     assert result.transitioned is True
     assert result.previous_state is ActionIdempotencyState.EFFECT_UNCERTAIN
     assert result.resulting_state is ActionIdempotencyState.EFFECT_CONFIRMED
-    assert result.retry_eligible is False
+    assert result.redispatch_safe is False
     assert result.checkpoint_id == latest["checkpoint_id"]
     assert row["state"] == "effect_confirmed"
     assert row["reconciliation_id"] == result.reconciliation_id
@@ -182,15 +193,19 @@ def test_confirmed_effect_cannot_be_reopened_by_plan_revision(tmp_path: Path) ->
     assert _step_two(recovered) == "step two complete\n"
 
 
-def test_confirmed_absent_marks_retry_eligible_without_dispatching(tmp_path: Path) -> None:
+def test_post_landing_absence_is_safe_to_redispatch_without_dispatching(
+    tmp_path: Path,
+) -> None:
     recovered, calls = _uncertain(tmp_path, write=False)
 
-    result = _reconcile(recovered, ABSENT, ABSENT_EVIDENCE)
+    token = _landing_token(recovered)
+    result = _reconcile(recovered, ABSENT, ABSENT_EVIDENCE, landing_token=token)
     latest = recovered.gateway._latest_checkpoint(recovered.task_id)
 
     assert result.transitioned is True
     assert result.resulting_state is ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT
-    assert result.retry_eligible is True
+    assert result.redispatch_safe is True
+    assert result.landing_token == token
     assert len(calls) == 1  # reconciliation itself never dispatches
     assert _step_two(recovered) == "not done\n"
     assert [step["action_id"] for step in latest["pending_steps"]] == ["action-step-two"]
@@ -224,7 +239,7 @@ def test_confirmed_absent_retry_still_requires_action_bound_approval(tmp_path: P
         reason="Approve step two once.",
     )
     assert recovered.resume().idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
-    _reconcile(recovered, ABSENT, ABSENT_EVIDENCE)
+    _reconcile(recovered, ABSENT, ABSENT_EVIDENCE, landing_token=_landing_token(recovered))
     _revise_step_two(recovered, "step two complete (retry)\n")
 
     retry = recovered.resume()
@@ -274,7 +289,7 @@ def test_insufficient_or_contradictory_evidence_remains_uncertain(
     assert result.outcome is INCONCLUSIVE
     assert result.requested_outcome is outcome
     assert result.transitioned is False
-    assert result.retry_eligible is False
+    assert result.redispatch_safe is False
     assert result.checkpoint_id is None
     assert assessment in result.assessment
     assert _execution_rows(recovered)[0]["state"] == "effect_may_have_occurred"
@@ -339,20 +354,29 @@ def test_second_reconciliation_after_transition_is_refused(
 
 def test_concurrent_conflicting_reconciliations_apply_exactly_one(tmp_path: Path) -> None:
     recovered, calls = _uncertain(tmp_path, write=False)
+    # Bound to a landing proof, the absence is final; an unbound absence could still
+    # be followed by a confirmation, which is how a late effect is recorded.
+    token = _landing_token(recovered)
     barrier = threading.Barrier(2)
     outcomes: dict[str, Any] = {}
 
-    def run(name: str, outcome: EffectReconciliationOutcome, evidence: Any) -> None:
+    def run(name: str, outcome: EffectReconciliationOutcome, evidence: Any, **extra) -> None:
         reconciler = EffectReconciler(recovered.db_path, clock=recovered.clock)
         barrier.wait()
         try:
-            outcomes[name] = _reconcile(recovered, outcome, evidence, reconciler=reconciler)
+            outcomes[name] = _reconcile(
+                recovered, outcome, evidence, reconciler=reconciler, **extra
+            )
         except ReconciliationRefused as error:
             outcomes[name] = error
 
     threads = [
         threading.Thread(target=run, args=("confirm", CONFIRMED, PRESENT_EVIDENCE)),
-        threading.Thread(target=run, args=("absent", ABSENT, ABSENT_EVIDENCE)),
+        threading.Thread(
+            target=run,
+            args=("absent", ABSENT, ABSENT_EVIDENCE),
+            kwargs={"landing_token": token},
+        ),
     ]
     for thread in threads:
         thread.start()
@@ -657,7 +681,8 @@ def test_reconciliation_record_survives_restart(tmp_path: Path) -> None:
     assert record["attempt_id"] == recovered.attempt_id
     assert record["previous_state"] == "effect_may_have_occurred"
     assert record["resulting_state"] == "effect_confirmed_absent"
-    assert record["retry_eligible"] == 1
+    assert record["redispatch_safe"] == 0  # absence was not bound to a landing proof
+    assert record["landing_token"] is None
     assert record["reconciled_by"] == "alec"
     assert record["reason"] == "Inspected the target resource directly."
     assert record["evidence"] == [

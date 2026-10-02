@@ -19,9 +19,10 @@ and acknowledge continuation state, but it cannot authorize itself.
 6. ARI re-derives the pending action and refuses dispatch unless it is exactly the
    reserved action. It takes the logical action's dispatch lock, then repeats the
    volatile checks, validates the dispatch fence, and commits `executing` with
-   the fence crossing. Then it calls the existing `execute_action` plus
-   `ExecutionRoot` boundary, and records the dispatch as returned before releasing
-   the lock. See [Dispatch Safety Boundary](dispatch-safety.md).
+   the fence crossing and the held lock's inode. Then it calls the existing
+   `execute_action` plus `ExecutionRoot` boundary, and records the dispatch as
+   returned before releasing the lock. A return rules out a late effect only for
+   `in_process` effects. See [Dispatch Safety Boundary](dispatch-safety.md).
 7. ARI commits the raw action result with its checkpoint, verifies independently,
    then commits the verification checkpoint, the pending-to-completed move, and
    the final execution state in one transaction.
@@ -67,13 +68,18 @@ cannot reserve the same key; it receives a durable `deny` decision. Exceptions
 after dispatch are recorded as uncertain and are never blindly retried.
 
 Idempotency is governed per canonical `action_id`, not only per digest. The exact
-key always governs; otherwise any earlier execution of the same `action_id`
-governs unless it stopped before effect, or its effect was reconciled as
-confirmed absent and its dispatch fence is quiescent. A revised plan digest
-therefore cannot re-run an action whose effect is executing, uncertain,
-unverified, confirmed, succeeded, or absent but possibly still in flight. Those
-actions can run only under a new digest, meaning an explicit canonical plan
-revision.
+key always governs. Otherwise any earlier execution of the same `action_id`
+governs unless it stopped before effect or is
+[safe to redispatch](dispatch-safety.md#safe-to-redispatch): its effect was
+confirmed absent by an observation bound to proof that the dispatch can no longer
+land. A revised plan digest therefore cannot re-run an action whose effect is
+executing, uncertain, unverified, confirmed, succeeded, or absent without that
+proof. Those actions can run only under a new digest, meaning an explicit
+canonical plan revision.
+
+Governance is also task-wide. While any action of the task is unresolved, no
+other action of the task may dispatch, so renaming an action cannot repeat its
+effect. `inspect_task` reports `redispatch_safety` for every execution.
 
 A superseded attempt that reports after its execution was reconciled cannot
 overwrite that truth. The report is recorded as an event, and a confirmed-absent

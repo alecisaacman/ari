@@ -133,11 +133,37 @@ class ActionIdempotencyState(StrEnum):
 
 
 class DispatchFenceState(StrEnum):
+    """What ARI recorded about one dispatch. None of these alone means "safe to redispatch".
+
+    - issued: reserved, never crossed into the effect.
+    - crossing: crossed into the effect; nothing is known about its end.
+    - returned: the dispatch call returned to ARI. Descendant processes may outlive it.
+    - lock_released: ARI acquired the action's dispatch lock after a crossing, so no
+      process still holding that lock is inside the dispatch. A descendant that never
+      held, or dropped, the lock may still be running.
+    - revoked: never crossed and never can.
+    """
+
     ISSUED = "issued"
     CROSSING = "crossing"
     RETURNED = "returned"
+    LOCK_RELEASED = "lock_released"
     REVOKED = "revoked"
-    QUIESCED = "quiesced"
+
+
+class EffectTerminality(StrEnum):
+    """Whether a dispatch's end can prove that its effect can no longer land.
+
+    - in_process: the effect is performed synchronously by the dispatching process
+      itself (ARI's built-in file actions). Once that call returned, or that process
+      is gone, the effect cannot land later.
+    - unbounded: the effect may be performed by processes or systems ARI cannot
+      track to completion (subprocesses and their descendants, injected executors,
+      future providers). Landing is never ruled out after crossing.
+    """
+
+    IN_PROCESS = "in_process"
+    UNBOUNDED = "unbounded"
 
 
 class EffectReconciliationOutcome(StrEnum):
@@ -226,9 +252,10 @@ class EffectReconciliationResult:
     resulting_state: ActionIdempotencyState
     transitioned: bool
     duplicate: bool
-    retry_eligible: bool
+    redispatch_safe: bool
     assessment: str
     checkpoint_id: str | None = None
+    landing_token: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

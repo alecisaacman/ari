@@ -19,12 +19,17 @@ be one of:
   a superseded attempt, or a superseded attempt reported late
 - `verification_failed`: the tool returned, but ARI could not verify the intended
   effect
+- `effect_confirmed_absent` that is **not** yet safe to redispatch. This applies
+  when the absence was recorded without a landing proof, so it can be re-observed
+  after landing is ruled out, or recorded as `effect_confirmed` when the late
+  effect is found.
 
 Everything else is refused:
 
 - `executing` under the still-active attempt, because it may be in flight
 - `failed_before_effect`, because it is already provably effect-free
-- `succeeded`, and any execution that has already been reconciled
+- `succeeded`, `effect_confirmed`, and an absence that is already safe to
+  redispatch
 - terminal tasks
 - requests from any attempt other than the task's active attempt
 - a stale active attempt, meaning its lease expired outside a pause, approval,
@@ -35,7 +40,7 @@ Everything else is refused:
 | Outcome | Execution state | Canonical checkpoint | Retry |
 | --- | --- | --- | --- |
 | `effect_confirmed` | `effect_confirmed` | step moves to completed with `reconciled: true`, `verified: false` | never re-dispatched, even after a plan revision |
-| `effect_confirmed_absent` | `effect_confirmed_absent` | step stays pending; next action says quiescence and a revision are required | eligible only once the earlier dispatch is quiescent, then only through an explicit canonical plan revision |
+| `effect_confirmed_absent` | `effect_confirmed_absent` | step stays pending; next action says a post-landing observation and a revision are required | only if the request carried the fence's landing token (`redispatch_safe`), then only through an explicit canonical plan revision |
 | `inconclusive` | unchanged | no checkpoint; an event is recorded | still blocked |
 
 ARI assesses the evidence. It does not take the requested outcome on trust:
@@ -48,17 +53,25 @@ ARI assesses the evidence. It does not take the requested outcome on trust:
   assessment explains why.
 
 Confirmed absence never retries by itself, and observed absence alone is not
-enough to retry: the earlier dispatch might still land. `effect_confirmed_absent`
-stops governing the action only when **both** of these hold:
+enough to retry: the earlier dispatch might still land. An absence observed
+before landing was ruled out stays insufficient after the dispatch ends: an
+effect can land between the observation and the end.
 
-- its [dispatch fence](dispatch-safety.md) is quiescent (`returned`, `quiesced`,
-  or `revoked`)
-- the request is for a *different* digest, meaning a canonical plan revision
-  followed by the normal gateway path, including any digest-bound approval
+`effect_confirmed_absent` stops governing the action only when **both** of these
+hold. The full rule is in [Dispatch Safety Boundary](dispatch-safety.md#safe-to-redispatch).
 
-The reserved digest stays denied. A record's `retry_eligible` and
-`dispatch_fence_state` capture this at reconciliation time. The gateway re-derives
-eligibility live, so a later `prove_quiescent` can make the action eligible.
+- The reconciliation presented the fence's `landing_token`, which the reconciler
+  obtained from `DispatchFences.rule_out_landing` **before** observing. The token
+  exists only once ARI has established the dispatch can no longer land, which is
+  never for `unbounded` effects such as `run_command`.
+- The request is for a *different* digest, meaning a canonical plan revision
+  followed by the normal gateway path, including any digest-bound approval.
+
+The reserved digest stays denied. The record stores `redispatch_safe`, the bound
+`landing_token`, and the `dispatch_fence_state` it saw. The gateway re-derives
+safety live from the record and the fence. A later fence transition never
+upgrades an earlier record. Migration `0006` reset every legacy record to
+`redispatch_safe = 0`.
 
 ## Durability and audit
 
@@ -78,7 +91,8 @@ sets `reconciliation_id`), the checkpoint, and the event all commit in one
 immediate transaction.
 
 - **Idempotent:** a byte-identical request (same identity, outcome, evidence,
-  `reconciled_by`, and reason) returns the existing record and writes nothing.
+  `reconciled_by`, reason, and landing token) returns the existing record and
+  writes nothing.
 - **Conflicting:** a different request against an already-reconciled execution
   is refused. Concurrent requests serialize on the immediate transaction, and the
   state compare-and-swap means at most one can transition.
@@ -102,7 +116,7 @@ gateway never lets that late report overwrite reconciled truth. It records an
 - `reconciled_by` is a recorded claim. Proving the caller's identity remains an
   outer authentication concern, as it is for action approvals.
 - Refused requests are not persisted, so their evidence is not retained.
-- A superseded worker whose dispatch is still in flight holds the dispatch lock,
-  so its action stays blocked until quiescence is proven. If absence is confirmed
-  wrongly, after the effect already landed, a retry still duplicates it. See
+- The landing token orders the observation only by the reconciler's attestation.
+  ARI cannot verify when an external observation was made. If absence is
+  confirmed wrongly, or attested falsely, a retry still duplicates the effect. See
   [Dispatch Safety Boundary](dispatch-safety.md).

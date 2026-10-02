@@ -19,7 +19,10 @@ from ari_core.modules.execution import (
     TaskLifecycleState,
     WorkerAction,
     WorkerPlan,
+    classify_effect_terminality,
 )
+
+_DEFAULT = object()
 
 
 class FixedClock:
@@ -66,7 +69,22 @@ def _recovered_task(
     step_two_path: str = "step-two.txt",
     action_executor=None,
     before_execute_hook=None,
+    effect_terminality: Any = _DEFAULT,
+    step_two_action: tuple[str, dict[str, Any]] | None = None,
+    permitted_side_effects: tuple[str, ...] = ("write_file",),
 ) -> RecoveredFixture:
+    """Build a task recovered onto a replacement worker with step two pending.
+
+    Test executors run their effects in-process unless a test says otherwise, so the
+    gateway classifies them like the built-in executor by default. Pass
+    `effect_terminality=None` to get the gateway's own default for an injected executor.
+    """
+    if effect_terminality is _DEFAULT:
+        effect_terminality = classify_effect_terminality
+    step_two_type, step_two_payload = step_two_action or (
+        "write_file",
+        {"path": step_two_path, "content": "step two complete\n"},
+    )
     db_path = tmp_path / "ari.db"
     root = tmp_path / "repo"
     root.mkdir(parents=True)
@@ -90,7 +108,7 @@ def _recovered_task(
                     "step-two.txt",
                     "step-three.txt",
                 ],
-                "permitted_side_effects": ["write_file"],
+                "permitted_side_effects": list(permitted_side_effects),
             },
             approval_state={
                 "required": approval_required,
@@ -120,8 +138,8 @@ def _recovered_task(
         ),
         WorkerAction(
             id="action-step-two",
-            action_type="write_file",
-            payload={"path": step_two_path, "content": "step two complete\n"},
+            action_type=step_two_type,
+            payload=step_two_payload,
             reason="Complete step two.",
         ),
     ]
@@ -187,7 +205,7 @@ def _recovered_task(
                     "step-two.txt",
                     "step-three.txt",
                 ],
-                "permitted_side_effects": ["write_file"],
+                "permitted_side_effects": list(permitted_side_effects),
             },
             approval_state={
                 "required": approval_required,
@@ -221,6 +239,7 @@ def _recovered_task(
         pause_state_reader=lambda: {"paused": False, "reason": None},
         action_executor=action_executor,
         before_execute_hook=before_execute_hook,
+        effect_terminality=effect_terminality,
     )
     return RecoveredFixture(
         db_path=db_path,

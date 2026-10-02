@@ -115,6 +115,7 @@ def test_schema_migration_is_versioned_and_idempotent(tmp_path: Path) -> None:
         "0003_recovered_action_gateway",
         "0004_effect_reconciliation",
         "0005_dispatch_fences",
+        "0006_redispatch_safety",
     ]
     assert all(len(row["checksum"]) == 64 for row in migrations)
     assert {

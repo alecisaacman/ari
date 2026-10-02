@@ -19,7 +19,6 @@ from .contracts import (
     ReconciliationEvidence,
     TaskLifecycleState,
 )
-from .dispatch import QUIESCENT_FENCE_STATES
 from .gateway import RecoveredActionGateway, _iso, _parse
 from .ledger import ExecutionLedger, _decode_row, _json, sanitize_payload
 
@@ -27,7 +26,9 @@ Clock = Callable[[], datetime]
 TransactionHook = Callable[[str], None]
 
 # States whose external effect ARI cannot prove either way. `executing` qualifies only
-# once its reserving attempt is superseded; see `_effective_state`.
+# once its reserving attempt is superseded; see `_effective_state`. A confirmed-absent
+# execution that is not yet safe to redispatch may also be reconciled again: either a
+# post-landing absence observation, or the late effect being found.
 RECONCILABLE_STATES = frozenset(
     {
         ActionIdempotencyState.EFFECT_UNCERTAIN,
@@ -96,8 +97,22 @@ class EffectReconciler:
         reconciled_by: str,
         reason: str,
         provenance: dict[str, Any] | None = None,
+        landing_token: str | None = None,
     ) -> EffectReconciliationResult:
+        """Record what the evidence shows about one execution's effect.
+
+        `landing_token` is the fence's token from `DispatchFences.rule_out_landing`,
+        obtained *before* the evidence was gathered. Presenting it attests that the
+        observations were made after ARI established the dispatch can no longer land.
+        Only an absence reconciliation carrying the fence's current token makes the
+        action safe to redispatch; absence without it is recorded but never qualifies,
+        even once the dispatch later ends.
+        """
         requested = self._requested_outcome(outcome)
+        if landing_token is not None and (
+            not isinstance(landing_token, str) or not landing_token.strip()
+        ):
+            raise ReconciliationRefused("landing_token must be a non-empty string when given.")
         items = self._normalize_evidence(evidence)
         if not isinstance(reconciled_by, str) or not reconciled_by.strip():
             raise ReconciliationRefused("reconciled_by is required.")
@@ -114,6 +129,7 @@ class EffectReconciler:
             evidence_sha256=evidence_sha256,
             reconciled_by=reconciled_by,
             reason=reason,
+            landing_token=landing_token,
         )
         now = self._now()
         try:
@@ -139,6 +155,7 @@ class EffectReconciler:
                     reconciled_by=reconciled_by,
                     reason=reason,
                     provenance=provenance,
+                    landing_token=landing_token,
                     now=now,
                 )
         except sqlite3.IntegrityError as error:
@@ -172,6 +189,7 @@ class EffectReconciler:
         reconciled_by: str,
         reason: str,
         provenance: dict[str, Any] | None,
+        landing_token: str | None,
         now: datetime,
     ) -> EffectReconciliationResult:
         task = connection.execute(
@@ -226,24 +244,60 @@ class EffectReconciler:
                 "The action is still executing under the active attempt; it cannot be "
                 "reconciled while it may be in flight."
             )
-        if effective not in RECONCILABLE_STATES:
+        if effective is ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT:
+            current = connection.execute(
+                """
+                select redispatch_safe from ari_execution_effect_reconciliations
+                where reconciliation_id = ?
+                """,
+                (execution["reconciliation_id"],),
+            ).fetchone()
+            if current is not None and bool(current["redispatch_safe"]):
+                raise ReconciliationRefused(
+                    "The effect is already confirmed absent after landing was ruled out."
+                )
+        elif effective not in RECONCILABLE_STATES:
             raise ReconciliationRefused(
                 f"Execution state {effective} is not eligible for reconciliation."
             )
-        outcome, assessment = self._assess(requested, items)
-        transitioned = outcome is not EffectReconciliationOutcome.INCONCLUSIVE
-        fence = connection.execute(
-            "select state from ari_execution_dispatch_fences where execution_id = ?",
+        fence_row = connection.execute(
+            "select * from ari_execution_dispatch_fences where execution_id = ?",
             (execution_id,),
         ).fetchone()
-        fence_state = None if fence is None else str(fence["state"])
-        # Absence observed now does not prove the earlier dispatch cannot still land;
-        # retry eligibility also needs a quiescent dispatch fence. The gateway re-derives
-        # this live, so a later quiescence proof can still make the action eligible.
-        retry_eligible = (
+        fence = None if fence_row is None else _decode_row(fence_row)
+        if landing_token is not None and (
+            fence is None or fence["landing_token"] is None or fence["landing_token"] != landing_token
+        ):
+            raise ReconciliationRefused(
+                "The landing token does not match this execution's dispatch fence; landing "
+                "has not been ruled out for it, or the token belongs to another dispatch."
+            )
+        outcome, assessment = self._assess(requested, items)
+        if (
             outcome is EffectReconciliationOutcome.EFFECT_CONFIRMED_ABSENT
-            and fence_state in QUIESCENT_FENCE_STATES
+            and fence is not None
+            and landing_token is not None
+            and self._observed_before(items, str(fence["landing_ruled_out_at"]))
+        ):
+            outcome = EffectReconciliationOutcome.INCONCLUSIVE
+            assessment = (
+                "An observation is timestamped before landing was ruled out; absence seen "
+                "then cannot exclude an effect that landed afterwards."
+            )
+        transitioned = outcome is not EffectReconciliationOutcome.INCONCLUSIVE
+        fence_state = None if fence is None else str(fence["state"])
+        # Absence is only safe to act on when it was observed after ARI ruled out the
+        # dispatch landing. The token is the ordering proof: it exists only after that
+        # point, and the reconciler obtained it before observing.
+        redispatch_safe = (
+            outcome is EffectReconciliationOutcome.EFFECT_CONFIRMED_ABSENT
+            and landing_token is not None
         )
+        if outcome is EffectReconciliationOutcome.EFFECT_CONFIRMED_ABSENT and not redispatch_safe:
+            assessment += (
+                " Not bound to a landing proof, so it does not make the action safe to "
+                "redispatch."
+            )
         resulting = _RESULTING_STATE[outcome] if transitioned else effective
         reconciliation_id = f"effect-reconciliation-{uuid4()}"
         basis = RecoveredActionGateway._checkpoint_in(connection, str(task["latest_checkpoint_id"]))
@@ -257,11 +311,12 @@ class EffectReconciler:
                 reconciliation_id, request_key, execution_id, task_id, attempt_id,
                 reserving_attempt_id, decision_id, action_id, action_digest,
                 idempotency_key, requested_outcome, outcome, previous_state,
-                effective_previous_state, resulting_state, retry_eligible, reconciled_by,
+                effective_previous_state, resulting_state, redispatch_safe, reconciled_by,
                 reason, assessment, evidence_json, evidence_sha256, basis_checkpoint_id,
-                checkpoint_id, provenance_json, created_at, dispatch_fence_state
+                checkpoint_id, provenance_json, created_at, dispatch_fence_state,
+                landing_token
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                null, ?, ?, ?)
+                null, ?, ?, ?, ?)
             """,
             (
                 reconciliation_id,
@@ -279,7 +334,7 @@ class EffectReconciler:
                 stored,
                 effective,
                 resulting,
-                int(retry_eligible),
+                int(redispatch_safe),
                 reconciled_by,
                 reason,
                 assessment,
@@ -289,6 +344,7 @@ class EffectReconciler:
                 _json(clean_provenance),
                 _iso(now),
                 fence_state,
+                landing_token if redispatch_safe else None,
             ),
         )
         self._hook("record_inserted")
@@ -303,6 +359,7 @@ class EffectReconciler:
             "reconciled_by": reconciled_by,
             "assessment": assessment,
             "evidence_sha256": evidence_sha256,
+            "redispatch_safe": redispatch_safe,
         }
         if not transitioned:
             RecoveredActionGateway._insert_event(
@@ -398,9 +455,9 @@ class EffectReconciler:
                 next_action = "No pending action remains; ARI must decide final task disposition."
         else:
             next_action = (
-                f"The effect of {action_id} is confirmed absent; a retry requires proof that "
-                "its earlier dispatch is quiescent, an explicit canonical plan revision, and "
-                "a new ARI resume decision."
+                f"The effect of {action_id} is confirmed absent; a retry requires that "
+                "absence to have been observed after ARI ruled out the earlier dispatch "
+                "landing, an explicit canonical plan revision, and a new ARI decision."
             )
         state = RecoveredActionGateway._checkpoint_state(
             basis,
@@ -467,6 +524,24 @@ class EffectReconciler:
         return requested, "Every observation shows the effect is absent, with a reference."
 
     @staticmethod
+    def _observed_before(items: tuple[ReconciliationEvidence, ...], boundary: str) -> bool:
+        """A supplementary wall-clock check; ordering itself rests on the landing token."""
+        try:
+            limit = _parse(boundary)
+        except ValueError:
+            return False
+        for item in items:
+            if item.observed_at is None:
+                continue
+            try:
+                observed = _parse(item.observed_at)
+            except ValueError:
+                continue
+            if observed < limit:
+                return True
+        return False
+
+    @staticmethod
     def _requested_outcome(outcome: EffectReconciliationOutcome | str) -> EffectReconciliationOutcome:
         try:
             return EffectReconciliationOutcome(outcome)
@@ -515,9 +590,10 @@ class EffectReconciler:
             resulting_state=ActionIdempotencyState(record["resulting_state"]),
             transitioned=outcome is not EffectReconciliationOutcome.INCONCLUSIVE,
             duplicate=duplicate,
-            retry_eligible=bool(record["retry_eligible"]),
+            redispatch_safe=bool(record["redispatch_safe"]),
             assessment=str(record["assessment"]),
             checkpoint_id=record["checkpoint_id"],
+            landing_token=record["landing_token"],
         )
 
     def _hook(self, stage: str) -> None:
