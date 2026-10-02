@@ -41,6 +41,7 @@ completed work, pending work, restrictions, authority scope, and proposed next
 action. ARI persists that acknowledgement before marking the replacement
 attempt `execution_ready`.
 
-Execution-ready does not mean execution resumed. This slice deliberately stops
-before the next tool or side effect. `recovery_block_reason` records that the
-unified authority/tool gateway is still required.
+Execution-ready does not mean execution resumed. The replacement worker still
+cannot run a side effect until ARI creates a durable resume decision through the
+[Recovered Action Authority Gateway](recovered-action-gateway.md). Each decision
+can dispatch at most one pending action.

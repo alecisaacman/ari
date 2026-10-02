@@ -165,6 +165,12 @@ The provider-neutral continuity ledger adds:
   replacement attempt
 - `ari_execution_continuation_acknowledgements` — replacement-worker evidence
   required before execution-ready state
+- `ari_execution_action_approvals` — action-digest/resource-bound approvals
+  that survive worker replacement without widening authority
+- `ari_execution_resume_decisions` — ARI allow/deny/require-approval/block
+  decisions for one recovered pending action
+- `ari_execution_action_executions` — idempotency reservation, action result,
+  effect certainty, verification evidence, and checkpoint links
 
 Events and checkpoints use independent monotonic task sequences and are committed
 together at each boundary. A checkpoint contains completed and pending steps,
@@ -176,6 +182,10 @@ Migration `0002_execution_sessions` adds explicit task and attempt lifecycle
 state, lease ownership/timestamps, prior/replacement attempt links, restrictions,
 authority scope, approval state, continuation references, and recovery reasons.
 See [Execution Session Recovery](execution/session-recovery.md).
+
+Migration `0003_recovered_action_gateway` adds the durable approval, decision,
+and idempotent execution records used by the one-action recovered execution
+boundary. See [Recovered Action Authority Gateway](execution/recovered-action-gateway.md).
 
 The legacy runtime execution records remain available during compatibility work;
 they are not a second canonical task state.

@@ -112,6 +112,68 @@ class RecoveryClassification(StrEnum):
     UNRECOVERABLE = "unrecoverable"
 
 
+class ResumeDecision(StrEnum):
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"
+    BLOCKED = "blocked"
+
+
+class ActionIdempotencyState(StrEnum):
+    NEVER_ATTEMPTED = "never_attempted"
+    AUTHORIZED_NOT_RUN = "authorized_not_run"
+    EXECUTING = "executing"
+    SUCCEEDED = "succeeded"
+    FAILED_BEFORE_EFFECT = "failed_before_effect"
+    EFFECT_UNCERTAIN = "effect_may_have_occurred"
+    VERIFICATION_FAILED = "verification_failed"
+    ALREADY_COMPLETED = "already_completed"
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredActionProposal:
+    task_id: str
+    attempt_id: str
+    checkpoint_id: str
+    action_id: str
+    proposed_action: dict[str, Any]
+    action_digest: str
+    target_resources: tuple[str, ...]
+    authority_snapshot_ref: str | None
+    authority_snapshot_hash: str | None
+    authority_scope: dict[str, Any]
+    approval_required: bool
+    approval_reference: str | None
+    restrictions: tuple[str, ...]
+    idempotency_key: str
+    idempotency_state: ActionIdempotencyState
+    provenance: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredActionResumeResult:
+    task_id: str
+    attempt_id: str
+    decision_id: str
+    decision: ResumeDecision
+    reason: str
+    proposal: RecoveredActionProposal
+    executed: bool
+    idempotency_state: ActionIdempotencyState
+    approval_reference: str | None = None
+    pre_checkpoint_id: str | None = None
+    result_checkpoint_id: str | None = None
+    verification_checkpoint_id: str | None = None
+    result: dict[str, Any] | None = None
+    verification: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True, slots=True)
 class WorkerLease:
     owner: str

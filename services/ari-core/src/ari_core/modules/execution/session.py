@@ -606,6 +606,17 @@ class ExecutionSessionManager:
             "execution_resumed": False,
             "resume_blocked_reason": task.get("recovery_block_reason"),
         }
+        from .gateway import RecoveredActionGateway
+
+        gateway_inspection = RecoveredActionGateway(
+            self.db_path,
+            clock=self.clock,
+        ).inspect_task(task_id)
+        bundle["recovered_action_gateway"] = gateway_inspection
+        bundle["session"]["execution_resumed"] = any(
+            execution.get("started_at") is not None
+            for execution in gateway_inspection["executions"]
+        )
         return bundle
 
     def _decision(

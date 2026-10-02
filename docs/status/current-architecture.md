@@ -20,6 +20,8 @@
   checkpoints, and normalized terminal results
 - ARI-owned worker leases, heartbeats, stale-attempt reconciliation,
   continuation packets, and persisted continuation acknowledgements
+- ARI-owned recovered-action proposals, action-bound approvals, explicit resume
+  decisions, idempotency reservations, result persistence, and verification
 - compact lifecycle memory for bounded coding-loop chains
 - self-documentation/content creation skill design and readiness docs
 - read-only self-documentation content seed generator from git commit ranges
@@ -53,8 +55,10 @@ continuity ledger, not yet a provider router or automatic failover engine.
 
 The current single backend now runs inside an ARI-owned leased session. ARI can
 declare an expired worker stale, create a linked replacement attempt, reconstruct
-continuation state, and require acknowledgement. Recovery deliberately stops at
-`execution_ready`; it does not execute the next side effect.
+continuation state, and require acknowledgement. Recovery reaches
+`execution_ready`, then the recovered-action gateway can authorize and execute
+exactly one pending action. It checkpoints before dispatch, persists and verifies
+the result, and returns control to ARI before any next action.
 
 Native skills must follow `docs/skills/ari-native-skill-contract.md`: they plug
 into ARI's shared memory, authority, validation, execution, verification,

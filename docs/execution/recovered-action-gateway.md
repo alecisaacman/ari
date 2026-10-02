@@ -1,0 +1,85 @@
+# Recovered Action Authority Gateway
+
+`RecoveredActionGateway` is the canonical ARI-owned boundary for executing one
+pending action after worker-session recovery. A replacement worker can describe
+and acknowledge continuation state, but it cannot authorize itself.
+
+## One-action flow
+
+1. ARI derives the first pending action from the latest canonical checkpoint.
+2. ARI calculates the action digest, target resources, and durable idempotency key.
+3. ARI revalidates global and task pause state, cancellation, blocking, lifecycle,
+   active attempt, lease, worker/session identity, continuation acknowledgement,
+   authority snapshot, restrictions, action-bound approval, tool allowlist, and
+   execution-root scope.
+4. ARI persists an `allow`, `deny`, `require_approval`, or `blocked` resume decision.
+5. On allow, ARI atomically reserves the idempotency key and writes a pre-action
+   checkpoint before dispatch.
+6. ARI repeats volatile checks immediately before using the existing
+   `execute_action` plus `ExecutionRoot` boundary.
+7. ARI persists the raw action result, checkpoints it, verifies independently,
+   checkpoints verification, and only then moves the action from pending to
+   completed.
+8. Control returns to ARI. A following pending action requires another explicit
+   resume call and another durable decision.
+
+The API surface exposes read-only proposal/inspection plus explicit approval and
+one-action resume calls:
+
+- `GET /execution/tasks/{task_id}/next-recovered-action`
+- `POST /execution/tasks/{task_id}/next-recovered-action/approve`
+- `POST /execution/tasks/{task_id}/resume-one`
+
+The server-configured `ARI_EXECUTION_ROOT`, not a request parameter, selects the
+execution root for API calls.
+
+## Approval continuity
+
+Approvals bind to the task, normalized action digest, target resources, and
+authority snapshot. They are not bound to a provider and do not widen during
+worker replacement. A changed action, target, authority snapshot, missing
+approval, or expired approval prevents execution. Awaiting approval is a durable
+lifecycle gate, not a worker failure.
+
+## Idempotency and uncertainty
+
+The idempotency key is derived from `task_id`, canonical `action_id`, and the
+action digest. Its durable states are:
+
+- `never_attempted`
+- `authorized_not_run`
+- `executing`
+- `succeeded`
+- `failed_before_effect`
+- `effect_may_have_occurred`
+- `verification_failed`
+- `already_completed` (derived from the canonical checkpoint)
+
+Dispatch is reserved before the tool runs. A duplicate request cannot reserve
+the same key. Exceptions after dispatch are recorded as uncertain and are never
+blindly retried.
+
+## Remaining bypass paths
+
+This slice intentionally converges only recovered pending actions. The following
+legacy paths still invoke execution machinery without this recovered-action
+gateway and require a later convergence slice:
+
+- `ExecutionController.run()` multi-action plans
+- operator actions in `modules/execution/engine.py`
+- coding-loop execution and approved retry execution
+- direct execution API file and command endpoints
+
+They remain bounded by their existing policy, approval, and sandbox checks, but
+they do not yet share this decision/idempotency/checkpoint sequence.
+
+## Known limits
+
+- The global pause marker is filesystem-backed while task pause is ledger-backed;
+  both are checked immediately before dispatch but are not one database transaction.
+- API caller authentication and proof that `approvedBy` represents Alec remain an
+  outer service/authentication concern.
+- Uncertain effects require human or future reconciliation evidence; this slice
+  deliberately does not infer or retry them.
+- The gateway uses the current backend only. Provider routing and failover are not
+  part of this slice.

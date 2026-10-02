@@ -12,7 +12,7 @@ from ...core.paths import DB_PATH
 from ..coordination.db import put_coordination_entity
 from ..memory.context import build_memory_context
 from .contracts import CheckpointState, ExecutionResultContract, ExecutionTaskSpec
-from .executor import execute_action
+from .executor import execute_action, verify_action_result
 from .ledger import ExecutionLedger
 from .models import (
     ExecutionGoal,
@@ -614,16 +614,12 @@ class ExecutionController:
         }
 
     def _verify_action(self, action: WorkerAction, result: dict[str, Any]) -> bool:
-        if not bool(result.get("success")):
-            return False
-        payload = action.to_execution_action()
-        if action.action_type == "write_file":
-            resolved = self.execution_root.resolve_path(str(payload["path"]))
-            return resolved.read_text(encoding="utf-8") == str(payload["content"])
-        if action.action_type == "patch_file":
-            resolved = self.execution_root.resolve_path(str(payload["path"]))
-            return str(payload["replace"]) in resolved.read_text(encoding="utf-8")
-        return True
+        verification = verify_action_result(
+            action.to_execution_action(),
+            result,
+            self.execution_root.root,
+        )
+        return bool(verification["verified"])
 
     def _verify_expectation(self, expectation: VerificationExpectation) -> dict[str, Any]:
         try:

@@ -615,6 +615,8 @@ def test_canonical_api_exposes_core_memory_tasks_notes_coordination_and_awarenes
         ]
         assert execution_task_payload["session"]["lease_classification"] == "terminal"
         assert execution_task_payload["session"]["execution_resumed"] is False
+        assert execution_task_payload["recovered_action_gateway"]["one_action_limit"] is True
+        assert execution_task_payload["recovered_action_gateway"]["proposed_action"] is None
 
         tools = client.get("/execution/tools")
         assert tools.status_code == 200

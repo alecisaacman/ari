@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -47,3 +48,58 @@ def execute_action(
         return result.to_dict()
 
     raise ValueError(f"unsupported execution action: {action_type}")
+
+
+def verify_action_result(
+    action: dict[str, Any],
+    result: dict[str, Any],
+    execution_root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Verify one normalized action independently from any worker or provider."""
+    sandbox = ExecutionRoot(execution_root)
+    action_type = str(action.get("type") or action.get("kind") or "").strip()
+    verified = bool(result.get("success"))
+    evidence: dict[str, Any] = {"action_type": action_type}
+
+    try:
+        if verified and action_type == "write_file":
+            resolved = sandbox.resolve_path(str(action["path"]))
+            expected = str(action["content"])
+            actual = resolved.read_text(encoding="utf-8")
+            verified = actual == expected
+            evidence.update(_file_evidence(resolved, sandbox, expected=expected))
+        elif verified and action_type == "patch_file":
+            resolved = sandbox.resolve_path(str(action["path"]))
+            replacement = str(action["replace"])
+            actual = resolved.read_text(encoding="utf-8")
+            verified = replacement in actual
+            evidence.update(_file_evidence(resolved, sandbox, expected=replacement))
+        elif action_type == "read_file":
+            evidence["path"] = str(action.get("path") or "")
+        elif action_type == "run_command":
+            evidence.update(
+                {
+                    "command": list(action.get("command") or []),
+                    "exit_code": result.get("exit_code"),
+                }
+            )
+    except (OSError, ValueError, KeyError) as error:
+        verified = False
+        evidence["verification_error"] = str(error)
+
+    return {"verified": verified, "evidence": evidence}
+
+
+def _file_evidence(
+    resolved: Path,
+    sandbox: ExecutionRoot,
+    *,
+    expected: str,
+) -> dict[str, Any]:
+    content = resolved.read_bytes()
+    return {
+        "path": str(resolved.relative_to(sandbox.root)),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size_bytes": len(content),
+        "expected_fragment_sha256": hashlib.sha256(expected.encode("utf-8")).hexdigest(),
+    }

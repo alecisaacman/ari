@@ -66,6 +66,7 @@ from ari_core.modules.execution.engine import (
     run_operator_action,
     write_file,
 )
+from ari_core.modules.execution.gateway import RecoveredActionGateway
 from ari_core.modules.execution.inspection import (
     get_coding_loop_result,
     get_execution_plan_preview,
@@ -171,6 +172,8 @@ from ari_api.schemas import (
     PendingApprovalsResponse,
     PolicyPayloadRequest,
     ProjectDraftRequest,
+    RecoveredActionApprovalRequest,
+    RecoveredActionResumeRequest,
     RetryApprovalApproveRequest,
     RetryApprovalRejectRequest,
     SignalResponse,
@@ -1139,6 +1142,59 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         if task is None:
             raise HTTPException(status_code=404, detail=f"Execution task {task_id} not found.")
         return {"execution_task": task}
+
+    @app.get("/execution/tasks/{task_id}/next-recovered-action")
+    def execution_next_recovered_action(task_id: str) -> dict[str, Any]:
+        session = ExecutionSessionManager().inspect_task(task_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail=f"Execution task {task_id} not found.")
+        attempt_id = session["task"].get("active_attempt_id")
+        if attempt_id is None:
+            raise HTTPException(status_code=409, detail="Execution task has no active attempt.")
+        return guard(
+            lambda: {
+                "proposal": RecoveredActionGateway()
+                .propose_next_action(task_id=task_id, attempt_id=str(attempt_id))
+                .to_dict()
+            }
+        )
+
+    @app.post("/execution/tasks/{task_id}/next-recovered-action/approve")
+    def execution_approve_recovered_action(
+        task_id: str,
+        payload: RecoveredActionApprovalRequest,
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "approval": RecoveredActionGateway().approve_next_action(
+                    task_id=task_id,
+                    attempt_id=payload.attemptId,
+                    approved_by=payload.approvedBy,
+                    reason=payload.reason,
+                    expires_at=payload.expiresAt,
+                    provenance=payload.provenance,
+                )
+            }
+        )
+
+    @app.post("/execution/tasks/{task_id}/resume-one")
+    def execution_resume_one_recovered_action(
+        task_id: str,
+        payload: RecoveredActionResumeRequest,
+    ) -> dict[str, Any]:
+        return guard(
+            lambda: {
+                "resume": RecoveredActionGateway()
+                .resume_one(
+                    task_id=task_id,
+                    attempt_id=payload.attemptId,
+                    worker_identity=payload.workerIdentity,
+                    session_id=payload.sessionId,
+                    provenance=payload.provenance,
+                )
+                .to_dict()
+            }
+        )
 
     @app.get("/execution/runs/{run_id}")
     def execution_run(run_id: str) -> dict[str, Any]:

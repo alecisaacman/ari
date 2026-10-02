@@ -1,0 +1,1543 @@
+from __future__ import annotations
+
+import hashlib
+import sqlite3
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from ...core.paths import DB_PATH
+from ...core.pause import get_pause_state
+from .contracts import (
+    ActionIdempotencyState,
+    AttemptLifecycleState,
+    CheckpointState,
+    RecoveredActionProposal,
+    RecoveredActionResumeResult,
+    ResumeDecision,
+    TaskLifecycleState,
+)
+from .executor import execute_action, verify_action_result
+from .ledger import ExecutionLedger, _json, sanitize_payload
+from .sandbox import ExecutionRoot
+from .tools import ExecutionToolRegistry, get_execution_tool_registry
+
+Clock = Callable[[], datetime]
+PauseStateReader = Callable[[], dict[str, Any]]
+ActionExecutor = Callable[[dict[str, Any], Path | str | None], dict[str, Any]]
+BeforeExecuteHook = Callable[[RecoveredActionProposal], None]
+
+
+class RecoveredActionGateway:
+    """The single ARI authority boundary for one recovered pending action."""
+
+    def __init__(
+        self,
+        db_path: Path = DB_PATH,
+        *,
+        execution_root: Path | str | None = None,
+        clock: Clock | None = None,
+        pause_state_reader: PauseStateReader | None = None,
+        tool_registry: ExecutionToolRegistry | None = None,
+        action_executor: ActionExecutor | None = None,
+        before_execute_hook: BeforeExecuteHook | None = None,
+    ) -> None:
+        self.ledger = ExecutionLedger(db_path)
+        self.db_path = db_path
+        self.execution_root = ExecutionRoot(execution_root)
+        self.clock = clock or (lambda: datetime.now(UTC))
+        self.pause_state_reader = pause_state_reader or get_pause_state
+        self.tool_registry = tool_registry or get_execution_tool_registry()
+        self.action_executor = action_executor or execute_action
+        self.before_execute_hook = before_execute_hook
+
+    def propose_next_action(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+    ) -> RecoveredActionProposal:
+        task = self.ledger.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Execution task {task_id} does not exist.")
+        attempt = self.ledger._one(
+            "select * from ari_execution_attempts where attempt_id = ? and task_id = ?",
+            (attempt_id, task_id),
+        )
+        if attempt is None:
+            raise ValueError(f"Attempt {attempt_id} does not belong to task {task_id}.")
+        checkpoint = self.ledger.get_checkpoint(str(task["latest_checkpoint_id"]))
+        if checkpoint is None:
+            raise ValueError("Recovered task has no canonical checkpoint.")
+
+        pending_steps = list(checkpoint["pending_steps"])
+        if not pending_steps:
+            previous = self._latest_action_execution(task_id)
+            if previous is None:
+                raise ValueError("Recovered task has no pending action to resume.")
+            decision = self.ledger._one(
+                "select * from ari_execution_resume_decisions where decision_id = ?",
+                (str(previous["decision_id"]),),
+            )
+            assert decision is not None
+            return self._proposal_from_decision(
+                decision,
+                ActionIdempotencyState.ALREADY_COMPLETED,
+            )
+
+        pending = pending_steps[0]
+        action_id = str(pending["action_id"])
+        plan_actions = checkpoint["current_plan"].get("actions", [])
+        planned_action = next(
+            (item for item in plan_actions if str(item.get("id")) == action_id),
+            None,
+        )
+        if planned_action is None:
+            raise ValueError(f"Pending action {action_id} is absent from the canonical plan.")
+        proposed_action = dict(
+            planned_action.get("execution_action")
+            or {"type": planned_action.get("action_type"), **planned_action.get("payload", {})}
+        )
+        target_resources = self._target_resources(proposed_action)
+        action_digest = self._action_digest(
+            proposed_action,
+            target_resources,
+            checkpoint.get("authority_snapshot_hash"),
+        )
+        idempotency_key = self._idempotency_key(task_id, action_id, action_digest)
+        existing = self._execution_by_key(idempotency_key)
+        idempotency_state = self._idempotency_state(existing, attempt_id, checkpoint)
+        approval_required = bool(planned_action.get("requires_approval")) or bool(
+            checkpoint["approval_state"].get("required", False)
+        )
+        approval = self._find_approval(
+            task_id=task_id,
+            action_digest=action_digest,
+            target_resources=target_resources,
+            authority_snapshot_hash=checkpoint.get("authority_snapshot_hash"),
+            include_expired=True,
+        )
+        acknowledged_restrictions: list[str] = []
+        acknowledgement_id = attempt.get("continuation_acknowledgement_id")
+        if acknowledgement_id is not None:
+            acknowledgement = self.ledger._one(
+                """
+                select * from ari_execution_continuation_acknowledgements
+                where acknowledgement_id = ?
+                """,
+                (str(acknowledgement_id),),
+            )
+            if acknowledgement is not None:
+                acknowledged_restrictions = list(
+                    acknowledgement["acknowledgement"].get("restrictions", [])
+                )
+        restrictions = tuple(
+            dict.fromkeys([*checkpoint["restrictions"], *acknowledged_restrictions])
+        )
+        return RecoveredActionProposal(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            checkpoint_id=str(checkpoint["checkpoint_id"]),
+            action_id=action_id,
+            proposed_action=proposed_action,
+            action_digest=action_digest,
+            target_resources=target_resources,
+            authority_snapshot_ref=checkpoint.get("authority_snapshot_ref"),
+            authority_snapshot_hash=checkpoint.get("authority_snapshot_hash"),
+            authority_scope=dict(checkpoint["authority_scope"]),
+            approval_required=approval_required,
+            approval_reference=None if approval is None else str(approval["approval_id"]),
+            restrictions=restrictions,
+            idempotency_key=idempotency_key,
+            idempotency_state=idempotency_state,
+            provenance={
+                "authority": "ari",
+                "operation": "recovered_action_proposal",
+                "prior_attempt_id": attempt.get("prior_attempt_id"),
+                "continuation_packet_id": attempt.get("continuation_packet_id"),
+            },
+        )
+
+    def approve_next_action(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        approved_by: str,
+        reason: str,
+        expires_at: datetime | None = None,
+        provenance: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not approved_by.strip():
+            raise ValueError("approved_by is required.")
+        proposal = self.propose_next_action(task_id=task_id, attempt_id=attempt_id)
+        if proposal.idempotency_state is not ActionIdempotencyState.NEVER_ATTEMPTED:
+            raise ValueError("Only a never-attempted pending action can receive approval.")
+        now = self._now()
+        expiration = None if expires_at is None else self._normalize_time(expires_at)
+        if expiration is not None and expiration <= now:
+            raise ValueError("Approval expiration must be in the future.")
+        approval_id = f"action-approval-{uuid4()}"
+        with self.ledger._transaction() as connection:
+            connection.execute(
+                """
+                insert into ari_execution_action_approvals (
+                    approval_id, task_id, attempt_id, checkpoint_id, action_id,
+                    action_digest, target_resources_json, authority_snapshot_ref,
+                    authority_snapshot_hash, status, approved_by, reason, expires_at,
+                    provenance_json, created_at, resolved_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    approval_id,
+                    task_id,
+                    attempt_id,
+                    proposal.checkpoint_id,
+                    proposal.action_id,
+                    proposal.action_digest,
+                    _json(proposal.target_resources),
+                    proposal.authority_snapshot_ref,
+                    proposal.authority_snapshot_hash,
+                    approved_by,
+                    reason,
+                    None if expiration is None else _iso(expiration),
+                    _json(
+                        sanitize_payload(
+                            provenance
+                            or {"authority": "alec", "operation": "action_approval"}
+                        )
+                    ),
+                    _iso(now),
+                    _iso(now),
+                ),
+            )
+            task = self._require_task(connection, task_id)
+            if task["active_attempt_id"] == attempt_id and task["lifecycle_state"] == (
+                TaskLifecycleState.AWAITING_APPROVAL
+            ):
+                connection.execute(
+                    """
+                    update ari_execution_tasks
+                    set lifecycle_state = ?, recovery_block_reason = null, updated_at = ?,
+                        row_version = row_version + 1
+                    where task_id = ?
+                    """,
+                    (TaskLifecycleState.EXECUTION_READY, _iso(now), task_id),
+                )
+                connection.execute(
+                    """
+                    update ari_execution_attempts
+                    set lifecycle_state = ?, status = ?, waiting_reason = null
+                    where attempt_id = ?
+                    """,
+                    (
+                        AttemptLifecycleState.EXECUTION_READY,
+                        AttemptLifecycleState.EXECUTION_READY,
+                        attempt_id,
+                    ),
+                )
+            self._insert_event(
+                connection,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                event_type="action.approved",
+                payload={
+                    "approval_id": approval_id,
+                    "action_id": proposal.action_id,
+                    "action_digest": proposal.action_digest,
+                    "target_resources": proposal.target_resources,
+                    "expires_at": None if expiration is None else _iso(expiration),
+                },
+                provenance={"authority": "ari", "approved_by": approved_by},
+                now=now,
+            )
+        stored = self.ledger._one(
+            "select * from ari_execution_action_approvals where approval_id = ?",
+            (approval_id,),
+        )
+        assert stored is not None
+        return stored
+
+    def resume_one(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        worker_identity: str,
+        session_id: str,
+        provenance: dict[str, Any] | None = None,
+    ) -> RecoveredActionResumeResult:
+        proposal = self.propose_next_action(task_id=task_id, attempt_id=attempt_id)
+        if proposal.idempotency_state is not ActionIdempotencyState.NEVER_ATTEMPTED:
+            reason = self._duplicate_reason(proposal.idempotency_state)
+            decision_id = self._persist_decision(
+                proposal,
+                decision=ResumeDecision.DENY,
+                reason=reason,
+                approval_reference=proposal.approval_reference,
+                provenance=provenance,
+            )
+            if proposal.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN:
+                self._mark_existing_uncertain(proposal.idempotency_key, reason)
+            return self._result(
+                proposal,
+                decision_id=decision_id,
+                decision=ResumeDecision.DENY,
+                reason=reason,
+                executed=False,
+                idempotency_state=proposal.idempotency_state,
+                approval_reference=proposal.approval_reference,
+            )
+
+        decision, reason, approval_reference = self._evaluate_gate(
+            proposal,
+            worker_identity=worker_identity,
+            session_id=session_id,
+        )
+        if decision is not ResumeDecision.ALLOW:
+            decision_id = self._persist_decision(
+                proposal,
+                decision=decision,
+                reason=reason,
+                approval_reference=approval_reference,
+                provenance=provenance,
+            )
+            self._apply_denied_lifecycle(proposal, decision, reason)
+            denial_checkpoint = self._record_denial_checkpoint(
+                proposal,
+                decision_id=decision_id,
+                decision=decision,
+                reason=reason,
+            )
+            return self._result(
+                proposal,
+                decision_id=decision_id,
+                decision=decision,
+                reason=reason,
+                executed=False,
+                idempotency_state=ActionIdempotencyState.NEVER_ATTEMPTED,
+                approval_reference=approval_reference,
+                result_checkpoint_id=denial_checkpoint,
+            )
+
+        decision_id, execution_id = self._authorize_and_reserve(
+            proposal,
+            reason=reason,
+            approval_reference=approval_reference,
+            provenance=provenance,
+        )
+        pre_checkpoint = self._record_pre_action_checkpoint(
+            proposal,
+            decision_id=decision_id,
+            approval_reference=approval_reference,
+        )
+        self._update_execution(
+            execution_id,
+            pre_checkpoint_id=pre_checkpoint,
+        )
+
+        if self.before_execute_hook is not None:
+            self.before_execute_hook(proposal)
+
+        refreshed = self.propose_next_action(task_id=task_id, attempt_id=attempt_id)
+        late_decision, late_reason, late_approval = self._evaluate_gate(
+            refreshed,
+            worker_identity=worker_identity,
+            session_id=session_id,
+        )
+        if late_decision is not ResumeDecision.ALLOW:
+            late_decision_id = self._persist_decision(
+                refreshed,
+                decision=late_decision,
+                reason=late_reason,
+                approval_reference=late_approval,
+                provenance=provenance,
+            )
+            self._update_execution(
+                execution_id,
+                state=ActionIdempotencyState.FAILED_BEFORE_EFFECT,
+                effect_status="not_started",
+                error={"reason": late_reason},
+                finished_at=self._now(),
+            )
+            self._apply_denied_lifecycle(refreshed, late_decision, late_reason)
+            denial_checkpoint = self._record_denial_checkpoint(
+                refreshed,
+                decision_id=late_decision_id,
+                decision=late_decision,
+                reason=late_reason,
+            )
+            return self._result(
+                refreshed,
+                decision_id=late_decision_id,
+                decision=late_decision,
+                reason=late_reason,
+                executed=False,
+                idempotency_state=ActionIdempotencyState.FAILED_BEFORE_EFFECT,
+                approval_reference=late_approval,
+                pre_checkpoint_id=pre_checkpoint,
+                result_checkpoint_id=denial_checkpoint,
+            )
+
+        try:
+            self._mark_executing(
+                execution_id,
+                refreshed,
+                worker_identity=worker_identity,
+                session_id=session_id,
+                approval_reference=late_approval,
+            )
+        except ValueError as error:
+            dispatch_reason = str(error)
+            dispatch_decision_id = self._persist_decision(
+                refreshed,
+                decision=ResumeDecision.BLOCKED,
+                reason=dispatch_reason,
+                approval_reference=late_approval,
+                provenance=provenance,
+            )
+            self._update_execution(
+                execution_id,
+                state=ActionIdempotencyState.FAILED_BEFORE_EFFECT,
+                effect_status="not_started",
+                error={"reason": dispatch_reason},
+                finished_at=self._now(),
+            )
+            denial_checkpoint = self._record_denial_checkpoint(
+                refreshed,
+                decision_id=dispatch_decision_id,
+                decision=ResumeDecision.BLOCKED,
+                reason=dispatch_reason,
+            )
+            return self._result(
+                refreshed,
+                decision_id=dispatch_decision_id,
+                decision=ResumeDecision.BLOCKED,
+                reason=dispatch_reason,
+                executed=False,
+                idempotency_state=ActionIdempotencyState.FAILED_BEFORE_EFFECT,
+                approval_reference=late_approval,
+                pre_checkpoint_id=pre_checkpoint,
+                result_checkpoint_id=denial_checkpoint,
+            )
+        try:
+            action_result = self.action_executor(
+                refreshed.proposed_action,
+                self.execution_root.root,
+            )
+        except Exception as error:  # noqa: BLE001 - uncertainty must be durable
+            failure = {"type": type(error).__name__, "message": str(error)}
+            self._update_execution(
+                execution_id,
+                state=ActionIdempotencyState.EFFECT_UNCERTAIN,
+                effect_status="uncertain",
+                error=failure,
+                finished_at=self._now(),
+            )
+            failure_checkpoint = self._record_action_failure_checkpoint(
+                refreshed,
+                action_result=None,
+                error=failure,
+            )
+            return self._result(
+                refreshed,
+                decision_id=decision_id,
+                decision=ResumeDecision.ALLOW,
+                reason="Action execution raised after dispatch; side-effect outcome is uncertain.",
+                executed=True,
+                idempotency_state=ActionIdempotencyState.EFFECT_UNCERTAIN,
+                approval_reference=approval_reference,
+                pre_checkpoint_id=pre_checkpoint,
+                result_checkpoint_id=failure_checkpoint,
+            )
+
+        self._update_execution(
+            execution_id,
+            effect_status="result_recorded",
+            result=action_result,
+        )
+        result_checkpoint = self._record_result_checkpoint(refreshed, action_result)
+        self._update_execution(execution_id, result_checkpoint_id=result_checkpoint)
+
+        verification = verify_action_result(
+            refreshed.proposed_action,
+            action_result,
+            self.execution_root.root,
+        )
+        verified = bool(verification["verified"])
+        final_state = (
+            ActionIdempotencyState.SUCCEEDED
+            if verified
+            else ActionIdempotencyState.VERIFICATION_FAILED
+        )
+        verification_checkpoint = self._record_verification_checkpoint(
+            refreshed,
+            action_result=action_result,
+            verification=verification,
+        )
+        self._update_execution(
+            execution_id,
+            state=final_state,
+            effect_status="verified" if verified else "effect_unverified",
+            verification=verification,
+            evidence=dict(verification["evidence"]),
+            verification_checkpoint_id=verification_checkpoint,
+            finished_at=self._now(),
+        )
+        return self._result(
+            refreshed,
+            decision_id=decision_id,
+            decision=ResumeDecision.ALLOW,
+            reason=(
+                "ARI authorized, executed, and verified exactly one recovered action."
+                if verified
+                else "The action ran but verification failed; it will not be retried blindly."
+            ),
+            executed=True,
+            idempotency_state=final_state,
+            approval_reference=approval_reference,
+            pre_checkpoint_id=pre_checkpoint,
+            result_checkpoint_id=result_checkpoint,
+            verification_checkpoint_id=verification_checkpoint,
+            result=action_result,
+            verification=verification,
+        )
+
+    def inspect_task(self, task_id: str) -> dict[str, Any]:
+        decisions = self.ledger._many(
+            """
+            select * from ari_execution_resume_decisions
+            where task_id = ? order by rowid
+            """,
+            (task_id,),
+        )
+        executions = self.ledger._many(
+            """
+            select * from ari_execution_action_executions
+            where task_id = ? order by rowid
+            """,
+            (task_id,),
+        )
+        approvals = self.ledger._many(
+            """
+            select * from ari_execution_action_approvals
+            where task_id = ? order by rowid
+            """,
+            (task_id,),
+        )
+        task = self.ledger.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Execution task {task_id} does not exist.")
+        proposal = None
+        attempt_id = task.get("active_attempt_id")
+        if attempt_id is not None:
+            try:
+                proposal = self.propose_next_action(
+                    task_id=task_id,
+                    attempt_id=str(attempt_id),
+                ).to_dict()
+            except ValueError:
+                proposal = None
+        return {
+            "proposed_action": proposal,
+            "latest_decision": decisions[-1] if decisions else None,
+            "latest_execution": executions[-1] if executions else None,
+            "latest_approval": approvals[-1] if approvals else None,
+            "decisions": decisions,
+            "executions": executions,
+            "approvals": approvals,
+            "one_action_limit": True,
+            "stop_reason": (
+                "Control returned to ARI after one action; another explicit resume decision is "
+                "required for any remaining pending action."
+            ),
+        }
+
+    def _evaluate_gate(
+        self,
+        proposal: RecoveredActionProposal,
+        *,
+        worker_identity: str,
+        session_id: str,
+    ) -> tuple[ResumeDecision, str, str | None]:
+        pause_state = self.pause_state_reader()
+        if bool(pause_state.get("paused")):
+            return (
+                ResumeDecision.BLOCKED,
+                f"Global execution pause is active: {pause_state.get('reason') or 'no reason given'}.",
+                None,
+            )
+        task = self.ledger.get_task(proposal.task_id)
+        attempt = self.ledger._one(
+            "select * from ari_execution_attempts where attempt_id = ? and task_id = ?",
+            (proposal.attempt_id, proposal.task_id),
+        )
+        checkpoint = self.ledger.get_checkpoint(proposal.checkpoint_id)
+        if task is None or attempt is None or checkpoint is None:
+            return ResumeDecision.DENY, "Canonical task, attempt, or checkpoint is missing.", None
+        task_state = TaskLifecycleState(task["lifecycle_state"])
+        if task_state is TaskLifecycleState.AWAITING_APPROVAL:
+            return ResumeDecision.REQUIRE_APPROVAL, "Task is awaiting action-bound approval.", None
+        if task_state is TaskLifecycleState.PAUSED:
+            return ResumeDecision.BLOCKED, "Task is paused.", None
+        if task_state is TaskLifecycleState.CANCELLED:
+            return ResumeDecision.DENY, "Task is cancelled.", None
+        if task_state is TaskLifecycleState.BLOCKED:
+            return ResumeDecision.BLOCKED, "Task is blocked by policy or authority.", None
+        if task_state is not TaskLifecycleState.EXECUTION_READY:
+            return (
+                ResumeDecision.DENY,
+                f"Task lifecycle is {task_state}; execution_ready is required.",
+                None,
+            )
+        if task["active_attempt_id"] != proposal.attempt_id:
+            return ResumeDecision.DENY, "Attempt has been superseded by a newer active attempt.", None
+        if AttemptLifecycleState(attempt["lifecycle_state"]) is not (
+            AttemptLifecycleState.EXECUTION_READY
+        ):
+            return ResumeDecision.DENY, "Attempt is not execution_ready.", None
+        if attempt["worker_identity"] != worker_identity or attempt["session_id"] != session_id:
+            return ResumeDecision.DENY, "Worker or session identity does not own the active lease.", None
+        if attempt["lease_expires_at"] is None or _parse(str(attempt["lease_expires_at"])) <= (
+            self._now()
+        ):
+            return ResumeDecision.DENY, "Worker lease is stale.", None
+        if attempt["continuation_acknowledgement_id"] is None:
+            return ResumeDecision.DENY, "Replacement worker has not acknowledged continuation.", None
+        acknowledgement = self.ledger._one(
+            """
+            select * from ari_execution_continuation_acknowledgements
+            where acknowledgement_id = ? and attempt_id = ?
+            """,
+            (attempt["continuation_acknowledgement_id"], proposal.attempt_id),
+        )
+        if acknowledgement is None:
+            return ResumeDecision.DENY, "Continuation acknowledgement is missing.", None
+        packet = self.ledger._one(
+            "select * from ari_execution_continuation_packets where packet_id = ?",
+            (str(attempt["continuation_packet_id"]),),
+        )
+        if packet is None:
+            return ResumeDecision.DENY, "Continuation packet is missing.", None
+        packet_payload = packet["packet"]
+        if (
+            task.get("authority_snapshot_ref") != proposal.authority_snapshot_ref
+            or task.get("authority_snapshot_hash") != proposal.authority_snapshot_hash
+            or packet_payload.get("authority_snapshot_ref") != proposal.authority_snapshot_ref
+            or packet_payload.get("authority_snapshot_hash") != proposal.authority_snapshot_hash
+        ):
+            return ResumeDecision.BLOCKED, "Authority snapshot changed during recovery.", None
+        if task["authority_scope"] != proposal.authority_scope or (
+            packet_payload.get("authority_scope") != proposal.authority_scope
+        ):
+            return ResumeDecision.BLOCKED, "Authority scope changed during recovery.", None
+        if task["approval_state"] != checkpoint["approval_state"] or (
+            packet_payload.get("approval_state") != checkpoint["approval_state"]
+        ):
+            return ResumeDecision.BLOCKED, "Approval requirements changed during recovery.", None
+        canonical_restrictions = set(proposal.restrictions)
+        required_restrictions = set(task["restrictions"]) | set(
+            packet_payload.get("restrictions", [])
+        )
+        if not required_restrictions.issubset(canonical_restrictions):
+            return ResumeDecision.BLOCKED, "Task restrictions were weakened during recovery.", None
+        validation_error = self.tool_registry.validate_execution_action(
+            proposal.proposed_action,
+            execution_root=self.execution_root,
+        )
+        if validation_error is not None:
+            return ResumeDecision.BLOCKED, validation_error, None
+        restriction_error = self._restriction_error(proposal)
+        if restriction_error is not None:
+            return ResumeDecision.BLOCKED, restriction_error, None
+        scope_error = self._scope_error(proposal)
+        if scope_error is not None:
+            return ResumeDecision.BLOCKED, scope_error, None
+        approval = self._find_approval(
+            task_id=proposal.task_id,
+            action_digest=proposal.action_digest,
+            target_resources=proposal.target_resources,
+            authority_snapshot_hash=proposal.authority_snapshot_hash,
+            include_expired=True,
+        )
+        if proposal.approval_required:
+            if approval is None:
+                return (
+                    ResumeDecision.REQUIRE_APPROVAL,
+                    "No approval is bound to this action digest and target resources.",
+                    None,
+                )
+            if approval["expires_at"] is not None and _parse(str(approval["expires_at"])) <= (
+                self._now()
+            ):
+                return (
+                    ResumeDecision.REQUIRE_APPROVAL,
+                    "The action-bound approval has expired.",
+                    str(approval["approval_id"]),
+                )
+            if approval["status"] != "approved":
+                return (
+                    ResumeDecision.REQUIRE_APPROVAL,
+                    f"Action approval status is {approval['status']}.",
+                    str(approval["approval_id"]),
+                )
+        return (
+            ResumeDecision.ALLOW,
+            "All ARI lifecycle, authority, approval, idempotency, and sandbox gates passed.",
+            None if approval is None else str(approval["approval_id"]),
+        )
+
+    def _restriction_error(self, proposal: RecoveredActionProposal) -> str | None:
+        action_type = str(proposal.proposed_action.get("type") or "")
+        normalized = {item.strip().lower().replace("_", " ") for item in proposal.restrictions}
+        if action_type in {"write_file", "patch_file"} and normalized.intersection(
+            {"read only", "read-only", "no file writes", "no mutations"}
+        ):
+            return "Task restrictions prohibit file mutation."
+        if action_type == "run_command" and "no command execution" in normalized:
+            return "Task restrictions prohibit command execution."
+        if "no network" in normalized and action_type not in self.tool_registry.allowed_action_types():
+            return "Task restrictions prohibit unclassified network-capable actions."
+        return None
+
+    def _scope_error(self, proposal: RecoveredActionProposal) -> str | None:
+        action_type = str(proposal.proposed_action.get("type") or "")
+        permitted = proposal.authority_scope.get("permitted_side_effects")
+        if permitted is not None and action_type not in set(permitted):
+            return f"Authority scope does not permit {action_type}."
+        denied = set(proposal.authority_scope.get("denied_action_types", []))
+        if action_type in denied:
+            return f"Authority scope explicitly denies {action_type}."
+        filesystem_scope = proposal.authority_scope.get("filesystem")
+        path = proposal.proposed_action.get("path")
+        if filesystem_scope is not None and path is not None:
+            try:
+                resolved = self.execution_root.resolve_path(str(path))
+                relative = str(resolved.relative_to(self.execution_root.root))
+            except ValueError as error:
+                return str(error)
+            if not any(
+                relative == str(item).rstrip("/")
+                or relative.startswith(f"{str(item).rstrip('/')}/")
+                for item in filesystem_scope
+            ):
+                return f"Target resource is outside the task authority scope: {relative}"
+        return None
+
+    def _authorize_and_reserve(
+        self,
+        proposal: RecoveredActionProposal,
+        *,
+        reason: str,
+        approval_reference: str | None,
+        provenance: dict[str, Any] | None,
+    ) -> tuple[str, str]:
+        now = self._now()
+        decision_id = f"resume-decision-{uuid4()}"
+        execution_id = f"action-execution-{uuid4()}"
+        with self.ledger._transaction() as connection:
+            existing = connection.execute(
+                "select execution_id from ari_execution_action_executions where idempotency_key = ?",
+                (proposal.idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError("Action idempotency key was reserved by another resume request.")
+            self._insert_decision(
+                connection,
+                proposal,
+                decision_id=decision_id,
+                decision=ResumeDecision.ALLOW,
+                reason=reason,
+                approval_reference=approval_reference,
+                provenance=provenance,
+                now=now,
+            )
+            connection.execute(
+                """
+                insert into ari_execution_action_executions (
+                    execution_id, decision_id, task_id, attempt_id, action_id,
+                    action_digest, idempotency_key, state, effect_status,
+                    evidence_json, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, 'not_started', '{}', ?, ?)
+                """,
+                (
+                    execution_id,
+                    decision_id,
+                    proposal.task_id,
+                    proposal.attempt_id,
+                    proposal.action_id,
+                    proposal.action_digest,
+                    proposal.idempotency_key,
+                    ActionIdempotencyState.AUTHORIZED_NOT_RUN,
+                    _iso(now),
+                    _iso(now),
+                ),
+            )
+        return decision_id, execution_id
+
+    def _persist_decision(
+        self,
+        proposal: RecoveredActionProposal,
+        *,
+        decision: ResumeDecision,
+        reason: str,
+        approval_reference: str | None,
+        provenance: dict[str, Any] | None,
+    ) -> str:
+        decision_id = f"resume-decision-{uuid4()}"
+        now = self._now()
+        with self.ledger._transaction() as connection:
+            self._insert_decision(
+                connection,
+                proposal,
+                decision_id=decision_id,
+                decision=decision,
+                reason=reason,
+                approval_reference=approval_reference,
+                provenance=provenance,
+                now=now,
+            )
+        return decision_id
+
+    def _insert_decision(
+        self,
+        connection: sqlite3.Connection,
+        proposal: RecoveredActionProposal,
+        *,
+        decision_id: str,
+        decision: ResumeDecision,
+        reason: str,
+        approval_reference: str | None,
+        provenance: dict[str, Any] | None,
+        now: datetime,
+    ) -> None:
+        clean_provenance = sanitize_payload(
+            provenance
+            or {"authority": "ari", "operation": "recovered_action_resume_decision"}
+        )
+        connection.execute(
+            """
+            insert into ari_execution_resume_decisions (
+                decision_id, task_id, attempt_id, checkpoint_id, action_id,
+                proposed_action_json, action_digest, target_resources_json,
+                authority_snapshot_ref, authority_snapshot_hash, authority_scope_json,
+                approval_reference, restrictions_json, idempotency_key, decision,
+                reason, provenance_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision_id,
+                proposal.task_id,
+                proposal.attempt_id,
+                proposal.checkpoint_id,
+                proposal.action_id,
+                _json(sanitize_payload(proposal.proposed_action)),
+                proposal.action_digest,
+                _json(proposal.target_resources),
+                proposal.authority_snapshot_ref,
+                proposal.authority_snapshot_hash,
+                _json(proposal.authority_scope),
+                approval_reference,
+                _json(proposal.restrictions),
+                proposal.idempotency_key,
+                decision,
+                reason,
+                _json(clean_provenance),
+                _iso(now),
+            ),
+        )
+        self._insert_event(
+            connection,
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            event_type="action.resume_decided",
+            payload={
+                "decision_id": decision_id,
+                "decision": decision,
+                "reason": reason,
+                "action_id": proposal.action_id,
+                "action_digest": proposal.action_digest,
+                "idempotency_key": proposal.idempotency_key,
+                "approval_reference": approval_reference,
+            },
+            provenance=clean_provenance,
+            now=now,
+        )
+
+    def _record_pre_action_checkpoint(
+        self,
+        proposal: RecoveredActionProposal,
+        *,
+        decision_id: str,
+        approval_reference: str | None,
+    ) -> str:
+        checkpoint = self._latest_checkpoint(proposal.task_id)
+        decisions = [*checkpoint["decisions"]]
+        decisions.append(
+            {
+                "decision_id": decision_id,
+                "decision": ResumeDecision.ALLOW,
+                "action_id": proposal.action_id,
+                "action_digest": proposal.action_digest,
+                "approval_reference": approval_reference,
+            }
+        )
+        stored = self.ledger.record_boundary(
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            trigger="before_authorized_action",
+            event_type="action.pre_checkpointed",
+            state=self._checkpoint_state(
+                checkpoint,
+                decisions=decisions,
+                restrictions=proposal.restrictions,
+                next_recommended_action=f"Execute only {proposal.action_id}, then return to ARI.",
+            ),
+            event_payload={
+                "decision_id": decision_id,
+                "action_id": proposal.action_id,
+                "action_digest": proposal.action_digest,
+                "idempotency_key": proposal.idempotency_key,
+            },
+            idempotency_key=f"{proposal.idempotency_key}:pre-action",
+        )
+        return str(stored["checkpoint_id"])
+
+    def _record_result_checkpoint(
+        self,
+        proposal: RecoveredActionProposal,
+        action_result: dict[str, Any],
+    ) -> str:
+        checkpoint = self._latest_checkpoint(proposal.task_id)
+        actions_taken = [*checkpoint["actions_taken"]]
+        actions_taken.append(
+            {
+                "action_id": proposal.action_id,
+                "action_digest": proposal.action_digest,
+                "result": sanitize_payload(action_result),
+                "idempotency_key": proposal.idempotency_key,
+            }
+        )
+        stored = self.ledger.record_boundary(
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            trigger="action_result_persisted",
+            event_type="action.result_persisted",
+            state=self._checkpoint_state(
+                checkpoint,
+                actions_taken=actions_taken,
+                next_recommended_action=f"Verify {proposal.action_id} before completion.",
+            ),
+            event_payload={"action_id": proposal.action_id, "result": action_result},
+            idempotency_key=f"{proposal.idempotency_key}:result",
+        )
+        return str(stored["checkpoint_id"])
+
+    def _record_verification_checkpoint(
+        self,
+        proposal: RecoveredActionProposal,
+        *,
+        action_result: dict[str, Any],
+        verification: dict[str, Any],
+    ) -> str:
+        checkpoint = self._latest_checkpoint(proposal.task_id)
+        verified = bool(verification["verified"])
+        pending = [*checkpoint["pending_steps"]]
+        completed = [*checkpoint["completed_steps"]]
+        errors = [*checkpoint["errors"]]
+        artifacts = [*checkpoint["artifacts"]]
+        if verified:
+            if pending and pending[0].get("action_id") == proposal.action_id:
+                step = pending.pop(0)
+            else:
+                step = {"action_id": proposal.action_id, "action_type": proposal.proposed_action["type"]}
+            completed.append({**step, "verified": True})
+            if proposal.proposed_action["type"] in {"write_file", "patch_file"}:
+                artifacts.append(
+                    {
+                        **dict(verification["evidence"]),
+                        "action_id": proposal.action_id,
+                        "action_type": proposal.proposed_action["type"],
+                    }
+                )
+        else:
+            errors.append(
+                {
+                    "action_id": proposal.action_id,
+                    "error": "Action result did not pass canonical verification.",
+                    "result": sanitize_payload(action_result),
+                }
+            )
+        verification_results = [*checkpoint["verification_results"]]
+        verification_results.append(
+            {
+                "action_id": proposal.action_id,
+                "action_digest": proposal.action_digest,
+                **sanitize_payload(verification),
+            }
+        )
+        next_action = (
+            pending[0].get("reason")
+            if verified and pending
+            else "No pending action remains; ARI must decide final task disposition."
+            if verified
+            else "Verification failed; do not retry without a new ARI decision."
+        )
+        stored = self.ledger.record_boundary(
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            trigger="action_verification_completed",
+            event_type="action.verification_completed",
+            state=self._checkpoint_state(
+                checkpoint,
+                completed_steps=completed,
+                pending_steps=pending,
+                artifacts=artifacts,
+                verification_results=verification_results,
+                errors=errors,
+                next_recommended_action=next_action,
+            ),
+            event_payload={
+                "action_id": proposal.action_id,
+                "verified": verified,
+                "verification": verification,
+                "remaining_pending_actions": len(pending),
+                "control_returned_to_ari": True,
+            },
+            idempotency_key=f"{proposal.idempotency_key}:verification",
+        )
+        return str(stored["checkpoint_id"])
+
+    def _record_action_failure_checkpoint(
+        self,
+        proposal: RecoveredActionProposal,
+        *,
+        action_result: dict[str, Any] | None,
+        error: dict[str, Any],
+    ) -> str:
+        checkpoint = self._latest_checkpoint(proposal.task_id)
+        errors = [*checkpoint["errors"], {"action_id": proposal.action_id, **error}]
+        stored = self.ledger.record_boundary(
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            trigger="action_execution_uncertain",
+            event_type="action.execution_uncertain",
+            state=self._checkpoint_state(
+                checkpoint,
+                errors=errors,
+                next_recommended_action=(
+                    "Inspect side-effect evidence; do not retry this action blindly."
+                ),
+            ),
+            event_payload={
+                "action_id": proposal.action_id,
+                "result": action_result,
+                "error": error,
+            },
+            idempotency_key=f"{proposal.idempotency_key}:uncertain",
+        )
+        return str(stored["checkpoint_id"])
+
+    def _record_denial_checkpoint(
+        self,
+        proposal: RecoveredActionProposal,
+        *,
+        decision_id: str,
+        decision: ResumeDecision,
+        reason: str,
+    ) -> str | None:
+        task = self.ledger.get_task(proposal.task_id)
+        if task is None or task.get("active_attempt_id") != proposal.attempt_id:
+            return None
+        checkpoint = self._latest_checkpoint(proposal.task_id)
+        decisions = [*checkpoint["decisions"]]
+        decisions.append(
+            {
+                "decision_id": decision_id,
+                "decision": decision,
+                "action_id": proposal.action_id,
+                "reason": reason,
+            }
+        )
+        stored = self.ledger.record_boundary(
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            trigger="action_resume_denied",
+            event_type="action.resume_stopped",
+            state=self._checkpoint_state(
+                checkpoint,
+                decisions=decisions,
+                next_recommended_action=reason,
+            ),
+            event_payload={
+                "decision_id": decision_id,
+                "decision": decision,
+                "reason": reason,
+                "action_id": proposal.action_id,
+            },
+        )
+        return str(stored["checkpoint_id"])
+
+    def _apply_denied_lifecycle(
+        self,
+        proposal: RecoveredActionProposal,
+        decision: ResumeDecision,
+        reason: str,
+    ) -> None:
+        if decision not in {ResumeDecision.REQUIRE_APPROVAL, ResumeDecision.BLOCKED}:
+            return
+        now = self._now()
+        task_state = (
+            TaskLifecycleState.AWAITING_APPROVAL
+            if decision is ResumeDecision.REQUIRE_APPROVAL
+            else TaskLifecycleState.BLOCKED
+        )
+        attempt_state = (
+            AttemptLifecycleState.AWAITING_APPROVAL
+            if decision is ResumeDecision.REQUIRE_APPROVAL
+            else AttemptLifecycleState.BLOCKED
+        )
+        with self.ledger._transaction() as connection:
+            task = self._require_task(connection, proposal.task_id)
+            if task["active_attempt_id"] != proposal.attempt_id:
+                return
+            current_state = TaskLifecycleState(task["lifecycle_state"])
+            if current_state in {
+                TaskLifecycleState.PAUSED,
+                TaskLifecycleState.CANCELLED,
+                TaskLifecycleState.BLOCKED,
+            }:
+                return
+            if reason.startswith("Global execution pause"):
+                connection.execute(
+                    """
+                    update ari_execution_tasks
+                    set recovery_block_reason = ?, updated_at = ?, row_version = row_version + 1
+                    where task_id = ?
+                    """,
+                    (reason, _iso(now), proposal.task_id),
+                )
+                return
+            connection.execute(
+                """
+                update ari_execution_tasks
+                set lifecycle_state = ?, recovery_block_reason = ?, updated_at = ?,
+                    row_version = row_version + 1
+                where task_id = ?
+                """,
+                (task_state, reason, _iso(now), proposal.task_id),
+            )
+            connection.execute(
+                """
+                update ari_execution_attempts
+                set lifecycle_state = ?, status = ?, waiting_reason = ?
+                where attempt_id = ?
+                """,
+                (attempt_state, attempt_state, reason, proposal.attempt_id),
+            )
+
+    def _mark_executing(
+        self,
+        execution_id: str,
+        proposal: RecoveredActionProposal,
+        *,
+        worker_identity: str,
+        session_id: str,
+        approval_reference: str | None,
+    ) -> None:
+        now = self._now()
+        pause_state = self.pause_state_reader()
+        if bool(pause_state.get("paused")):
+            raise ValueError(
+                f"Global execution pause became active before dispatch: "
+                f"{pause_state.get('reason') or 'no reason given'}."
+            )
+        with self.ledger._transaction() as connection:
+            execution = connection.execute(
+                "select * from ari_execution_action_executions where execution_id = ?",
+                (execution_id,),
+            ).fetchone()
+            if execution is None or execution["state"] != (
+                ActionIdempotencyState.AUTHORIZED_NOT_RUN
+            ):
+                raise ValueError("Action execution is not in authorized_not_run state.")
+            task = self._require_task(connection, proposal.task_id)
+            attempt = connection.execute(
+                "select * from ari_execution_attempts where attempt_id = ?",
+                (proposal.attempt_id,),
+            ).fetchone()
+            if (
+                task["active_attempt_id"] != proposal.attempt_id
+                or task["lifecycle_state"] != TaskLifecycleState.EXECUTION_READY
+                or task["latest_checkpoint_id"] != proposal.checkpoint_id
+                or attempt is None
+                or attempt["lifecycle_state"] != AttemptLifecycleState.EXECUTION_READY
+            ):
+                raise ValueError("Lifecycle changed before action dispatch.")
+            if (
+                attempt["worker_identity"] != worker_identity
+                or attempt["session_id"] != session_id
+            ):
+                raise ValueError("Worker or session ownership changed before action dispatch.")
+            if attempt["lease_expires_at"] is None or _parse(
+                str(attempt["lease_expires_at"])
+            ) <= now:
+                raise ValueError("Worker lease became stale before action dispatch.")
+            if attempt["continuation_acknowledgement_id"] is None:
+                raise ValueError("Continuation acknowledgement disappeared before dispatch.")
+            if proposal.approval_required:
+                approval = connection.execute(
+                    """
+                    select * from ari_execution_action_approvals
+                    where approval_id = ? and task_id = ? and action_digest = ?
+                    """,
+                    (
+                        approval_reference,
+                        proposal.task_id,
+                        proposal.action_digest,
+                    ),
+                ).fetchone()
+                if approval is None or approval["status"] != "approved":
+                    raise ValueError("Action approval changed before dispatch.")
+                if approval["expires_at"] is not None and _parse(
+                    str(approval["expires_at"])
+                ) <= now:
+                    raise ValueError("Action approval expired before dispatch.")
+            connection.execute(
+                """
+                update ari_execution_action_executions
+                set state = ?, effect_status = 'dispatch_started', started_at = ?, updated_at = ?
+                where execution_id = ?
+                """,
+                (ActionIdempotencyState.EXECUTING, _iso(now), _iso(now), execution_id),
+            )
+
+    def _update_execution(
+        self,
+        execution_id: str,
+        *,
+        state: ActionIdempotencyState | None = None,
+        effect_status: str | None = None,
+        pre_checkpoint_id: str | None = None,
+        result_checkpoint_id: str | None = None,
+        verification_checkpoint_id: str | None = None,
+        result: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
+        evidence: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+        finished_at: datetime | None = None,
+    ) -> None:
+        changes: dict[str, Any] = {"updated_at": _iso(self._now())}
+        if state is not None:
+            changes["state"] = state
+        if effect_status is not None:
+            changes["effect_status"] = effect_status
+        if pre_checkpoint_id is not None:
+            changes["pre_checkpoint_id"] = pre_checkpoint_id
+        if result_checkpoint_id is not None:
+            changes["result_checkpoint_id"] = result_checkpoint_id
+        if verification_checkpoint_id is not None:
+            changes["verification_checkpoint_id"] = verification_checkpoint_id
+        if result is not None:
+            changes["result_json"] = _json(sanitize_payload(result))
+        if verification is not None:
+            changes["verification_json"] = _json(sanitize_payload(verification))
+        if evidence is not None:
+            changes["evidence_json"] = _json(sanitize_payload(evidence))
+        if error is not None:
+            changes["error_json"] = _json(sanitize_payload(error))
+        if finished_at is not None:
+            changes["finished_at"] = _iso(finished_at)
+        assignments = ", ".join(f"{column} = ?" for column in changes)
+        with self.ledger._transaction() as connection:
+            connection.execute(
+                f"update ari_execution_action_executions set {assignments} where execution_id = ?",
+                (*changes.values(), execution_id),
+            )
+
+    def _mark_existing_uncertain(self, idempotency_key: str, reason: str) -> None:
+        existing = self._execution_by_key(idempotency_key)
+        if existing is None or existing["state"] != ActionIdempotencyState.EXECUTING:
+            return
+        self._update_execution(
+            str(existing["execution_id"]),
+            state=ActionIdempotencyState.EFFECT_UNCERTAIN,
+            effect_status="uncertain",
+            error={"reason": reason},
+            finished_at=self._now(),
+        )
+
+    def _find_approval(
+        self,
+        *,
+        task_id: str,
+        action_digest: str,
+        target_resources: tuple[str, ...],
+        authority_snapshot_hash: str | None,
+        include_expired: bool,
+    ) -> dict[str, Any] | None:
+        approvals = self.ledger._many(
+            """
+            select * from ari_execution_action_approvals
+            where task_id = ? and action_digest = ? and authority_snapshot_hash is ?
+            order by rowid desc
+            """,
+            (task_id, action_digest, authority_snapshot_hash),
+        )
+        for approval in approvals:
+            if tuple(approval["target_resources"]) != target_resources:
+                continue
+            if not include_expired and approval["expires_at"] is not None and (
+                _parse(str(approval["expires_at"])) <= self._now()
+            ):
+                continue
+            return approval
+        return None
+
+    def _execution_by_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        return self.ledger._one(
+            "select * from ari_execution_action_executions where idempotency_key = ?",
+            (idempotency_key,),
+        )
+
+    def _latest_action_execution(self, task_id: str) -> dict[str, Any] | None:
+        return self.ledger._one(
+            """
+            select * from ari_execution_action_executions
+            where task_id = ? order by rowid desc limit 1
+            """,
+            (task_id,),
+        )
+
+    @staticmethod
+    def _idempotency_state(
+        existing: dict[str, Any] | None,
+        attempt_id: str,
+        checkpoint: dict[str, Any],
+    ) -> ActionIdempotencyState:
+        if existing is None:
+            return ActionIdempotencyState.NEVER_ATTEMPTED
+        state = ActionIdempotencyState(existing["state"])
+        if state is ActionIdempotencyState.EXECUTING and existing["attempt_id"] != attempt_id:
+            return ActionIdempotencyState.EFFECT_UNCERTAIN
+        completed_ids = {str(item.get("action_id")) for item in checkpoint["completed_steps"]}
+        if existing["action_id"] in completed_ids:
+            return ActionIdempotencyState.ALREADY_COMPLETED
+        return state
+
+    @staticmethod
+    def _target_resources(action: dict[str, Any]) -> tuple[str, ...]:
+        action_type = str(action.get("type") or "")
+        if action_type in {"read_file", "write_file", "patch_file"}:
+            return (str(action.get("path") or ""),)
+        if action_type == "run_command":
+            return ("command:" + " ".join(action.get("command") or []),)
+        return (f"action:{action_type}",)
+
+    @staticmethod
+    def _action_digest(
+        action: dict[str, Any],
+        target_resources: tuple[str, ...],
+        authority_snapshot_hash: str | None,
+    ) -> str:
+        payload = {
+            "action": action,
+            "target_resources": target_resources,
+            "authority_snapshot_hash": authority_snapshot_hash,
+        }
+        return hashlib.sha256(_json(payload).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _idempotency_key(task_id: str, action_id: str, action_digest: str) -> str:
+        material = f"{task_id}:{action_id}:{action_digest}"
+        return "recovered-action:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def _proposal_from_decision(
+        self,
+        decision: dict[str, Any],
+        state: ActionIdempotencyState,
+    ) -> RecoveredActionProposal:
+        approval = decision.get("approval_reference")
+        return RecoveredActionProposal(
+            task_id=str(decision["task_id"]),
+            attempt_id=str(decision["attempt_id"]),
+            checkpoint_id=str(decision["checkpoint_id"]),
+            action_id=str(decision["action_id"]),
+            proposed_action=dict(decision["proposed_action"]),
+            action_digest=str(decision["action_digest"]),
+            target_resources=tuple(decision["target_resources"]),
+            authority_snapshot_ref=decision.get("authority_snapshot_ref"),
+            authority_snapshot_hash=decision.get("authority_snapshot_hash"),
+            authority_scope=dict(decision["authority_scope"]),
+            approval_required=approval is not None,
+            approval_reference=approval,
+            restrictions=tuple(decision["restrictions"]),
+            idempotency_key=str(decision["idempotency_key"]),
+            idempotency_state=state,
+            provenance=dict(decision["provenance"]),
+        )
+
+    def _latest_checkpoint(self, task_id: str) -> dict[str, Any]:
+        task = self.ledger.get_task(task_id)
+        if task is None or task["latest_checkpoint_id"] is None:
+            raise ValueError("Task has no latest checkpoint.")
+        checkpoint = self.ledger.get_checkpoint(str(task["latest_checkpoint_id"]))
+        assert checkpoint is not None
+        return checkpoint
+
+    @staticmethod
+    def _checkpoint_state(checkpoint: dict[str, Any], **changes: Any) -> CheckpointState:
+        values: dict[str, Any] = {
+            "objective": checkpoint["objective"],
+            "success_criteria": tuple(checkpoint["success_criteria"]),
+            "current_plan": dict(checkpoint["current_plan"]),
+            "completed_steps": tuple(checkpoint["completed_steps"]),
+            "pending_steps": tuple(checkpoint["pending_steps"]),
+            "important_findings": tuple(checkpoint["important_findings"]),
+            "assumptions": tuple(checkpoint["assumptions"]),
+            "decisions": tuple(checkpoint["decisions"]),
+            "artifacts": tuple(checkpoint["artifacts"]),
+            "actions_taken": tuple(checkpoint["actions_taken"]),
+            "verification_results": tuple(checkpoint["verification_results"]),
+            "errors": tuple(checkpoint["errors"]),
+            "provider": dict(checkpoint["provider"]),
+            "capacity_observations": tuple(checkpoint["capacity_observations"]),
+            "next_recommended_action": checkpoint["next_recommended_action"],
+            "provenance": dict(checkpoint["provenance"]),
+            "restrictions": tuple(checkpoint["restrictions"]),
+            "authority_scope": dict(checkpoint["authority_scope"]),
+            "approval_state": dict(checkpoint["approval_state"]),
+        }
+        values.update(changes)
+        for key in (
+            "completed_steps",
+            "pending_steps",
+            "important_findings",
+            "assumptions",
+            "decisions",
+            "artifacts",
+            "actions_taken",
+            "verification_results",
+            "errors",
+            "capacity_observations",
+            "restrictions",
+        ):
+            values[key] = tuple(values[key])
+        return CheckpointState(**values)
+
+    @staticmethod
+    def _duplicate_reason(state: ActionIdempotencyState) -> str:
+        reasons = {
+            ActionIdempotencyState.AUTHORIZED_NOT_RUN: (
+                "The action is already authorized and reserved; duplicate dispatch is denied."
+            ),
+            ActionIdempotencyState.EXECUTING: (
+                "The action is currently executing; duplicate dispatch is denied."
+            ),
+            ActionIdempotencyState.SUCCEEDED: (
+                "The action already succeeded; duplicate dispatch is denied."
+            ),
+            ActionIdempotencyState.FAILED_BEFORE_EFFECT: (
+                "The prior action stopped safely before effect; a new explicit retry design is required."
+            ),
+            ActionIdempotencyState.EFFECT_UNCERTAIN: (
+                "The action effect may have occurred; blind retry is denied."
+            ),
+            ActionIdempotencyState.VERIFICATION_FAILED: (
+                "The action ran without successful verification; blind retry is denied."
+            ),
+            ActionIdempotencyState.ALREADY_COMPLETED: (
+                "The canonical checkpoint already marks this action complete."
+            ),
+            ActionIdempotencyState.NEVER_ATTEMPTED: "The action has never been attempted.",
+        }
+        return reasons[state]
+
+    @staticmethod
+    def _result(
+        proposal: RecoveredActionProposal,
+        *,
+        decision_id: str,
+        decision: ResumeDecision,
+        reason: str,
+        executed: bool,
+        idempotency_state: ActionIdempotencyState,
+        approval_reference: str | None = None,
+        pre_checkpoint_id: str | None = None,
+        result_checkpoint_id: str | None = None,
+        verification_checkpoint_id: str | None = None,
+        result: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
+    ) -> RecoveredActionResumeResult:
+        return RecoveredActionResumeResult(
+            task_id=proposal.task_id,
+            attempt_id=proposal.attempt_id,
+            decision_id=decision_id,
+            decision=decision,
+            reason=reason,
+            proposal=proposal,
+            executed=executed,
+            idempotency_state=idempotency_state,
+            approval_reference=approval_reference,
+            pre_checkpoint_id=pre_checkpoint_id,
+            result_checkpoint_id=result_checkpoint_id,
+            verification_checkpoint_id=verification_checkpoint_id,
+            result=result,
+            verification=verification,
+        )
+
+    @staticmethod
+    def _require_task(connection: sqlite3.Connection, task_id: str) -> sqlite3.Row:
+        return ExecutionLedger._require_task(connection, task_id)
+
+    @staticmethod
+    def _insert_event(
+        connection: sqlite3.Connection,
+        *,
+        task_id: str,
+        attempt_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        provenance: dict[str, Any],
+        now: datetime,
+    ) -> None:
+        sequence = ExecutionLedger._next_sequence(
+            connection, "ari_execution_events", task_id
+        )
+        connection.execute(
+            """
+            insert into ari_execution_events (
+                event_id, task_id, attempt_id, sequence, event_type,
+                payload_json, provenance_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"event-{uuid4()}",
+                task_id,
+                attempt_id,
+                sequence,
+                event_type,
+                _json(sanitize_payload(payload)),
+                _json(sanitize_payload(provenance)),
+                _iso(now),
+            ),
+        )
+
+    def _now(self) -> datetime:
+        return self._normalize_time(self.clock())
+
+    @staticmethod
+    def _normalize_time(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("Gateway clock and approval expiry must be timezone-aware.")
+        return value.astimezone(UTC)
+
+
+def _iso(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)

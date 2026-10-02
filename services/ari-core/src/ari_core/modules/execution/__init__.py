@@ -29,6 +29,7 @@ from .coding_loop import (
 )
 from .command_policy import CommandPolicyResult, validate_command
 from .contracts import (
+    ActionIdempotencyState,
     AttemptLifecycleState,
     AttemptRecoveryDecision,
     CheckpointState,
@@ -36,7 +37,10 @@ from .contracts import (
     ContinuationPacket,
     ExecutionResultContract,
     ExecutionTaskSpec,
+    RecoveredActionProposal,
+    RecoveredActionResumeResult,
     RecoveryClassification,
+    ResumeDecision,
     TaskLifecycleState,
     WorkerHeartbeat,
     WorkerLease,
@@ -49,7 +53,8 @@ from .controller import (
     plan_execution_goal,
     run_execution_goal,
 )
-from .executor import execute_action
+from .executor import execute_action, verify_action_result
+from .gateway import RecoveredActionGateway
 from .ledger import ExecutionLedger
 from .models import (
     ExecutionGoal,
@@ -78,6 +83,7 @@ __all__ = [
     "ExecutionController",
     "ExecutionLedger",
     "ExecutionSessionManager",
+    "RecoveredActionGateway",
     "ExecutionGoal",
     "ExecutionPlanner",
     "ExecutionRoot",
@@ -87,10 +93,14 @@ __all__ = [
     "ExecutionTaskSpec",
     "CheckpointState",
     "AttemptLifecycleState",
+    "ActionIdempotencyState",
     "AttemptRecoveryDecision",
     "ContinuationAcknowledgement",
     "ContinuationPacket",
     "RecoveryClassification",
+    "RecoveredActionProposal",
+    "RecoveredActionResumeResult",
+    "ResumeDecision",
     "TaskLifecycleState",
     "WorkerHeartbeat",
     "WorkerLease",
@@ -119,6 +129,7 @@ __all__ = [
     "build_repo_context",
     "decide_worker_action",
     "execute_action",
+    "verify_action_result",
     "get_execution_tool_registry",
     "approve_coding_loop_retry_approval",
     "approve_latest_pending_coding_loop_retry_approval",

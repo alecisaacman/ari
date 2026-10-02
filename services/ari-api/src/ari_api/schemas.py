@@ -652,6 +652,21 @@ class ExecutionGoalRequest(APIModel):
     approvalState: dict[str, Any] = Field(default_factory=dict)
 
 
+class RecoveredActionApprovalRequest(APIModel):
+    attemptId: str
+    approvedBy: str
+    reason: str
+    expiresAt: datetime | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class RecoveredActionResumeRequest(APIModel):
+    attemptId: str
+    workerIdentity: str
+    sessionId: str
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
 class CodingLoopGoalRequest(APIModel):
     goal: str
     planner: Literal["rule_based", "model"] = "rule_based"

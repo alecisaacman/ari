@@ -127,7 +127,7 @@ Responsibilities:
 
 Execution persistence flows in one direction:
 
-`ingress -> ari-core ExecutionController -> ARI SQLite execution ledger -> ari-api -> ACE/surfaces`
+`ingress -> ari-core ExecutionController -> ARI SQLite execution ledger -> recovered-action authority gateway -> ari-api -> ACE/surfaces`
 
 Filesystem queues and JSON snapshots can carry ingress or derived status, but do
 not replace the ledger.

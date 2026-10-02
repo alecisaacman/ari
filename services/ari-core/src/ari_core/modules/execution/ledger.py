@@ -58,6 +58,10 @@ _JSON_COLUMNS = {
     "metadata_json",
     "packet_json",
     "acknowledgement_json",
+    "proposed_action_json",
+    "target_resources_json",
+    "result_json",
+    "error_json",
 }
 
 
