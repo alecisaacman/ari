@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import os
 import subprocess
+from contextvars import ContextVar
 from pathlib import Path
 
 from ...core.paths import PROJECT_ROOT
 from .models import ExecutionResult
+
+# Dispatch-lock descriptors held by the current dispatch. Subprocesses inherit them,
+# so the lock stays held while a child outlives a killed parent.
+DISPATCH_HOLD_FDS: ContextVar[tuple[int, ...]] = ContextVar("DISPATCH_HOLD_FDS", default=())
 
 
 class ExecutionRoot:
@@ -74,6 +79,7 @@ class ExecutionRoot:
             text=True,
             timeout=timeout_seconds,
             check=False,
+            pass_fds=DISPATCH_HOLD_FDS.get(),
         )
         return ExecutionResult(
             success=completed.returncode == 0,

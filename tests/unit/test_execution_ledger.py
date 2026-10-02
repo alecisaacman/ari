@@ -114,6 +114,7 @@ def test_schema_migration_is_versioned_and_idempotent(tmp_path: Path) -> None:
         "0002_execution_sessions",
         "0003_recovered_action_gateway",
         "0004_effect_reconciliation",
+        "0005_dispatch_fences",
     ]
     assert all(len(row["checksum"]) == 64 for row in migrations)
     assert {
@@ -126,6 +127,7 @@ def test_schema_migration_is_versioned_and_idempotent(tmp_path: Path) -> None:
         "ari_execution_resume_decisions",
         "ari_execution_action_executions",
         "ari_execution_effect_reconciliations",
+        "ari_execution_dispatch_fences",
     }.issubset(tables)
 
 

@@ -21,9 +21,10 @@ from .contracts import (
     ResumeDecision,
     TaskLifecycleState,
 )
+from .dispatch import QUIESCENT_FENCE_STATES, DispatchFences
 from .executor import execute_action, verify_action_result
 from .ledger import ExecutionLedger, _decode_row, _json, sanitize_payload
-from .sandbox import ExecutionRoot
+from .sandbox import DISPATCH_HOLD_FDS, ExecutionRoot
 from .tools import ExecutionToolRegistry, get_execution_tool_registry
 
 Clock = Callable[[], datetime]
@@ -41,14 +42,11 @@ _RECONCILED_STATES = frozenset(
         ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT,
     }
 )
-# States that prove an earlier execution of the same action_id left no effect, so a
-# separately authorized canonical plan revision (a new digest) may run it again.
-_NO_EFFECT_STATES = frozenset(
-    {
-        ActionIdempotencyState.FAILED_BEFORE_EFFECT,
-        ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT,
-    }
-)
+_EXECUTIONS_WITH_FENCE = """
+    select e.*, f.state as dispatch_fence_state
+    from ari_execution_action_executions e
+    left join ari_execution_dispatch_fences f on f.execution_id = e.execution_id
+"""
 
 
 class _ReservationConflict(ValueError):
@@ -82,6 +80,7 @@ class RecoveredActionGateway:
         self.tool_registry = tool_registry or get_execution_tool_registry()
         self.action_executor = action_executor or execute_action
         self.before_execute_hook = before_execute_hook
+        self.dispatch_fences = DispatchFences(db_path, clock=self.clock)
 
     def propose_next_action(
         self,
@@ -430,34 +429,63 @@ class RecoveredActionGateway:
                 pre_checkpoint_id=pre_checkpoint,
             )
 
-        try:
-            self._mark_executing(
-                execution_id,
-                refreshed,
-                worker_identity=worker_identity,
-                session_id=session_id,
-                approval_reference=late_approval,
-            )
-        except ValueError as error:
+        # The logical action's dispatch lock is held from the final authority check,
+        # through the effect, until the dispatch is recorded as returned. Nothing can
+        # prove this dispatch quiescent, or start another dispatch of the same action,
+        # while it is held.
+        lock = self.dispatch_fences.lock_for(refreshed.task_id, refreshed.action_id)
+        if not lock.try_acquire():
             return self._stop_before_effect(
                 refreshed,
                 execution_id,
                 decision=ResumeDecision.BLOCKED,
-                reason=str(error),
+                reason="Another dispatch of this logical action holds its dispatch lock.",
                 approval_reference=late_approval,
                 provenance=provenance,
                 pre_checkpoint_id=pre_checkpoint,
             )
-
-        # Dispatch boundary: from here on the side effect may have occurred, so every
-        # failure path records uncertainty instead of permitting a retry.
+        failure: dict[str, Any] | None = None
         try:
-            action_result = self.action_executor(
-                refreshed.proposed_action,
-                self.execution_root.root,
-            )
-        except Exception as error:  # noqa: BLE001 - uncertainty must be durable
-            failure = {"type": type(error).__name__, "message": str(error)}
+            try:
+                fence_id = self._mark_executing(
+                    execution_id,
+                    refreshed,
+                    worker_identity=worker_identity,
+                    session_id=session_id,
+                    approval_reference=late_approval,
+                )
+            except ValueError as error:
+                return self._stop_before_effect(
+                    refreshed,
+                    execution_id,
+                    decision=ResumeDecision.BLOCKED,
+                    reason=str(error),
+                    approval_reference=late_approval,
+                    provenance=provenance,
+                    pre_checkpoint_id=pre_checkpoint,
+                )
+
+            # Dispatch boundary: from here on the side effect may have occurred, so
+            # every failure path records uncertainty instead of permitting a retry.
+            # Subprocesses inherit the lock so it outlives a killed parent.
+            assert lock.fd is not None
+            inherited = DISPATCH_HOLD_FDS.set((lock.fd,))
+            try:
+                action_result = self.action_executor(
+                    refreshed.proposed_action,
+                    self.execution_root.root,
+                )
+            except Exception as error:  # noqa: BLE001 - uncertainty must be durable
+                failure = {"type": type(error).__name__, "message": str(error)}
+                self.dispatch_fences.mark_returned(fence_id, outcome={"error": failure})
+            else:
+                self.dispatch_fences.mark_returned(fence_id, outcome={"result": action_result})
+            finally:
+                DISPATCH_HOLD_FDS.reset(inherited)
+        finally:
+            lock.release()
+
+        if failure is not None:
             failure_checkpoint = self._persist_uncertain(refreshed, execution_id, error=failure)
             return self._result(
                 refreshed,
@@ -549,6 +577,13 @@ class RecoveredActionGateway:
             """,
             (task_id,),
         )
+        fences = self.ledger._many(
+            """
+            select * from ari_execution_dispatch_fences
+            where task_id = ? order by rowid
+            """,
+            (task_id,),
+        )
         task = self.ledger.get_task(task_id)
         if task is None:
             raise ValueError(f"Execution task {task_id} does not exist.")
@@ -570,6 +605,7 @@ class RecoveredActionGateway:
             "decisions": decisions,
             "executions": executions,
             "approvals": approvals,
+            "dispatch_fences": fences,
             "one_action_limit": True,
             "stop_reason": (
                 "Control returned to ARI after one action; another explicit resume decision is "
@@ -779,10 +815,8 @@ class RecoveredActionGateway:
             rows = [
                 _decode_row(row)
                 for row in connection.execute(
-                    """
-                    select * from ari_execution_action_executions
-                    where task_id = ? and action_id = ? order by rowid desc
-                    """,
+                    _EXECUTIONS_WITH_FENCE
+                    + " where e.task_id = ? and e.action_id = ? order by e.rowid desc",
                     (proposal.task_id, proposal.action_id),
                 ).fetchall()
             ]
@@ -824,6 +858,15 @@ class RecoveredActionGateway:
                     _iso(now),
                     _iso(now),
                 ),
+            )
+            DispatchFences.issue(
+                connection,
+                execution_id=execution_id,
+                task_id=proposal.task_id,
+                action_id=proposal.action_id,
+                idempotency_key=proposal.idempotency_key,
+                attempt_id=proposal.attempt_id,
+                now=_iso(now),
             )
             checkpoint = self._checkpoint_in(connection, proposal.checkpoint_id)
             pre_checkpoint_id = self._insert_checkpoint(
@@ -1410,7 +1453,12 @@ class RecoveredActionGateway:
         worker_identity: str,
         session_id: str,
         approval_reference: str | None,
-    ) -> None:
+    ) -> str:
+        """Run the final authority checks and commit the crossing; return the fence id.
+
+        The caller holds the logical action's dispatch lock, so no quiescence proof
+        or other dispatch of this action can interleave with this check and the effect.
+        """
         now = self._now()
         pause_state = self.pause_state_reader()
         if bool(pause_state.get("paused")):
@@ -1471,6 +1519,15 @@ class RecoveredActionGateway:
                     str(approval["expires_at"])
                 ) <= now:
                     raise ValueError("Action approval expired before dispatch.")
+            fence = DispatchFences.validate_crossing(
+                connection,
+                execution_id=execution_id,
+                task_id=proposal.task_id,
+                action_id=proposal.action_id,
+                idempotency_key=proposal.idempotency_key,
+                attempt_id=proposal.attempt_id,
+            )
+            DispatchFences.mark_crossing(connection, str(fence["fence_id"]), now=_iso(now))
             connection.execute(
                 """
                 update ari_execution_action_executions
@@ -1479,6 +1536,7 @@ class RecoveredActionGateway:
                 """,
                 (ActionIdempotencyState.EXECUTING, _iso(now), _iso(now), execution_id),
             )
+        return str(fence["fence_id"])
 
     @staticmethod
     def _set_execution(
@@ -1574,6 +1632,13 @@ class RecoveredActionGateway:
                             stored,
                         ),
                     )
+                    if derived is ActionIdempotencyState.FAILED_BEFORE_EFFECT:
+                        DispatchFences.revoke_unused(
+                            connection,
+                            str(execution["execution_id"]),
+                            now=_iso(now),
+                            reason=self._duplicate_reason(derived),
+                        )
         return self._result(
             proposal,
             decision_id=decision_id,
@@ -1618,6 +1683,7 @@ class RecoveredActionGateway:
                 error={"reason": reason},
                 finished_at=now,
             )
+            DispatchFences.revoke_unused(connection, execution_id, now=_iso(now), reason=reason)
         self._apply_denied_lifecycle(proposal, decision, reason)
         denial_checkpoint = self._record_denial_checkpoint(
             proposal,
@@ -1696,10 +1762,8 @@ class RecoveredActionGateway:
         attempt_id: str,
     ) -> tuple[dict[str, Any], ActionIdempotencyState] | None:
         rows = self.ledger._many(
-            """
-            select * from ari_execution_action_executions
-            where task_id = ? and action_id = ? order by rowid desc
-            """,
+            _EXECUTIONS_WITH_FENCE
+            + " where e.task_id = ? and e.action_id = ? order by e.rowid desc",
             (task_id, action_id),
         )
         return self._select_governing(rows, idempotency_key=idempotency_key, attempt_id=attempt_id)
@@ -1715,17 +1779,26 @@ class RecoveredActionGateway:
         """Pick the execution record that decides whether this action may dispatch.
 
         The exact idempotency key always governs. Otherwise any earlier execution of the
-        same canonical action_id governs unless it provably stopped before effect or its
-        effect was reconciled as confirmed absent, so a revised digest cannot re-run an
-        action whose effect is uncertain, unverified, or confirmed.
+        same canonical action_id governs unless it provably stopped before effect, or its
+        effect was reconciled as confirmed absent and its dispatch is proven quiescent.
+        A revised digest therefore cannot re-run an action whose effect is uncertain,
+        unverified, confirmed, or absent but possibly still in flight.
         """
         for row in rows:
             if row["idempotency_key"] == idempotency_key:
                 return row, cls._effective_state(row, attempt_id)
         for row in rows:
             state = cls._effective_state(row, attempt_id)
-            if state not in _NO_EFFECT_STATES:
-                return row, state
+            if state is ActionIdempotencyState.FAILED_BEFORE_EFFECT:
+                continue
+            # Observed absence is not enough: the earlier dispatch must also be proven
+            # unable to land. A crossing or missing fence keeps governing the action.
+            if (
+                state is ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT
+                and row.get("dispatch_fence_state") in QUIESCENT_FENCE_STATES
+            ):
+                continue
+            return row, state
         return None
 
     @staticmethod
@@ -1897,8 +1970,9 @@ class RecoveredActionGateway:
                 "Reconciliation confirmed the action's effect occurred; it is never re-dispatched."
             ),
             ActionIdempotencyState.EFFECT_CONFIRMED_ABSENT: (
-                "Reconciliation confirmed the effect is absent; a retry requires an explicit "
-                "canonical plan revision and a new ARI decision."
+                "Reconciliation confirmed the effect is absent; a retry requires proof that "
+                "the earlier dispatch is quiescent, an explicit canonical plan revision, and "
+                "a new ARI decision."
             ),
         }
         return reasons[state]

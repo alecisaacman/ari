@@ -61,6 +61,9 @@ exactly one pending action. It checkpoints before dispatch, persists and verifie
 the result, and returns control to ARI before any next action. An effect the
 gateway cannot prove stays blocked until evidence-backed reconciliation records it
 as confirmed, confirmed absent, or still inconclusive. Reconciliation never retries.
+A per-action dispatch fence and OS lock keep dispatches of one action from
+overlapping. Absence permits a retry only after the earlier dispatch is proven
+quiescent. ARI does not claim exactly-once external effects.
 
 Native skills must follow `docs/skills/ari-native-skill-contract.md`: they plug
 into ARI's shared memory, authority, validation, execution, verification,

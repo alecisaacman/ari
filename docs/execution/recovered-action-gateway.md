@@ -17,8 +17,11 @@ and acknowledge continuation state, but it cannot authorize itself.
    active attempt are still current, then commits the allow decision, the
    idempotency reservation, and the pre-action checkpoint together.
 6. ARI re-derives the pending action and refuses dispatch unless it is exactly the
-   reserved action, repeats the volatile checks, and commits `executing` before
-   calling the existing `execute_action` plus `ExecutionRoot` boundary.
+   reserved action. It takes the logical action's dispatch lock, then repeats the
+   volatile checks, validates the dispatch fence, and commits `executing` with
+   the fence crossing. Then it calls the existing `execute_action` plus
+   `ExecutionRoot` boundary, and records the dispatch as returned before releasing
+   the lock. See [Dispatch Safety Boundary](dispatch-safety.md).
 7. ARI commits the raw action result with its checkpoint, verifies independently,
    then commits the verification checkpoint, the pending-to-completed move, and
    the final execution state in one transaction.
@@ -65,11 +68,12 @@ after dispatch are recorded as uncertain and are never blindly retried.
 
 Idempotency is governed per canonical `action_id`, not only per digest. The exact
 key always governs; otherwise any earlier execution of the same `action_id`
-governs unless it stopped before effect or its effect was reconciled as
-confirmed absent. A revised plan digest therefore cannot re-run an action whose
-effect is executing, uncertain, unverified, confirmed, or succeeded. An action
-that stopped before effect, or was confirmed absent, can run only under a new
-digest, meaning an explicit canonical plan revision.
+governs unless it stopped before effect, or its effect was reconciled as
+confirmed absent and its dispatch fence is quiescent. A revised plan digest
+therefore cannot re-run an action whose effect is executing, uncertain,
+unverified, confirmed, succeeded, or absent but possibly still in flight. Those
+actions can run only under a new digest, meaning an explicit canonical plan
+revision.
 
 A superseded attempt that reports after its execution was reconciled cannot
 overwrite that truth. The report is recorded as an event, and a confirmed-absent

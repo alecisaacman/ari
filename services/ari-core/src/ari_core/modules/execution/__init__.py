@@ -35,6 +35,7 @@ from .contracts import (
     CheckpointState,
     ContinuationAcknowledgement,
     ContinuationPacket,
+    DispatchFenceState,
     EffectReconciliationOutcome,
     EffectReconciliationResult,
     EvidenceIndication,
@@ -57,6 +58,7 @@ from .controller import (
     plan_execution_goal,
     run_execution_goal,
 )
+from .dispatch import DispatchFences, DispatchQuiescenceResult, DispatchQuiescenceUnproven
 from .executor import execute_action, verify_action_result
 from .gateway import RecoveredActionGateway
 from .ledger import ExecutionLedger
@@ -89,6 +91,10 @@ __all__ = [
     "ExecutionLedger",
     "ExecutionSessionManager",
     "RecoveredActionGateway",
+    "DispatchFences",
+    "DispatchFenceState",
+    "DispatchQuiescenceResult",
+    "DispatchQuiescenceUnproven",
     "EffectReconciler",
     "EffectReconciliationOutcome",
     "EffectReconciliationResult",

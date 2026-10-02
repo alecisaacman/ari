@@ -35,7 +35,7 @@ Everything else is refused:
 | Outcome | Execution state | Canonical checkpoint | Retry |
 | --- | --- | --- | --- |
 | `effect_confirmed` | `effect_confirmed` | step moves to completed with `reconciled: true`, `verified: false` | never re-dispatched, even after a plan revision |
-| `effect_confirmed_absent` | `effect_confirmed_absent` | step stays pending; next action says a revision is required | eligible only through an explicit canonical plan revision |
+| `effect_confirmed_absent` | `effect_confirmed_absent` | step stays pending; next action says quiescence and a revision are required | eligible only once the earlier dispatch is quiescent, then only through an explicit canonical plan revision |
 | `inconclusive` | unchanged | no checkpoint; an event is recorded | still blocked |
 
 ARI assesses the evidence. It does not take the requested outcome on trust:
@@ -47,10 +47,18 @@ ARI assesses the evidence. It does not take the requested outcome on trust:
 - Anything weaker or contradictory is recorded as `inconclusive`, and the
   assessment explains why.
 
-Confirmed absence never retries by itself. The reserved digest stays denied.
-Like `failed_before_effect`, `effect_confirmed_absent` stops governing the action
-only for a *different* digest, which means a canonical plan revision followed by
-the normal gateway path, including any digest-bound approval.
+Confirmed absence never retries by itself, and observed absence alone is not
+enough to retry: the earlier dispatch might still land. `effect_confirmed_absent`
+stops governing the action only when **both** of these hold:
+
+- its [dispatch fence](dispatch-safety.md) is quiescent (`returned`, `quiesced`,
+  or `revoked`)
+- the request is for a *different* digest, meaning a canonical plan revision
+  followed by the normal gateway path, including any digest-bound approval
+
+The reserved digest stays denied. A record's `retry_eligible` and
+`dispatch_fence_state` capture this at reconciliation time. The gateway re-derives
+eligibility live, so a later `prove_quiescent` can make the action eligible.
 
 ## Durability and audit
 
@@ -94,8 +102,7 @@ gateway never lets that late report overwrite reconciled truth. It records an
 - `reconciled_by` is a recorded claim. Proving the caller's identity remains an
   outer authentication concern, as it is for action approvals.
 - Refused requests are not persisted, so their evidence is not retained.
-- If confirmed absence is followed by a revised-digest retry, and only then a
-  superseded attempt's original dispatch lands, the action has run twice. ARI
-  reopens the original record and records the late report, but cannot undo the
-  effect. Confirming absence while a superseded worker may still be alive is the
-  reconciler's risk to judge.
+- A superseded worker whose dispatch is still in flight holds the dispatch lock,
+  so its action stays blocked until quiescence is proven. If absence is confirmed
+  wrongly, after the effect already landed, a retry still duplicates it. See
+  [Dispatch Safety Boundary](dispatch-safety.md).

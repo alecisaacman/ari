@@ -19,6 +19,7 @@ from .contracts import (
     ReconciliationEvidence,
     TaskLifecycleState,
 )
+from .dispatch import QUIESCENT_FENCE_STATES
 from .gateway import RecoveredActionGateway, _iso, _parse
 from .ledger import ExecutionLedger, _decode_row, _json, sanitize_payload
 
@@ -231,6 +232,18 @@ class EffectReconciler:
             )
         outcome, assessment = self._assess(requested, items)
         transitioned = outcome is not EffectReconciliationOutcome.INCONCLUSIVE
+        fence = connection.execute(
+            "select state from ari_execution_dispatch_fences where execution_id = ?",
+            (execution_id,),
+        ).fetchone()
+        fence_state = None if fence is None else str(fence["state"])
+        # Absence observed now does not prove the earlier dispatch cannot still land;
+        # retry eligibility also needs a quiescent dispatch fence. The gateway re-derives
+        # this live, so a later quiescence proof can still make the action eligible.
+        retry_eligible = (
+            outcome is EffectReconciliationOutcome.EFFECT_CONFIRMED_ABSENT
+            and fence_state in QUIESCENT_FENCE_STATES
+        )
         resulting = _RESULTING_STATE[outcome] if transitioned else effective
         reconciliation_id = f"effect-reconciliation-{uuid4()}"
         basis = RecoveredActionGateway._checkpoint_in(connection, str(task["latest_checkpoint_id"]))
@@ -246,9 +259,9 @@ class EffectReconciler:
                 idempotency_key, requested_outcome, outcome, previous_state,
                 effective_previous_state, resulting_state, retry_eligible, reconciled_by,
                 reason, assessment, evidence_json, evidence_sha256, basis_checkpoint_id,
-                checkpoint_id, provenance_json, created_at
+                checkpoint_id, provenance_json, created_at, dispatch_fence_state
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                null, ?, ?)
+                null, ?, ?, ?)
             """,
             (
                 reconciliation_id,
@@ -266,7 +279,7 @@ class EffectReconciler:
                 stored,
                 effective,
                 resulting,
-                int(outcome is EffectReconciliationOutcome.EFFECT_CONFIRMED_ABSENT),
+                int(retry_eligible),
                 reconciled_by,
                 reason,
                 assessment,
@@ -275,6 +288,7 @@ class EffectReconciler:
                 basis["checkpoint_id"],
                 _json(clean_provenance),
                 _iso(now),
+                fence_state,
             ),
         )
         self._hook("record_inserted")
@@ -384,8 +398,9 @@ class EffectReconciler:
                 next_action = "No pending action remains; ARI must decide final task disposition."
         else:
             next_action = (
-                f"The effect of {action_id} is confirmed absent; a retry requires an explicit "
-                "canonical plan revision and a new ARI resume decision."
+                f"The effect of {action_id} is confirmed absent; a retry requires proof that "
+                "its earlier dispatch is quiescent, an explicit canonical plan revision, and "
+                "a new ARI resume decision."
             )
         state = RecoveredActionGateway._checkpoint_state(
             basis,

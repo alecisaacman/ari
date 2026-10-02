@@ -132,6 +132,14 @@ class ActionIdempotencyState(StrEnum):
     EFFECT_CONFIRMED_ABSENT = "effect_confirmed_absent"
 
 
+class DispatchFenceState(StrEnum):
+    ISSUED = "issued"
+    CROSSING = "crossing"
+    RETURNED = "returned"
+    REVOKED = "revoked"
+    QUIESCED = "quiesced"
+
+
 class EffectReconciliationOutcome(StrEnum):
     EFFECT_CONFIRMED = "effect_confirmed"
     EFFECT_CONFIRMED_ABSENT = "effect_confirmed_absent"

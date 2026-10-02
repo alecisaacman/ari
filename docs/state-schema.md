@@ -174,6 +174,9 @@ The provider-neutral continuity ledger adds:
   reconciliation that last resolved an uncertain effect
 - `ari_execution_effect_reconciliations` — append-only, evidence-backed
   resolutions of uncertain or unverified external effects
+- `ari_execution_dispatch_fences` — one per reserved execution: monotonic
+  per-action generation, crossing/returned/revoked/quiesced lifecycle, and the
+  recorded dispatch outcome
 
 Events and checkpoints use independent monotonic task sequences and are committed
 together at each boundary. A checkpoint contains completed and pending steps,
@@ -193,6 +196,10 @@ boundary. See [Recovered Action Authority Gateway](execution/recovered-action-ga
 Migration `0004_effect_reconciliation` adds the reconciliation record and the
 execution's `reconciliation_id` link. See
 [Uncertain-Effect Reconciliation](execution/effect-reconciliation.md).
+
+Migration `0005_dispatch_fences` adds dispatch fences and records the fence state
+on each reconciliation. Per-action dispatch lock files live in `dispatch-locks/`
+next to the database. See [Dispatch Safety Boundary](execution/dispatch-safety.md).
 
 The legacy runtime execution records remain available during compatibility work;
 they are not a second canonical task state.

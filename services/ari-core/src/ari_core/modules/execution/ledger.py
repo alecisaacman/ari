@@ -62,6 +62,7 @@ _JSON_COLUMNS = {
     "target_resources_json",
     "result_json",
     "error_json",
+    "outcome_json",
 }
 
 
