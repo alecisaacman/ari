@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import sqlite3
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -203,21 +204,11 @@ def _recovered_task(
     )
     assert recovery.replacement_attempt_id is not None
     assert recovery.continuation_packet_id is not None
-    inspected = sessions.inspect_task(task_id)
-    assert inspected is not None
-    packet = inspected["session"]["continuation_packet"]["packet"]
-    sessions.acknowledge_continuation(
+    _acknowledge(
+        ledger,
+        sessions,
         packet_id=recovery.continuation_packet_id,
         worker_identity=worker_identity,
-        acknowledgement=ContinuationAcknowledgement(
-            objective=packet["objective"],
-            completed_steps=tuple(packet["completed_steps"]),
-            pending_steps=tuple(packet["pending_steps"]),
-            restrictions=tuple(packet["restrictions"]),
-            authority_scope=packet["authority_scope"],
-            authority_snapshot_ref=packet["authority_snapshot_ref"],
-            next_proposed_action=packet["recommended_next_action"],
-        ),
     )
     current = sessions.inspect_task(task_id)
     assert current is not None
@@ -245,6 +236,102 @@ def _recovered_task(
         session_id=session_id,
         action_ids=tuple(action.id for action in actions),
     )
+
+
+def _acknowledge(
+    ledger: ExecutionLedger,
+    sessions: ExecutionSessionManager,
+    *,
+    packet_id: str,
+    worker_identity: str,
+) -> None:
+    stored = ledger._one(
+        "select * from ari_execution_continuation_packets where packet_id = ?",
+        (packet_id,),
+    )
+    assert stored is not None
+    packet = stored["packet"]
+    sessions.acknowledge_continuation(
+        packet_id=packet_id,
+        worker_identity=worker_identity,
+        acknowledgement=ContinuationAcknowledgement(
+            objective=packet["objective"],
+            completed_steps=tuple(packet["completed_steps"]),
+            pending_steps=tuple(packet["pending_steps"]),
+            restrictions=tuple(packet["restrictions"]),
+            authority_scope=packet["authority_scope"],
+            authority_snapshot_ref=packet["authority_snapshot_ref"],
+            next_proposed_action=packet["recommended_next_action"],
+        ),
+    )
+
+
+def _replace_worker(recovered: RecoveredFixture) -> RecoveredFixture:
+    """Let the current replacement lease expire and recover onto a further worker."""
+    recovered.clock.advance(seconds=301)
+    worker_identity = f"{recovered.worker_identity}-next"
+    recovery = recovered.sessions.reconcile_stale_attempt(
+        recovered.attempt_id,
+        replacement_worker_identity=worker_identity,
+        lease_seconds=300,
+    )
+    assert recovery.replacement_attempt_id is not None
+    assert recovery.continuation_packet_id is not None
+    _acknowledge(
+        recovered.ledger,
+        recovered.sessions,
+        packet_id=recovery.continuation_packet_id,
+        worker_identity=worker_identity,
+    )
+    attempt = recovered.ledger._one(
+        "select * from ari_execution_attempts where attempt_id = ?",
+        (recovery.replacement_attempt_id,),
+    )
+    assert attempt is not None
+    return replace(
+        recovered,
+        attempt_id=str(recovery.replacement_attempt_id),
+        worker_identity=worker_identity,
+        session_id=str(attempt["session_id"]),
+    )
+
+
+def _revise_step_two(recovered: RecoveredFixture, content: str) -> None:
+    """Record a canonical plan revision that changes action-step-two's digest."""
+    checkpoint = recovered.gateway._latest_checkpoint(recovered.task_id)
+    plan = dict(checkpoint["current_plan"])
+    actions = [dict(item) for item in plan["actions"]]
+    actions[1] = {
+        **actions[1],
+        "payload": {"path": "step-two.txt", "content": content},
+        "execution_action": {"type": "write_file", "path": "step-two.txt", "content": content},
+    }
+    plan["actions"] = actions
+    recovered.ledger.record_boundary(
+        task_id=recovered.task_id,
+        attempt_id=recovered.attempt_id,
+        trigger="plan_revised",
+        event_type="plan.revised",
+        state=RecoveredActionGateway._checkpoint_state(checkpoint, current_plan=plan),
+    )
+
+
+def _counting_executor(calls: list[dict[str, Any]]):
+    from ari_core.modules.execution import execute_action
+
+    def executor(action: dict[str, Any], root: Path | str | None) -> dict[str, Any]:
+        calls.append(action)
+        return execute_action(action, root)
+
+    return executor
+
+
+def _execution_rows(recovered: RecoveredFixture) -> list[dict[str, Any]]:
+    return recovered.gateway.inspect_task(recovered.task_id)["executions"]
+
+
+def _step_two(recovered: RecoveredFixture) -> str:
+    return (recovered.root / "step-two.txt").read_text(encoding="utf-8")
 
 
 def test_execution_ready_task_proposes_one_action_without_executing(tmp_path: Path) -> None:
@@ -561,6 +648,9 @@ def test_verification_is_required_before_completion(tmp_path: Path) -> None:
     assert all(
         item["action_id"] != "action-step-two" for item in latest["completed_steps"]
     )
+    retry = recovered.resume()
+    assert retry.executed is False
+    assert retry.idempotency_state is ActionIdempotencyState.VERIFICATION_FAILED
 
 
 def test_three_step_resume_executes_step_two_and_leaves_step_three_untouched(
@@ -589,3 +679,383 @@ def test_three_step_resume_executes_step_two_and_leaves_step_three_untouched(
         "action_verification_completed",
     ]
     assert recovered.gateway.inspect_task(recovered.task_id)["one_action_limit"] is True
+
+
+class SimulatedCrash(BaseException):
+    """Process death: escapes the gateway's ordinary exception handling."""
+
+
+def test_concurrent_resume_dispatches_exactly_once(tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+    recovered = _recovered_task(tmp_path, action_executor=_counting_executor(calls))
+    rival = RecoveredActionGateway(
+        recovered.db_path,
+        execution_root=recovered.root,
+        clock=recovered.clock,
+        pause_state_reader=lambda: {"paused": False, "reason": None},
+        action_executor=_counting_executor(calls),
+    )
+    original_gate = recovered.gateway._evaluate_gate
+    rival_results = []
+
+    def gate_then_race(proposal, **kwargs):
+        outcome = original_gate(proposal, **kwargs)
+        if not rival_results:
+            rival_results.append(
+                rival.resume_one(
+                    task_id=recovered.task_id,
+                    attempt_id=recovered.attempt_id,
+                    worker_identity=recovered.worker_identity,
+                    session_id=recovered.session_id,
+                )
+            )
+        return outcome
+
+    recovered.gateway._evaluate_gate = gate_then_race  # type: ignore[method-assign]
+
+    result = recovered.resume()
+
+    assert rival_results[0].idempotency_state is ActionIdempotencyState.SUCCEEDED
+    assert result.decision is ResumeDecision.DENY
+    assert result.executed is False
+    assert len(calls) == 1
+    assert len(_execution_rows(recovered)) == 1
+    assert _step_two(recovered) == "step two complete\n"
+
+
+def test_duplicate_request_during_reserved_window_is_denied(tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+    duplicates = []
+    holder: dict[str, RecoveredFixture] = {}
+
+    def duplicate_before_dispatch(_proposal) -> None:
+        duplicates.append(holder["fixture"].resume())
+
+    recovered = _recovered_task(
+        tmp_path,
+        action_executor=_counting_executor(calls),
+        before_execute_hook=duplicate_before_dispatch,
+    )
+    holder["fixture"] = recovered
+
+    result = recovered.resume()
+
+    assert duplicates[0].decision is ResumeDecision.DENY
+    assert duplicates[0].idempotency_state is ActionIdempotencyState.AUTHORIZED_NOT_RUN
+    assert result.idempotency_state is ActionIdempotencyState.SUCCEEDED
+    assert len(calls) == 1
+
+
+def test_checkpoint_moving_between_gate_and_reservation_reserves_nothing(
+    tmp_path: Path,
+) -> None:
+    recovered = _recovered_task(tmp_path)
+    original_gate = recovered.gateway._evaluate_gate
+    raced: list[bool] = []
+
+    def gate_then_concurrent_write(proposal, **kwargs):
+        outcome = original_gate(proposal, **kwargs)
+        if not raced:
+            raced.append(True)
+            checkpoint = recovered.gateway._latest_checkpoint(recovered.task_id)
+            recovered.ledger.record_boundary(
+                task_id=recovered.task_id,
+                attempt_id=recovered.attempt_id,
+                trigger="finding_recorded",
+                event_type="finding.recorded",
+                state=RecoveredActionGateway._checkpoint_state(
+                    checkpoint,
+                    next_recommended_action="A concurrent writer advanced the checkpoint.",
+                ),
+            )
+        return outcome
+
+    recovered.gateway._evaluate_gate = gate_then_concurrent_write  # type: ignore[method-assign]
+
+    first = recovered.resume()
+
+    assert first.decision is ResumeDecision.DENY
+    assert first.idempotency_state is ActionIdempotencyState.NEVER_ATTEMPTED
+    assert "changed after the gate decision" in first.reason
+    assert _execution_rows(recovered) == []
+    assert _step_two(recovered) == "not done\n"
+
+    second = recovered.resume()
+    assert second.idempotency_state is ActionIdempotencyState.SUCCEEDED
+
+
+def test_pending_action_changed_after_reservation_is_not_dispatched(tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+    holder: dict[str, RecoveredFixture] = {}
+
+    def revise_before_dispatch(_proposal) -> None:
+        _revise_step_two(holder["fixture"], "swapped after authorization\n")
+
+    recovered = _recovered_task(
+        tmp_path,
+        action_executor=_counting_executor(calls),
+        before_execute_hook=revise_before_dispatch,
+    )
+    holder["fixture"] = recovered
+
+    result = recovered.resume()
+
+    assert result.executed is False
+    assert result.idempotency_state is ActionIdempotencyState.FAILED_BEFORE_EFFECT
+    assert "changed after authorization" in result.reason
+    assert calls == []
+    assert _step_two(recovered) == "not done\n"
+    assert _execution_rows(recovered)[0]["state"] == "failed_before_effect"
+
+
+def test_revised_digest_cannot_rerun_an_uncertain_action(tmp_path: Path) -> None:
+    calls = 0
+
+    def uncertain_executor(_action: dict[str, Any], _root: Path | str | None):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("connection reset after write was sent")
+
+    recovered = _recovered_task(tmp_path, action_executor=uncertain_executor)
+    first = recovered.resume()
+    _revise_step_two(recovered, "same step, different digest\n")
+
+    proposal = recovered.gateway.propose_next_action(
+        task_id=recovered.task_id,
+        attempt_id=recovered.attempt_id,
+    )
+    second = recovered.resume()
+
+    assert first.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+    assert proposal.action_digest != first.proposal.action_digest
+    assert proposal.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+    assert second.executed is False
+    assert second.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+    assert calls == 1
+
+
+def test_stopped_before_effect_action_runs_only_after_explicit_revision(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    paused = {"value": False, "armed": True}
+
+    def pause_once(_proposal) -> None:
+        if paused["armed"]:
+            paused["armed"] = False
+            paused["value"] = True
+
+    recovered = _recovered_task(
+        tmp_path,
+        action_executor=_counting_executor(calls),
+        before_execute_hook=pause_once,
+    )
+    recovered.gateway.pause_state_reader = lambda: {
+        "paused": paused["value"],
+        "reason": "operator kill switch",
+    }
+
+    stopped = recovered.resume()
+    paused["value"] = False
+    same_digest = recovered.resume()
+    _revise_step_two(recovered, "step two complete\n ")
+    revised = recovered.resume()
+
+    assert stopped.idempotency_state is ActionIdempotencyState.FAILED_BEFORE_EFFECT
+    assert same_digest.executed is False
+    assert same_digest.idempotency_state is ActionIdempotencyState.FAILED_BEFORE_EFFECT
+    assert revised.idempotency_state is ActionIdempotencyState.SUCCEEDED
+    assert len(calls) == 1
+
+
+def test_crash_after_dispatch_is_uncertain_for_replacement_worker(tmp_path: Path) -> None:
+    calls = 0
+
+    def crashing_executor(action: dict[str, Any], root: Path | str | None):
+        nonlocal calls
+        calls += 1
+        (Path(root) / str(action["path"])).write_text(str(action["content"]), encoding="utf-8")
+        raise SimulatedCrash()
+
+    recovered = _recovered_task(tmp_path, action_executor=crashing_executor)
+    with pytest.raises(SimulatedCrash):
+        recovered.resume()
+
+    assert _execution_rows(recovered)[0]["state"] == "executing"
+    same_worker = recovered.resume()
+    assert same_worker.executed is False
+    assert same_worker.idempotency_state is ActionIdempotencyState.EXECUTING
+
+    replacement = _replace_worker(recovered)
+    replacement_result = replacement.resume()
+    again = replacement.resume()
+    latest = replacement.gateway._latest_checkpoint(replacement.task_id)
+
+    assert replacement_result.executed is False
+    assert replacement_result.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+    assert again.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+    assert _execution_rows(replacement)[0]["state"] == "effect_may_have_occurred"
+    assert [item["action_id"] for item in latest["pending_steps"]] == ["action-step-two"]
+    assert calls == 1
+
+
+def test_crash_between_reservation_and_dispatch_never_reaches_the_effect(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    crash = {"armed": True}
+
+    def crash_before_dispatch(_proposal) -> None:
+        if crash["armed"]:
+            raise SimulatedCrash()
+
+    recovered = _recovered_task(
+        tmp_path,
+        action_executor=_counting_executor(calls),
+        before_execute_hook=crash_before_dispatch,
+    )
+    with pytest.raises(SimulatedCrash):
+        recovered.resume()
+
+    reserved = _execution_rows(recovered)[0]
+    assert reserved["state"] == "authorized_not_run"
+    assert reserved["pre_checkpoint_id"] is not None
+
+    crash["armed"] = False
+    replacement = _replace_worker(recovered)
+    result = replacement.resume()
+
+    assert result.executed is False
+    assert result.idempotency_state is ActionIdempotencyState.FAILED_BEFORE_EFFECT
+    assert _execution_rows(replacement)[0]["state"] == "failed_before_effect"
+    assert _execution_rows(replacement)[0]["effect_status"] == "not_started"
+    assert calls == []
+    assert _step_two(replacement) == "not done\n"
+
+
+@pytest.mark.parametrize(
+    ("failing_trigger", "expected_effect_status", "expected_result_recorded"),
+    [
+        ("action_result_persisted", "dispatch_started", False),
+        ("action_verification_completed", "result_recorded", True),
+    ],
+)
+def test_persistence_failure_after_effect_is_atomic_and_never_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_trigger: str,
+    expected_effect_status: str,
+    expected_result_recorded: bool,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    recovered = _recovered_task(tmp_path, action_executor=_counting_executor(calls))
+    original_insert = ExecutionLedger._insert_boundary
+
+    def failing_insert(connection, **kwargs):
+        if kwargs["trigger"] == failing_trigger:
+            raise sqlite3.OperationalError("disk I/O error")
+        return original_insert(connection, **kwargs)
+
+    monkeypatch.setattr(ExecutionLedger, "_insert_boundary", staticmethod(failing_insert))
+
+    with pytest.raises(sqlite3.OperationalError):
+        recovered.resume()
+
+    monkeypatch.undo()
+    row = _execution_rows(recovered)[0]
+    latest = recovered.gateway._latest_checkpoint(recovered.task_id)
+    assert row["state"] == "executing"
+    assert row["effect_status"] == expected_effect_status
+    assert (row["result"] is not None) is expected_result_recorded
+    assert row["verification_checkpoint_id"] is None
+    assert [item["action_id"] for item in latest["pending_steps"]] == ["action-step-two"]
+    assert _step_two(recovered) == "step two complete\n"
+
+    assert recovered.resume().executed is False
+    replacement = _replace_worker(recovered)
+    replacement_result = replacement.resume()
+    assert replacement_result.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+    assert len(calls) == 1
+
+
+def test_attempt_superseded_mid_action_cannot_advance_canonical_state(
+    tmp_path: Path,
+) -> None:
+    holder: dict[str, RecoveredFixture] = {}
+    replacements: list[RecoveredFixture] = []
+
+    def slow_executor(action: dict[str, Any], root: Path | str | None):
+        replacements.append(_replace_worker(holder["fixture"]))
+        (Path(root) / str(action["path"])).write_text(str(action["content"]), encoding="utf-8")
+        return {"success": True, "path": str(action["path"])}
+
+    recovered = _recovered_task(tmp_path, action_executor=slow_executor)
+    holder["fixture"] = recovered
+    checkpoint_before = recovered.gateway._latest_checkpoint(recovered.task_id)
+
+    result = recovered.resume()
+    row = _execution_rows(recovered)[0]
+    latest = recovered.gateway._latest_checkpoint(recovered.task_id)
+
+    assert result.executed is True
+    assert result.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+    assert result.result_checkpoint_id is None
+    assert row["state"] == "effect_may_have_occurred"
+    assert row["result"]["success"] is True
+    assert latest["sequence"] == checkpoint_before["sequence"] + 1  # pre-action only
+    assert latest["trigger"] == "before_authorized_action"
+    assert [item["action_id"] for item in latest["pending_steps"]] == ["action-step-two"]
+
+    replacement_result = replacements[0].resume()
+    assert replacement_result.executed is False
+    assert replacement_result.idempotency_state is ActionIdempotencyState.EFFECT_UNCERTAIN
+
+
+@pytest.mark.parametrize(
+    ("pending_steps", "plan_actions", "message"),
+    [
+        (({"action_type": "write_file"},), None, "action_id is required"),
+        (({"action_id": "action-missing"},), None, "absent from the canonical plan"),
+        (
+            ({"action_id": "action-step-two"},),
+            [{"id": "action-step-two", "payload": "not-a-dict"}],
+            "malformed payload",
+        ),
+        (
+            ({"action_id": "action-step-two"},),
+            [{"id": "action-step-two", "payload": {}}],
+            "no action type",
+        ),
+    ],
+)
+def test_malformed_persisted_action_fails_closed(
+    tmp_path: Path,
+    pending_steps: tuple[dict[str, Any], ...],
+    plan_actions: list[dict[str, Any]] | None,
+    message: str,
+) -> None:
+    recovered = _recovered_task(tmp_path)
+    checkpoint = recovered.gateway._latest_checkpoint(recovered.task_id)
+    plan = dict(checkpoint["current_plan"])
+    if plan_actions is not None:
+        plan["actions"] = plan_actions
+    recovered.ledger.record_boundary(
+        task_id=recovered.task_id,
+        attempt_id=recovered.attempt_id,
+        trigger="plan_revised",
+        event_type="plan.revised",
+        state=RecoveredActionGateway._checkpoint_state(
+            checkpoint,
+            current_plan=plan,
+            pending_steps=pending_steps,
+        ),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        recovered.resume()
+    inspection = recovered.sessions.inspect_task(recovered.task_id)
+
+    assert inspection is not None
+    assert inspection["recovered_action_gateway"]["proposed_action"] is None
+    assert _execution_rows(recovered) == []
+    assert _step_two(recovered) == "not done\n"

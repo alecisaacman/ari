@@ -13,13 +13,15 @@ and acknowledge continuation state, but it cannot authorize itself.
    authority snapshot, restrictions, action-bound approval, tool allowlist, and
    execution-root scope.
 4. ARI persists an `allow`, `deny`, `require_approval`, or `blocked` resume decision.
-5. On allow, ARI atomically reserves the idempotency key and writes a pre-action
-   checkpoint before dispatch.
-6. ARI repeats volatile checks immediately before using the existing
-   `execute_action` plus `ExecutionRoot` boundary.
-7. ARI persists the raw action result, checkpoints it, verifies independently,
-   checkpoints verification, and only then moves the action from pending to
-   completed.
+5. On allow, one immediate transaction re-checks that the evaluated checkpoint and
+   active attempt are still current, then commits the allow decision, the
+   idempotency reservation, and the pre-action checkpoint together.
+6. ARI re-derives the pending action and refuses dispatch unless it is exactly the
+   reserved action, repeats the volatile checks, and commits `executing` before
+   calling the existing `execute_action` plus `ExecutionRoot` boundary.
+7. ARI commits the raw action result with its checkpoint, verifies independently,
+   then commits the verification checkpoint, the pending-to-completed move, and
+   the final execution state in one transaction.
 8. Control returns to ARI. A following pending action requires another explicit
    resume call and another durable decision.
 
@@ -55,9 +57,27 @@ action digest. Its durable states are:
 - `verification_failed`
 - `already_completed` (derived from the canonical checkpoint)
 
-Dispatch is reserved before the tool runs. A duplicate request cannot reserve
-the same key. Exceptions after dispatch are recorded as uncertain and are never
-blindly retried.
+Dispatch is reserved before the tool runs. A duplicate or concurrent request
+cannot reserve the same key; it receives a durable `deny` decision. Exceptions
+after dispatch are recorded as uncertain and are never blindly retried.
+
+Idempotency is governed per canonical `action_id`, not only per digest. The exact
+key always governs; otherwise any earlier execution of the same `action_id`
+governs unless it stopped before effect. A revised plan digest therefore cannot
+re-run an action whose effect is executing, uncertain, unverified, or succeeded.
+An action that stopped before effect can run only under a new digest, meaning an
+explicit canonical plan revision.
+
+When the reserving attempt has been superseded, ARI derives and persists its
+state for the replacement worker:
+
+- `executing` becomes `effect_may_have_occurred`
+- `authorized_not_run` becomes `failed_before_effect`, because dispatch commits
+  `executing` before the tool runs
+
+An attempt superseded while its action runs cannot advance canonical checkpoints.
+Its result is kept on the execution record as evidence, and the effect is marked
+uncertain.
 
 ## Remaining bypass paths
 
@@ -81,5 +101,9 @@ they do not yet share this decision/idempotency/checkpoint sequence.
   outer service/authentication concern.
 - Uncertain effects require human or future reconciliation evidence; this slice
   deliberately does not infer or retry them.
+- `failed_before_effect` for an unchanged digest stays denied. Re-running it
+  requires a canonical plan revision or a future explicit retry design.
+- A crash after `executing` commits always resolves to uncertainty, even when the
+  result was already recorded. Reconciliation is left to a human or a later slice.
 - The gateway uses the current backend only. Provider routing and failover are not
   part of this slice.

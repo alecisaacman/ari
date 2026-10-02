@@ -1,77 +1,96 @@
 """ARI core service package."""
+try:
+    from ari_core.approvals import (
+        ApprovalWorkflowResult,
+        approve_pending_approval,
+        deny_pending_approval,
+        list_pending_approvals,
+    )
+    from ari_core.authority import evaluate_decision_authority
+    from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message
+    from ari_core.controller import resume_controller_cycle, run_controller_cycle
+    from ari_core.decision_translate import build_controller_decision
+    from ari_core.history import (
+        OrchestrationRunComparison,
+        OrchestrationRunDetails,
+        compare_latest_two_runs,
+        get_alert_details,
+        get_latest_run_details,
+        get_previous_run_details,
+        get_signal_details,
+    )
+    from ari_core.memory import get_conversation_state, save_conversation_state
+    from ari_core.orchestration import (
+        RunSignalOrchestrationInput,
+        RunSignalOrchestrationResult,
+        run_signal_orchestration,
+    )
+    from ari_core.skills import (
+        MCP_BETA_HEADER,
+        build_mcp_request_args,
+        extract_resolved_skill_invocations,
+        record_skill_invocation,
+        register_skill,
+    )
+    from ari_core.state import (
+        CreateOpenLoopInput,
+        DailyStateUpdate,
+        StateMutationResult,
+        WeeklyPlanningUpdate,
+        WeeklyReflectionUpdate,
+        create_open_loop,
+        get_daily_state,
+        get_weekly_state,
+        list_open_loops,
+        resolve_open_loop,
+        update_daily_state,
+        update_weekly_plan,
+        update_weekly_reflection,
+    )
+except ImportError:
+    # Allow importing focused submodules when tests install partial dependency doubles.
+    pass
 
-from __future__ import annotations
-
-from importlib import import_module
-from typing import Any
-
-_EXPORTS: dict[str, tuple[str, str]] = {
-    "ApprovalWorkflowResult": ("ari_core.approvals", "ApprovalWorkflowResult"),
-    "BrainResponse": ("ari_core.brain", "BrainResponse"),
-    "CreateOpenLoopInput": ("ari_core.state", "CreateOpenLoopInput"),
-    "DailyStateUpdate": ("ari_core.state", "DailyStateUpdate"),
-    "MCP_BETA_HEADER": ("ari_core.skills", "MCP_BETA_HEADER"),
-    "OrchestrationRunComparison": ("ari_core.history", "OrchestrationRunComparison"),
-    "OrchestrationRunDetails": ("ari_core.history", "OrchestrationRunDetails"),
-    "RunSignalOrchestrationInput": (
-        "ari_core.orchestration",
-        "RunSignalOrchestrationInput",
-    ),
-    "RunSignalOrchestrationResult": (
-        "ari_core.orchestration",
-        "RunSignalOrchestrationResult",
-    ),
-    "StateMutationResult": ("ari_core.state", "StateMutationResult"),
-    "WeeklyPlanningUpdate": ("ari_core.state", "WeeklyPlanningUpdate"),
-    "WeeklyReflectionUpdate": ("ari_core.state", "WeeklyReflectionUpdate"),
-    "approve_pending_approval": ("ari_core.approvals", "approve_pending_approval"),
-    "build_controller_decision": ("ari_core.decision_translate", "build_controller_decision"),
-    "build_mcp_request_args": ("ari_core.skills", "build_mcp_request_args"),
-    "compare_latest_two_runs": ("ari_core.history", "compare_latest_two_runs"),
-    "create_open_loop": ("ari_core.state", "create_open_loop"),
-    "deny_pending_approval": ("ari_core.approvals", "deny_pending_approval"),
-    "evaluate_decision_authority": ("ari_core.authority", "evaluate_decision_authority"),
-    "extract_resolved_skill_invocations": (
-        "ari_core.skills",
-        "extract_resolved_skill_invocations",
-    ),
-    "get_alert_details": ("ari_core.history", "get_alert_details"),
-    "get_conversation_state": ("ari_core.memory", "get_conversation_state"),
-    "get_daily_state": ("ari_core.state", "get_daily_state"),
-    "get_latest_run_details": ("ari_core.history", "get_latest_run_details"),
-    "get_previous_run_details": ("ari_core.history", "get_previous_run_details"),
-    "get_signal_details": ("ari_core.history", "get_signal_details"),
-    "get_weekly_state": ("ari_core.state", "get_weekly_state"),
-    "list_open_loops": ("ari_core.state", "list_open_loops"),
-    "list_pending_approvals": ("ari_core.approvals", "list_pending_approvals"),
-    "make_tool_dispatcher": ("ari_core.brain", "make_tool_dispatcher"),
-    "record_skill_invocation": ("ari_core.skills", "record_skill_invocation"),
-    "register_skill": ("ari_core.skills", "register_skill"),
-    "respond_to_message": ("ari_core.brain", "respond_to_message"),
-    "resume_controller_cycle": ("ari_core.controller", "resume_controller_cycle"),
-    "resolve_open_loop": ("ari_core.state", "resolve_open_loop"),
-    "run_controller_cycle": ("ari_core.controller", "run_controller_cycle"),
-    "run_signal_orchestration": ("ari_core.orchestration", "run_signal_orchestration"),
-    "save_conversation_state": ("ari_core.memory", "save_conversation_state"),
-    "update_daily_state": ("ari_core.state", "update_daily_state"),
-    "update_weekly_plan": ("ari_core.state", "update_weekly_plan"),
-    "update_weekly_reflection": ("ari_core.state", "update_weekly_reflection"),
-}
-
-__all__ = list(_EXPORTS)
-
-
-def __getattr__(name: str) -> Any:
-    """Load public exports on demand without hiding dependency import errors."""
-    try:
-        module_name, attribute_name = _EXPORTS[name]
-    except KeyError as exc:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
-
-    value = getattr(import_module(module_name), attribute_name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+__all__ = [
+    "ApprovalWorkflowResult",
+    "BrainResponse",
+    "CreateOpenLoopInput",
+    "DailyStateUpdate",
+    "MCP_BETA_HEADER",
+    "OrchestrationRunComparison",
+    "OrchestrationRunDetails",
+    "RunSignalOrchestrationInput",
+    "RunSignalOrchestrationResult",
+    "StateMutationResult",
+    "WeeklyPlanningUpdate",
+    "WeeklyReflectionUpdate",
+    "approve_pending_approval",
+    "build_controller_decision",
+    "build_mcp_request_args",
+    "compare_latest_two_runs",
+    "create_open_loop",
+    "deny_pending_approval",
+    "evaluate_decision_authority",
+    "extract_resolved_skill_invocations",
+    "get_alert_details",
+    "get_conversation_state",
+    "get_daily_state",
+    "get_latest_run_details",
+    "get_previous_run_details",
+    "get_signal_details",
+    "get_weekly_state",
+    "list_open_loops",
+    "list_pending_approvals",
+    "make_tool_dispatcher",
+    "record_skill_invocation",
+    "register_skill",
+    "respond_to_message",
+    "resume_controller_cycle",
+    "resolve_open_loop",
+    "run_controller_cycle",
+    "run_signal_orchestration",
+    "save_conversation_state",
+    "update_daily_state",
+    "update_weekly_plan",
+    "update_weekly_reflection",
+]
