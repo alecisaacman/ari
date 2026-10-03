@@ -267,9 +267,19 @@ That remaining gap is the current product bottleneck.
   each versioned migration's statements and its `ari_schema_migrations` row commit
   together or not at all, and which migrations are pending is decided only while
   holding SQLite's write lock, so concurrent initializers serialize instead of
-  re-running the same migration. Migration files may not contain transaction
-  control statements. An initializer waits up to `ARI_SQLITE_LOCK_TIMEOUT_SECONDS`
-  (default 30) for the write lock, then fails with `MigrationLockTimeout`.
+  re-running the same migration. An initializer waits up to
+  `ARI_SQLITE_LOCK_TIMEOUT_SECONDS` (default 30; must be finite, greater than 0 and
+  at most 86400) for the write lock, then fails with `MigrationLockTimeout`.
+- Migration script contract: statements are split with
+  `sqlite3.complete_statement`; the final statement may omit its semicolon; a
+  leading UTF-8 BOM is ignored; a script ending inside a string, quoted identifier
+  or block comment is rejected. Transaction control (`BEGIN`, `COMMIT`, `END`,
+  `ROLLBACK`, `SAVEPOINT`, `RELEASE`, `ROLLBACK TO`) is refused through SQLite's
+  authorizer as each statement is prepared, so spelling, comments, BOMs or
+  whitespace cannot disguise it; the same words inside strings, comments or quoted
+  identifiers are harmless. `VACUUM` is refused by SQLite inside a transaction. Any
+  rejection rolls the whole migration back unrecorded. Checksums remain SHA-256 of
+  the file as read by `Path.read_text(encoding="utf-8")`.
 - `services/ari-core` owns repository and mutation logic.
 - `services/ari-api` is the default service contract.
 - `services/ari-hub` consumes canonical state and should not become a second brain.

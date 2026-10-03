@@ -1,5 +1,7 @@
 import hashlib
+import math
 import os
+import re
 import shutil
 import sqlite3
 from collections.abc import Iterator
@@ -19,11 +21,13 @@ from ...core.paths import (
 
 LOCK_TIMEOUT_ENV = "ARI_SQLITE_LOCK_TIMEOUT_SECONDS"
 DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
+MAX_LOCK_TIMEOUT_SECONDS = 86400.0
 
-# Statements that would end or nest the transaction a migration runs inside.
-_TRANSACTION_CONTROL_KEYWORDS = frozenset(
-    {"begin", "commit", "end", "rollback", "savepoint", "release", "vacuum"}
-)
+_BOM = "\ufeff"
+_LEADING_IGNORABLE = re.compile(r"\A[\s\ufeff;]+")
+# SQLite's authorizer reports BEGIN/COMMIT/END/ROLLBACK as SQLITE_TRANSACTION and
+# SAVEPOINT/RELEASE/ROLLBACK TO as SQLITE_SAVEPOINT, however the text is spelled.
+_TRANSACTION_CONTROL_ACTIONS = frozenset({sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT})
 
 
 class MigrationLockTimeout(RuntimeError):
@@ -95,9 +99,12 @@ def _lock_timeout() -> float:
     try:
         seconds = float(raw)
     except ValueError:
-        seconds = 0.0
-    if not seconds > 0:
-        raise ValueError(f"{LOCK_TIMEOUT_ENV} must be a positive number of seconds: {raw!r}")
+        seconds = math.nan
+    if not (math.isfinite(seconds) and 0 < seconds <= MAX_LOCK_TIMEOUT_SECONDS):
+        raise ValueError(
+            f"{LOCK_TIMEOUT_ENV} must be a finite number of seconds greater than 0 and at "
+            f"most {MAX_LOCK_TIMEOUT_SECONDS:g}: {raw!r}"
+        )
     return seconds
 
 
@@ -192,42 +199,74 @@ def _execute_script(connection: sqlite3.Connection, sql: str) -> None:
     """Run each statement of a script inside the caller's open transaction.
 
     Unlike `executescript`, this never commits; the caller's transaction stays the
-    only unit of work.
+    only unit of work. SQLite itself classifies each statement while it is prepared,
+    and any transaction-control statement is refused before it can run.
     """
-    for statement in _split_statements(sql):
-        keyword = _strip_leading_comments(statement).split(None, 1)[0].rstrip(";").lower()
-        if keyword in _TRANSACTION_CONTROL_KEYWORDS:
-            raise ValueError(
-                f"Schema scripts may not control the transaction they run in: {keyword}"
-            )
-        connection.execute(statement)
+    denied: list[str] = []
+
+    def authorize(action: int, arg1: str | None, arg2: str | None, *_: object) -> int:
+        if action in _TRANSACTION_CONTROL_ACTIONS:
+            denied.append(" ".join(part for part in (arg1, arg2) if part))
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    statements = _split_statements(sql)
+    connection.set_authorizer(authorize)
+    try:
+        for statement in statements:
+            try:
+                connection.execute(statement)
+            except sqlite3.DatabaseError as error:
+                if denied:
+                    raise ValueError(
+                        "Schema scripts may not control the transaction they run in: "
+                        f"{denied[0]}"
+                    ) from error
+                raise
+            if not connection.in_transaction:
+                raise RuntimeError("A schema statement ended the migration transaction.")
+    finally:
+        connection.set_authorizer(None)
 
 
 def _split_statements(sql: str) -> list[str]:
+    """Split a script into complete statements.
+
+    A leading UTF-8 byte-order mark is ignored. The last statement may omit its
+    semicolon. A script that ends inside a string, identifier or block comment is
+    rejected as truncated.
+    """
     statements: list[str] = []
     buffer = ""
-    for character in sql:
+    for character in sql.removeprefix(_BOM):
         buffer += character
         if character == ";" and sqlite3.complete_statement(buffer):
-            if _strip_leading_comments(buffer).strip(" \t\r\n;"):
+            if not _is_blank(buffer):
                 statements.append(buffer.strip())
             buffer = ""
-    if _strip_leading_comments(buffer).strip():
-        raise ValueError("Schema script ends with an incomplete statement.")
+    if not _is_blank(buffer):
+        # "\n" ends a trailing line comment before the terminator is tested.
+        if not sqlite3.complete_statement(buffer + "\n;"):
+            raise ValueError("Schema script ends with an incomplete statement.")
+        statements.append(buffer.strip())
     return statements
 
 
-def _strip_leading_comments(text: str) -> str:
-    remaining = text.lstrip()
+def _is_blank(text: str) -> bool:
+    """True when text holds only whitespace, byte-order marks, comments and semicolons."""
+    remaining = text
     while True:
+        remaining = _LEADING_IGNORABLE.sub("", remaining, count=1)
         if remaining.startswith("--"):
             newline = remaining.find("\n")
-            remaining = "" if newline == -1 else remaining[newline + 1 :].lstrip()
+            remaining = "" if newline == -1 else remaining[newline + 1 :]
         elif remaining.startswith("/*"):
             end = remaining.find("*/")
-            remaining = "" if end == -1 else remaining[end + 2 :].lstrip()
+            if end == -1:
+                raise ValueError("Schema script ends inside an unterminated block comment.")
+            remaining = remaining[end + 2 :]
         else:
-            return remaining
+            return not remaining
 
 
 def _ensure_followups_completed_at_column(connection: sqlite3.Connection) -> None:

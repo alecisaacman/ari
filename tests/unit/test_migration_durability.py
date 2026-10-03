@@ -482,13 +482,34 @@ def test_initializer_waits_out_a_lock_held_beyond_five_seconds(scratch: Path) ->
     _assert_fully_migrated(scratch, db_path)
 
 
-def test_lock_timeout_setting_must_be_a_positive_number(
+@pytest.mark.parametrize(
+    "raw", ["inf", "-inf", "Infinity", "nan", "0", "0.0", "-1", "-0.5", "never", "1e9"]
+)
+def test_lock_timeout_setting_must_be_finite_positive_and_bounded(
+    scratch: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+) -> None:
+    monkeypatch.setenv("ARI_SQLITE_LOCK_TIMEOUT_SECONDS", raw)
+    with pytest.raises(ValueError, match="ARI_SQLITE_LOCK_TIMEOUT_SECONDS"):
+        initialize_database(db_path=scratch / "a.db")
+    assert not (scratch / "a.db").exists() or _versions(scratch / "a.db") == []
+
+
+def test_lock_timeout_default_and_valid_override(
     scratch: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ARI_SQLITE_LOCK_TIMEOUT_SECONDS", "never")
-    with pytest.raises(ValueError, match="ARI_SQLITE_LOCK_TIMEOUT_SECONDS"):
-        initialize_database(db_path=scratch / "a.db")
+    from ari_core.modules.networking import db
+
+    monkeypatch.delenv("ARI_SQLITE_LOCK_TIMEOUT_SECONDS", raising=False)
+    assert db._lock_timeout() == 30.0
+    monkeypatch.setenv("ARI_SQLITE_LOCK_TIMEOUT_SECONDS", "  ")
+    assert db._lock_timeout() == 30.0
+    monkeypatch.setenv("ARI_SQLITE_LOCK_TIMEOUT_SECONDS", "2.5")
+    assert db._lock_timeout() == 2.5
+    initialize_database(db_path=scratch / "a.db")
+    assert _versions(scratch / "a.db") == VERSIONS
 
 
 # --- upgrades and checksums -------------------------------------------------------
@@ -599,3 +620,203 @@ def test_checksums_match_the_unchanged_file_bytes(scratch: Path) -> None:
         ).hexdigest()
         for version in VERSIONS
     }
+
+
+# --- migration script parsing -----------------------------------------------------
+
+
+def _apply_extra_migration(scratch: Path, name: str, body: str | bytes) -> Path:
+    """Fully migrate a scratch DB, then offer one more migration file."""
+    migrations = scratch / f"extra-{name}"
+    shutil.copytree(MIGRATIONS_DIR, migrations)
+    path = migrations / f"0007_{name}.sql"
+    if isinstance(body, bytes):
+        path.write_bytes(body)
+    else:
+        path.write_text(body, encoding="utf-8", newline="")
+    db_path = scratch / f"{name}.db"
+    initialize_database(db_path=db_path)
+    return migrations
+
+
+def _assert_rejected_atomically(
+    scratch: Path,
+    name: str,
+    body: str | bytes,
+    error: type[BaseException] | tuple[type[BaseException], ...],
+    match: str | None = None,
+) -> None:
+    migrations = _apply_extra_migration(scratch, name, body)
+    db_path = scratch / f"{name}.db"
+    before = _schema(db_path)
+
+    with pytest.raises(error, match=match):
+        initialize_database(db_path=db_path, migrations_dir=migrations)
+
+    assert _schema(db_path) == before
+    assert "probe_survived" not in _schema(db_path)["tables"]
+    assert _versions(db_path) == VERSIONS
+
+
+def test_bom_prefixed_commit_cannot_split_a_migration(scratch: Path) -> None:
+    _assert_rejected_atomically(
+        scratch,
+        "bom_commit",
+        "create table probe_survived(x text);\n"
+        "\ufeffCOMMIT;\n"
+        "insert into definitely_missing_table values(1);\n",
+        ValueError,
+        "transaction",
+    )
+
+
+TRANSACTION_CONTROL_FORMS = {
+    "bom": "\ufeffCOMMIT;",
+    "double-bom": "\ufeff\ufeffcommit;",
+    "comment-then-bom": "/* note */\ufeffCOMMIT;",
+    "line-comment-then-bom": "-- note\n\ufeff commit;",
+    "whitespace-bom-formfeed": " \t\r\n\ufeff\x0c END TRANSACTION;",
+    "comments-bom-whitespace": "/* a */ \ufeff -- b\r\n \ufeff\tRollback ;",
+    "begin": "BEGIN;",
+    "begin-immediate": "begin immediate;",
+    "begin-exclusive": "BEGIN EXCLUSIVE TRANSACTION;",
+    "commit": "commit;",
+    "commit-transaction": "COMMIT TRANSACTION;",
+    "end": "END;",
+    "end-transaction": "end transaction;",
+    "rollback": "ROLLBACK;",
+    "rollback-transaction": "rollback transaction;",
+    "savepoint": "SAVEPOINT probe;",
+    "release": "RELEASE probe;",
+    "release-savepoint": "release savepoint probe;",
+    "rollback-to": "ROLLBACK TO probe;",
+    "rollback-to-savepoint": "rollback transaction to savepoint probe;",
+    "crlf": "\r\nCOMMIT;\r\n",
+    "no-semicolon-last": "COMMIT",
+}
+
+
+@pytest.mark.parametrize(
+    "control", TRANSACTION_CONTROL_FORMS.values(), ids=TRANSACTION_CONTROL_FORMS.keys()
+)
+def test_every_transaction_control_form_is_refused_atomically(
+    scratch: Path,
+    control: str,
+) -> None:
+    tail = "" if control == "COMMIT" else "\ninsert into definitely_missing_table values(1);\n"
+    _assert_rejected_atomically(
+        scratch,
+        "control",
+        f"create table probe_survived(x text);\r\n{control}{tail}",
+        ValueError,
+        "transaction",
+    )
+
+
+def test_vacuum_inside_a_migration_is_refused_atomically(scratch: Path) -> None:
+    _assert_rejected_atomically(
+        scratch,
+        "vacuum",
+        "create table probe_survived(x text);\n\ufeffVACUUM;\n",
+        sqlite3.OperationalError,
+        "VACUUM",
+    )
+
+
+def test_transaction_words_in_strings_comments_and_identifiers_are_harmless(
+    scratch: Path,
+) -> None:
+    body = (
+        "\ufeff-- commit; rollback; end;\r\n"
+        "/* begin; savepoint s; release s; */\r\n"
+        'create table "commit"("rollback" text, [end] text, `savepoint` text);\r\n'
+        "insert into \"commit\" values ('commit;', 'end transaction;', 'begin; release x;');\r\n"
+        "create table probe_after(x text) -- vacuum; commit\r\n"
+    )
+    migrations = _apply_extra_migration(scratch, "harmless", body)
+    db_path = scratch / "harmless.db"
+
+    initialize_database(db_path=db_path, migrations_dir=migrations)
+
+    assert _versions(db_path) == [*VERSIONS, "0007_harmless"]
+    with closing(sqlite3.connect(db_path)) as connection:
+        assert connection.execute('select * from "commit"').fetchall() == [
+            ("commit;", "end transaction;", "begin; release x;")
+        ]
+        assert connection.execute(
+            "select 1 from sqlite_master where name = 'probe_after'"
+        ).fetchone()
+
+
+def test_utf8_bom_file_with_crlf_applies_with_unchanged_checksum_formula(scratch: Path) -> None:
+    import hashlib
+
+    raw = "\ufeffcreate table probe_bom(x text);\r\ninsert into probe_bom values ('a');\r\n"
+    migrations = _apply_extra_migration(scratch, "bomfile", raw.encode("utf-8"))
+    db_path = scratch / "bomfile.db"
+
+    initialize_database(db_path=db_path, migrations_dir=migrations)
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        assert connection.execute("select x from probe_bom").fetchall() == [("a",)]
+        checksum = connection.execute(
+            "select checksum from ari_schema_migrations where version = '0007_bomfile'"
+        ).fetchone()[0]
+    # The checksum formula is unchanged: SHA-256 of read_text(), which keeps the
+    # BOM and normalizes CRLF to LF, so databases migrated earlier still validate.
+    as_read = (migrations / "0007_bomfile.sql").read_text(encoding="utf-8")
+    assert as_read.startswith("\ufeff") and "\r" not in as_read
+    assert checksum == hashlib.sha256(as_read.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "create table probe_survived(x text);\n/* unterminated",
+        "create table probe_survived(x text);\n/* unterminated ; create table more(y);",
+        "create table probe_survived(x text);\ncreate table other(y /* open",
+        "create table probe_survived(x text);\n\ufeff /* closed */ /* open",
+    ],
+    ids=["trailing", "swallows-later-sql", "inside-statement", "after-closed-comment"],
+)
+def test_unterminated_block_comment_is_rejected_atomically(scratch: Path, body: str) -> None:
+    _assert_rejected_atomically(
+        scratch, "unterminated", body, ValueError, "unterminated|incomplete"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "create table probe_survived(x text);\ninsert into probe_survived values ('open",
+        'create table probe_survived(x text);\ncreate table "open(x text)',
+        "create table probe_survived(x text);\ncreate table other(",
+    ],
+    ids=["string", "quoted-identifier", "truncated-statement"],
+)
+def test_truncated_script_is_rejected_atomically(scratch: Path, body: str) -> None:
+    # Unclosed literals are caught by the splitter; a token-complete but syntactically
+    # truncated statement is refused by SQLite. Either way nothing is applied.
+    _assert_rejected_atomically(
+        scratch, "truncated", body, (ValueError, sqlite3.OperationalError), "incomplete"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "create table valid_without_semicolon(x text)",
+        "create table valid_without_semicolon(x text) -- trailing comment",
+        "create table first(x text);\r\ncreate table valid_without_semicolon(x text)\r\n",
+        "create table valid_without_semicolon(x text) /* closed */\n\n",
+    ],
+    ids=["single", "line-comment", "after-others-crlf", "block-comment"],
+)
+def test_final_statement_may_omit_its_semicolon(scratch: Path, body: str) -> None:
+    migrations = _apply_extra_migration(scratch, "trailing", body)
+    db_path = scratch / "trailing.db"
+
+    initialize_database(db_path=db_path, migrations_dir=migrations)
+
+    assert _versions(db_path) == [*VERSIONS, "0007_trailing"]
+    assert "valid_without_semicolon" in _schema(db_path)["tables"]
