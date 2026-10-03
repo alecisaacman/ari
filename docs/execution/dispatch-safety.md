@@ -13,7 +13,13 @@ A recovered action reaches its effect through one in-process, synchronous call:
 → `ExecutionRoot`. Today that call can only:
 
 - read, write, or patch a file under the execution root, in the calling thread
-- run an allowlisted subprocess (`pytest`, `ls`, `cat`) with `subprocess.run`
+- run an explicit command capability (`ls`, `cat`, `pytest`, `node`) as the leader of
+  a new process group (see [Execution Authority](execution-authority.md))
+
+Killing that process group on timeout, and best-effort after return, is cleanup
+only. It never issues a landing token, and `run_command` stays `unbounded`: a
+descendant that started its own session, or any effect already handed off, can
+still land later.
 
 There is no network provider, no provider idempotency key, no provider-side
 reference, and no cancellation API. Dispatch is not centralized: it runs in

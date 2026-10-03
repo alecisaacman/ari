@@ -11,6 +11,7 @@ from uuid import uuid4
 from ...core.paths import DB_PATH
 from ..coordination.db import put_coordination_entity
 from ..memory.context import build_memory_context
+from .command_capabilities import get_command_capabilities
 from .contracts import CheckpointState, ExecutionResultContract, ExecutionTaskSpec
 from .executor import execute_action, verify_action_result
 from .ledger import ExecutionLedger
@@ -832,6 +833,7 @@ def _git_current_branch(repo_root: Path) -> str | None:
 
 
 SKIPPED_REPO_DIRS = {
+    ".ari-exec",
     ".git",
     ".mypy_cache",
     ".next",
@@ -904,7 +906,8 @@ def _test_commands(
         commands.append(("pytest",))
     if "package.json" in manifest_names:
         commands.append(("npm", "test"))
-    return [command for command in commands if command[0] in ExecutionRoot.ALLOWED_COMMANDS]
+    capability_names = {capability.name for capability in get_command_capabilities()}
+    return [command for command in commands if command[0] in capability_names]
 
 
 def _language_summary(files_sample: tuple[str, ...]) -> dict[str, int]:

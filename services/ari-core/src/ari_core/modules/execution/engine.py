@@ -9,6 +9,12 @@ from typing import Any, Literal
 
 from ...core.paths import DB_PATH
 from ...core.pause import ensure_not_paused
+from .command_capabilities import (
+    CommandCapabilityError,
+    PreparedCommand,
+    prepare_command,
+    run_prepared_command,
+)
 from .db import (
     create_coding_action,
     create_command_run,
@@ -227,7 +233,12 @@ def patch_file(
     }
 
 
-def _validate_command(command: str) -> list[str]:
+def _prepare_command(command: str, cwd: Path) -> PreparedCommand:
+    """Map an operator command string onto an explicit command capability.
+
+    The string is split without a shell; the resulting request must match a capability,
+    which builds the argv from a trusted executable (see `command_capabilities`).
+    """
     if not command.strip():
         raise ValueError("command is required")
     if any(token in command for token in DISALLOWED_COMMAND_TOKENS):
@@ -237,23 +248,10 @@ def _validate_command(command: str) -> list[str]:
     if not argv:
         raise ValueError("command is required")
 
-    if not _command_is_allowed(argv):
-        raise ValueError(f"Command is not allowed yet: {command}")
-
-    return argv
-
-
-def _command_is_allowed(argv: list[str]) -> bool:
-    if argv[:2] == ["npm", "test"]:
-        return True
-    if argv[:3] in (["npm", "run", "build"], ["npm", "run", "lint"]):
-        return True
-    if len(argv) >= 2 and argv[0] == "node" and argv[1] in {"--test", "--check"}:
-        return True
-    if len(argv) >= 3 and argv[1:3] == ["-m", "pytest"]:
-        executable = Path(argv[0]).name
-        return executable.startswith("python") or executable == "python"
-    return False
+    try:
+        return prepare_command(argv, root=_execution_root(), cwd=cwd)
+    except CommandCapabilityError as error:
+        raise ValueError(f"Command is not allowed yet: {command} ({error})") from error
 
 
 def classify_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -270,20 +268,13 @@ def classify_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def execute_command(command: str, *, cwd: str = ".", timeout_seconds: int = 60) -> dict[str, Any]:
     ensure_not_paused()
-    argv = _validate_command(command)
     resolved_cwd = resolve_execution_path(cwd, must_exist=True, allow_directory=True)
     if not resolved_cwd.is_dir():
         raise ValueError("cwd must point to a directory inside the execution root.")
+    prepared = _prepare_command(command, resolved_cwd)
 
     try:
-        completed = subprocess.run(
-            argv,
-            cwd=str(resolved_cwd),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+        completed = run_prepared_command(prepared, timeout_seconds=timeout_seconds)
         result = {
             "success": completed.returncode == 0,
             "stdout": completed.stdout,

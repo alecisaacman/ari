@@ -63,5 +63,6 @@ verification command. Unsafe commands fail closed during planning/preview.
 
 ## Non-Goals
 
-This policy does not enable command execution. Execution remains disabled until a
-future approval boundary exists.
+This policy validates planner verification *strings* only; it never runs them.
+Commands that ARI actually executes go through the explicit command capabilities
+described in [Execution Authority](execution-authority.md).

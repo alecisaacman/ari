@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import subprocess
 from contextvars import ContextVar
 from pathlib import Path
 
+from .command_capabilities import (
+    PreparedCommand,
+    prepare_command,
+    run_prepared_command,
+)
 from .fs_authority import (
     protected_write_reason,
     read_text_nofollow,
@@ -26,8 +30,6 @@ class ExecutionRoot:
     containment of the commands those tools run.
     """
 
-    ALLOWED_COMMANDS = {"pytest", "ls", "cat"}
-
     def __init__(self, root: Path | str | None = None) -> None:
         self.root = resolve_execution_root(root)
 
@@ -49,16 +51,12 @@ class ExecutionRoot:
             raise ValueError(reason)
         return resolved
 
+    def prepare_command(self, command: list[str]) -> PreparedCommand:
+        """Resolve a command request to an explicit capability; see `command_capabilities`."""
+        return prepare_command(command, root=self.root)
+
     def _validate_command(self, command: list[str]) -> None:
-        if not command:
-            raise ValueError("command is required")
-        if command[0] not in self.ALLOWED_COMMANDS:
-            raise ValueError(f"command is not allowlisted: {command[0]}")
-        if command[0] in {"cat", "ls"}:
-            for argument in command[1:]:
-                if argument.startswith("-"):
-                    continue
-                self.resolve_path(argument)
+        self.prepare_command(command)
 
     def read_file(self, path: str | Path) -> str:
         return read_text_nofollow(self.resolve_path(path))
@@ -79,14 +77,10 @@ class ExecutionRoot:
         )
 
     def run_command(self, command: list[str], timeout_seconds: int = 30) -> ExecutionResult:
-        self._validate_command(command)
-        completed = subprocess.run(
-            command,
-            cwd=str(self.root),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
+        prepared = self.prepare_command(command)
+        completed = run_prepared_command(
+            prepared,
+            timeout_seconds=timeout_seconds,
             pass_fds=DISPATCH_HOLD_FDS.get(),
         )
         return ExecutionResult(

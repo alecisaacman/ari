@@ -27,6 +27,8 @@ from ari_core.modules.execution import (
     ResumeDecision,
     execute_action,
 )
+from ari_core.modules.execution import command_capabilities as capabilities
+from ari_core.modules.execution import sandbox as sandbox_module
 from ari_core.modules.execution.dispatch import DispatchFenceRejected, DispatchLock
 from ari_core.modules.execution.sandbox import DISPATCH_HOLD_FDS
 from test_effect_reconciliation import ABSENT_EVIDENCE, PRESENT_EVIDENCE
@@ -929,8 +931,20 @@ def _escaping_command(effect: Path, release: Path, *, exit_code: int) -> list[st
 
 @pytest.fixture
 def python_is_allowlisted(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        ExecutionRoot, "ALLOWED_COMMANDS", {*ExecutionRoot.ALLOWED_COMMANDS, sys.executable}
+    """Register a test-only `python -c` code-execution capability."""
+    monkeypatch.setitem(
+        capabilities.COMMAND_CAPABILITIES,
+        "test-python",
+        capabilities.CommandCapability(
+            name="test-python",
+            command_class=capabilities.CommandClass.CODE_EXECUTION,
+            description="Test-only arbitrary Python.",
+            executable_identity="sys.executable",
+            argv_shape="<sys.executable> -c <code>",
+            path_arguments="none",
+            match=lambda command: list(command[1:]) if command[0] == sys.executable else None,
+            build=lambda args, _context: [sys.executable, *args],
+        ),
     )
 
 
@@ -1055,11 +1069,11 @@ def test_run_command_children_inherit_the_dispatch_lock(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_run(*args, **kwargs):
+    def fake_run(prepared, **kwargs):
         captured.update(kwargs)
-        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(list(prepared.argv), 0, stdout="", stderr="")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sandbox_module, "run_prepared_command", fake_run)
     root = ExecutionRoot(tmp_path)
     token = DISPATCH_HOLD_FDS.set((7,))
     try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .command_capabilities import CommandClass, get_command_capabilities
 from .sandbox import ExecutionRoot
 
 
@@ -33,8 +34,28 @@ class ExecutionToolRegistry:
         return {
             "tools": self.list_tools(),
             "allowed_actions": sorted(self.allowed_action_types()),
-            "allowed_commands": sorted(ExecutionRoot.ALLOWED_COMMANDS),
+            "allowed_commands": sorted(
+                capability.name for capability in get_command_capabilities()
+            ),
+            "command_capabilities": [
+                capability.to_dict() for capability in get_command_capabilities()
+            ],
         }
+
+    @staticmethod
+    def command_class(
+        action: dict[str, Any],
+        *,
+        execution_root: ExecutionRoot,
+    ) -> CommandClass | None:
+        """The capability class of a run_command action, or None if it is invalid."""
+        command = action.get("command")
+        if not isinstance(command, list):
+            return None
+        try:
+            return execution_root.prepare_command(command).command_class
+        except ValueError:
+            return None
 
     def validate_execution_action(
         self,
@@ -109,8 +130,12 @@ DEFAULT_EXECUTION_TOOL_REGISTRY = ExecutionToolRegistry(
         ExecutionTool(
             name="Run command",
             action_type="run_command",
-            description="Run an allowlisted command inside the execution root.",
-            mutates_files=False,
+            description=(
+                "Run an explicit command capability inside the execution root. Treated as "
+                "mutating: only ls/cat are read-only inspection; pytest and node run local "
+                "code that ARI does not contain."
+            ),
+            mutates_files=True,
             required_payload_keys=("command",),
         ),
     )

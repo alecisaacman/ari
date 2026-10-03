@@ -1,7 +1,7 @@
 """The dispatch-safety boundary for recovered actions.
 
 ARI cannot revoke a side effect after it starts. What it enforces for the current
-in-process, single-host effects (filesystem writes and allowlisted subprocesses) is:
+in-process, single-host effects (filesystem writes and command-capability subprocesses) is:
 
 - Pre-dispatch: only the current fence generation, issued to the active attempt for
   the exact reserved execution, can cross into the effect, and only when every

@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from ...core.paths import DB_PATH
 from ...core.pause import get_pause_state
+from .command_capabilities import CommandClass
 from .contracts import (
     ActionIdempotencyState,
     AttemptLifecycleState,
@@ -32,6 +33,9 @@ from .executor import execute_action, verify_action_result
 from .ledger import ExecutionLedger, _decode_row, _json, sanitize_payload
 from .sandbox import DISPATCH_HOLD_FDS, ExecutionRoot
 from .tools import ExecutionToolRegistry, get_execution_tool_registry
+
+# Restrictions under which a recovered action may not mutate anything.
+NO_MUTATION_RESTRICTIONS = frozenset({"read only", "read-only", "no file writes", "no mutations"})
 
 Clock = Callable[[], datetime]
 PauseStateReader = Callable[[], dict[str, Any]]
@@ -799,12 +803,23 @@ class RecoveredActionGateway:
     def _restriction_error(self, proposal: RecoveredActionProposal) -> str | None:
         action_type = str(proposal.proposed_action.get("type") or "")
         normalized = {item.strip().lower().replace("_", " ") for item in proposal.restrictions}
-        if action_type in {"write_file", "patch_file"} and normalized.intersection(
-            {"read only", "read-only", "no file writes", "no mutations"}
-        ):
+        no_mutation = bool(normalized.intersection(NO_MUTATION_RESTRICTIONS))
+        if action_type in {"write_file", "patch_file"} and no_mutation:
             return "Task restrictions prohibit file mutation."
         if action_type == "run_command" and "no command execution" in normalized:
             return "Task restrictions prohibit command execution."
+        if action_type == "run_command" and no_mutation:
+            command_class = self.tool_registry.command_class(
+                proposal.proposed_action,
+                execution_root=self.execution_root,
+            )
+            # Commands are potentially mutating by default; only explicit read-only
+            # inspection capabilities satisfy a no-mutation restriction.
+            if command_class is not CommandClass.READ_ONLY_INSPECTION:
+                return (
+                    "Task restrictions prohibit mutation; only read-only inspection "
+                    "commands (ls, cat) may run, and this command executes code."
+                )
         if "no network" in normalized and action_type not in self.tool_registry.allowed_action_types():
             return "Task restrictions prohibit unclassified network-capable actions."
         return None

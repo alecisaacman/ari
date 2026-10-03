@@ -183,13 +183,13 @@ class RuleBasedPlanner:
             action = WorkerAction(
                 action_type="run_command",
                 payload={"command": command},
-                reason="Run the requested command if it passes sandbox validation.",
+                reason="Run the requested command if it matches an explicit command capability.",
             )
             return PlannerResult(
                 status="act",
                 reason=(
-                    "The goal requests a bounded command run; validation will enforce "
-                    "the sandbox allowlist."
+                    "The goal requests a command run; validation will require an explicit "
+                    "command capability. Commands other than ls/cat execute local code."
                 ),
                 confidence=0.76,
                 planner_name=self.planner_name,
@@ -279,7 +279,11 @@ class ModelPlanner:
                         "content": "required for write_file",
                         "find": "required for patch_file",
                         "replace": "required for patch_file",
-                        "command": "required list[str] for run_command",
+                        "command": (
+                            "required list[str] for run_command; must match a "
+                            "command capability. ls/cat are read-only inspection; "
+                            "pytest/node execute local code and are treated as mutating"
+                        ),
                     }
                 ],
                 "verification": [
