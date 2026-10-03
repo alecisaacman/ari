@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
-from ...core.paths import DB_PATH, EXECUTION_ROOT
+from ...core.paths import DB_PATH
 from ...core.pause import ensure_not_paused
 from .db import (
     create_coding_action,
@@ -25,6 +25,13 @@ from .db import (
     row_to_file_mutation_payload,
     sync_action_execution_outcome,
     update_coding_action,
+)
+from .fs_authority import (
+    configured_execution_root,
+    protected_write_reason,
+    read_text_nofollow,
+    reject_final_symlink,
+    replace_text_atomically,
 )
 
 ALLOWED_WRITE_SUFFIXES = {
@@ -56,7 +63,7 @@ DISALLOWED_COMMAND_TOKENS = ("&&", "||", "|", ";", ">", "<", "$(", "`", "\n")
 
 
 def _execution_root() -> Path:
-    return EXECUTION_ROOT.expanduser().resolve()
+    return configured_execution_root()
 
 
 def _timestamp() -> str:
@@ -138,6 +145,9 @@ def _record_mutation(
 def _validate_mutation_path(path: Path) -> None:
     if path.suffix not in ALLOWED_WRITE_SUFFIXES:
         raise ValueError(f"Mutating {path.suffix or 'extensionless'} files is not allowed yet.")
+    reason = protected_write_reason(_execution_root(), path)
+    if reason is not None:
+        raise ValueError(reason)
 
 
 def read_file(path: str) -> dict[str, Any]:
@@ -145,7 +155,7 @@ def read_file(path: str) -> dict[str, Any]:
     return {
         "success": True,
         "path": _safe_relpath(resolved),
-        "content": resolved.read_text(encoding="utf-8"),
+        "content": read_text_nofollow(resolved),
     }
 
 
@@ -157,11 +167,11 @@ def write_file(
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
     ensure_not_paused()
+    reject_final_symlink(_execution_root(), path)
     resolved = resolve_execution_path(path)
     _validate_mutation_path(resolved)
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    previous_content = resolved.read_text(encoding="utf-8") if resolved.exists() else None
-    resolved.write_text(content, encoding="utf-8")
+    previous_content = read_text_nofollow(resolved) if resolved.exists() else None
+    replace_text_atomically(_execution_root(), resolved, content)
     mutation = _record_mutation(
         action_id=action_id,
         path=resolved,
@@ -191,14 +201,15 @@ def patch_file(
     if not find_text:
         raise ValueError("find_text is required for patch operations.")
 
+    reject_final_symlink(_execution_root(), path)
     resolved = resolve_execution_path(path, must_exist=True)
     _validate_mutation_path(resolved)
-    original = resolved.read_text(encoding="utf-8")
+    original = read_text_nofollow(resolved)
     if find_text not in original:
         raise ValueError("Patch target text was not found in the file.")
 
     updated = original.replace(find_text, replace_text, 1)
-    resolved.write_text(updated, encoding="utf-8")
+    replace_text_atomically(_execution_root(), resolved, updated)
     mutation = _record_mutation(
         action_id=action_id,
         path=resolved,
@@ -311,6 +322,7 @@ def _normalize_operations(
         if op_type not in {"write", "patch"}:
             raise ValueError(f"Unsupported operation type: {op_type}")
 
+        reject_final_symlink(_execution_root(), str(operation.get("path", "")))
         path = resolve_execution_path(str(operation.get("path", "")))
         _validate_mutation_path(path)
         target_paths.append(_safe_relpath(path))

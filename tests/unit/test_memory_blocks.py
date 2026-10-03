@@ -463,6 +463,8 @@ def test_capture_coding_loop_chain_lifecycle_memory_is_compact_and_idempotent(
 def test_memory_capture_execution_cli(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
+    # ARI state lives in tmp_path, so the execution root must be a sibling of it.
+    monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "repo"))
     _purge_modules()
 
     from ari_core.ari import main
@@ -517,6 +519,8 @@ def test_memory_capture_execution_cli(tmp_path: Path, monkeypatch) -> None:
 def test_memory_capture_retry_approval_cli(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
+    # ARI state lives in tmp_path, so the execution root must be a sibling of it.
+    monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "repo"))
     _purge_modules()
 
     from ari_core.ari import main
@@ -571,6 +575,8 @@ def test_memory_capture_retry_approval_cli(tmp_path: Path, monkeypatch) -> None:
 def test_memory_capture_coding_loop_chain_cli(tmp_path: Path, monkeypatch) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
+    # ARI state lives in tmp_path, so the execution root must be a sibling of it.
+    monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "repo"))
     _purge_modules()
 
     from ari_core.ari import main
@@ -656,6 +662,8 @@ def test_memory_capture_execution_api(tmp_path: Path, monkeypatch) -> None:
 
 def test_memory_capture_retry_approval_api(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
+    # ARI state lives in tmp_path, so the execution root must be a sibling of it.
+    monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "repo"))
     _purge_modules()
 
     from ari_api import create_app
@@ -687,6 +695,8 @@ def test_memory_capture_retry_approval_api(tmp_path: Path, monkeypatch) -> None:
 
 def test_memory_capture_coding_loop_chain_api(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
+    # ARI state lives in tmp_path, so the execution root must be a sibling of it.
+    monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "repo"))
     _purge_modules()
 
     from ari_api import create_app

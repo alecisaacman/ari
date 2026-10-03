@@ -37,7 +37,8 @@ one-action resume calls:
 - `POST /execution/tasks/{task_id}/resume-one`
 
 The server-configured `ARI_EXECUTION_ROOT`, not a request parameter, selects the
-execution root for API calls.
+execution root for API calls. Requested roots elsewhere may only narrow it; see
+[Execution Authority](execution-authority.md).
 
 ## Approval continuity
 

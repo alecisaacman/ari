@@ -59,7 +59,10 @@ class ExecutionToolRegistry:
             if allowed_files is not None and path not in allowed_files:
                 return f"Planner referenced a file outside RepoContext: {path}"
             try:
-                execution_root.resolve_path(path)
+                if tool.mutates_files:
+                    execution_root.resolve_write_path(path)
+                else:
+                    execution_root.resolve_path(path)
             except ValueError as error:
                 return str(error)
 

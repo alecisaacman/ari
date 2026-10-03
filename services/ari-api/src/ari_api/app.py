@@ -1128,7 +1128,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     def execution_context(
         execution_root: str | None = Query(default=None, alias="executionRoot"),
     ) -> dict[str, Any]:
-        return {"context": build_repo_context(execution_root).to_dict()}
+        return guard(lambda: {"context": build_repo_context(execution_root).to_dict()})
 
     @app.get("/execution/runs")
     def execution_runs(

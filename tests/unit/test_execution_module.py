@@ -53,16 +53,18 @@ def test_bounded_execution_can_write_patch_and_run_cat(tmp_path: Path, monkeypat
     }
 
 
-def test_bounded_execution_prefers_explicit_root_over_environment(
+def test_bounded_execution_prefers_explicit_child_root_but_never_a_sibling(
     tmp_path: Path, monkeypatch
 ) -> None:
     env_root = tmp_path / "env-root"
-    explicit_root = tmp_path / "explicit-root"
-    env_root.mkdir(parents=True, exist_ok=True)
+    explicit_root = env_root / "explicit-root"
+    sibling_root = tmp_path / "sibling-root"
     explicit_root.mkdir(parents=True, exist_ok=True)
+    sibling_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ARI_EXECUTION_ROOT", str(env_root))
     _purge_modules()
 
+    import pytest
     from ari_core import ari
 
     result = ari.execute(
@@ -77,6 +79,13 @@ def test_bounded_execution_prefers_explicit_root_over_environment(
     assert result["success"] is True
     assert (explicit_root / "sample.txt").read_text(encoding="utf-8") == "explicit wins\n"
     assert not (env_root / "sample.txt").exists()
+
+    with pytest.raises(ValueError, match="outside the configured execution root"):
+        ari.execute(
+            {"type": "write_file", "path": "sample.txt", "content": "widened\n"},
+            execution_root=sibling_root,
+        )
+    assert not (sibling_root / "sample.txt").exists()
 
 
 def test_execution_tool_registry_lists_canonical_bounded_tools() -> None:

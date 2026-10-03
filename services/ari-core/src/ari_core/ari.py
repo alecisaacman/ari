@@ -1946,7 +1946,10 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     goal_parser.add_argument(
         "--execution-root",
         default=None,
-        help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
+        help=(
+            "Optional execution root: ARI_EXECUTION_ROOT (default: project root) "
+            "or a directory beneath it."
+        ),
     )
 
     plan_parser = execution_subparsers.add_parser(
@@ -1963,7 +1966,10 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     plan_parser.add_argument(
         "--execution-root",
         default=None,
-        help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
+        help=(
+            "Optional execution root: ARI_EXECUTION_ROOT (default: project root) "
+            "or a directory beneath it."
+        ),
     )
 
     coding_loop_parser = execution_subparsers.add_parser(
@@ -1980,7 +1986,10 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     coding_loop_parser.add_argument(
         "--execution-root",
         default=None,
-        help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
+        help=(
+            "Optional execution root: ARI_EXECUTION_ROOT (default: project root) "
+            "or a directory beneath it."
+        ),
     )
 
     coding_loops_parser = execution_subparsers.add_parser(
@@ -2177,7 +2186,10 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     context_parser.add_argument(
         "--execution-root",
         default=None,
-        help="Optional execution root. Defaults to ARI_EXECUTION_ROOT or project root.",
+        help=(
+            "Optional execution root: ARI_EXECUTION_ROOT (default: project root) "
+            "or a directory beneath it."
+        ),
     )
 
     action_parser = execution_subparsers.add_parser(

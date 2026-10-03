@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from contextvars import ContextVar
 from pathlib import Path
 
-from ...core.paths import PROJECT_ROOT
+from .fs_authority import (
+    protected_write_reason,
+    read_text_nofollow,
+    reject_final_symlink,
+    replace_text_atomically,
+    resolve_execution_root,
+)
 from .models import ExecutionResult
 
 # Dispatch-lock descriptors held by the current dispatch. Subprocesses inherit them,
@@ -14,21 +19,17 @@ DISPATCH_HOLD_FDS: ContextVar[tuple[int, ...]] = ContextVar("DISPATCH_HOLD_FDS",
 
 
 class ExecutionRoot:
-    """A bounded filesystem and command sandbox rooted at a single path."""
+    """Filesystem and command authority rooted at one confined path.
+
+    The root is always the configured execution root or a descendant of it; see
+    `fs_authority`. This bounds what ARI's own tools request. It is not OS
+    containment of the commands those tools run.
+    """
 
     ALLOWED_COMMANDS = {"pytest", "ls", "cat"}
 
     def __init__(self, root: Path | str | None = None) -> None:
-        self.root = self._resolve_root(root)
-
-    @staticmethod
-    def _resolve_root(root: Path | str | None) -> Path:
-        if root is not None:
-            base = Path(root)
-        else:
-            env_root = os.environ.get("ARI_EXECUTION_ROOT")
-            base = Path(env_root) if env_root else PROJECT_ROOT
-        return base.expanduser().resolve()
+        self.root = resolve_execution_root(root)
 
     def resolve_path(self, raw_path: str | Path) -> Path:
         candidate = Path(raw_path).expanduser()
@@ -37,6 +38,15 @@ class ExecutionRoot:
         resolved = candidate.resolve()
         if resolved != self.root and self.root not in resolved.parents:
             raise ValueError(f"path escapes execution root: {raw_path}")
+        return resolved
+
+    def resolve_write_path(self, raw_path: str | Path) -> Path:
+        """Resolve a mutation target, refusing symlinks and protected ARI internals."""
+        reject_final_symlink(self.root, raw_path)
+        resolved = self.resolve_path(raw_path)
+        reason = protected_write_reason(self.root, resolved)
+        if reason is not None:
+            raise ValueError(reason)
         return resolved
 
     def _validate_command(self, command: list[str]) -> None:
@@ -51,24 +61,22 @@ class ExecutionRoot:
                 self.resolve_path(argument)
 
     def read_file(self, path: str | Path) -> str:
-        resolved = self.resolve_path(path)
-        return resolved.read_text(encoding="utf-8")
+        return read_text_nofollow(self.resolve_path(path))
 
     def write_file(self, path: str | Path, content: str) -> Path:
-        resolved = self.resolve_path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content, encoding="utf-8")
-        return resolved
+        resolved = self.resolve_write_path(path)
+        return replace_text_atomically(self.root, resolved, content)
 
     def patch_file(self, path: str | Path, find_text: str, replace_text: str) -> Path:
         if not find_text:
             raise ValueError("find_text is required")
-        resolved = self.resolve_path(path)
-        content = resolved.read_text(encoding="utf-8")
+        resolved = self.resolve_write_path(path)
+        content = read_text_nofollow(resolved)
         if find_text not in content:
             raise ValueError("patch target not found")
-        resolved.write_text(content.replace(find_text, replace_text, 1), encoding="utf-8")
-        return resolved
+        return replace_text_atomically(
+            self.root, resolved, content.replace(find_text, replace_text, 1)
+        )
 
     def run_command(self, command: list[str], timeout_seconds: int = 30) -> ExecutionResult:
         self._validate_command(command)

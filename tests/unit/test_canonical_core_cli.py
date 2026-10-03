@@ -1114,6 +1114,8 @@ def test_canonical_core_cli_persists_notes_tasks_memory_and_project_state(
 ) -> None:
     ari_home = tmp_path / "ari-home"
     monkeypatch.setenv("ARI_HOME", str(ari_home))
+    # ARI state lives in tmp_path, so the execution root must be a sibling of it.
+    monkeypatch.setenv("ARI_EXECUTION_ROOT", str(tmp_path / "execution-root"))
     _purge_modules()
 
     from ari_core.ari import main
