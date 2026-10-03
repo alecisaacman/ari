@@ -6,6 +6,12 @@ anything here.
 
 - The configured execution root comes from `ARI_EXECUTION_ROOT`, otherwise the
   project root. It may not be `/` and may not overlap ARI's own state storage.
+- No execution root may overlap ARI's live runtime: the source checkout it runs from
+  and its Python environment (`sys.prefix`, `sys.base_prefix`). Because the fallback
+  root *is* the live checkout, an unset `ARI_EXECUTION_ROOT` fails closed. Only the
+  operator environment variable `ARI_ALLOW_SELF_MODIFICATION=1` lifts this rule, for
+  deliberate ARI self-development; no request parameter can set it. Even then the
+  Python environment, `.git`, migrations, schema, and state stay protected paths.
 - A requested root (API, CLI, or direct `ExecutionRoot`) must resolve, after symlinks,
   to the configured root or a descendant of it, and must not overlap ARI state.
 - Mutating tools may not write beneath protected internal paths: the migration
@@ -24,6 +30,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -35,6 +42,7 @@ PROTECTED_RELATIVE_PREFIXES: tuple[tuple[str, ...], ...] = (
     ("config", "schema.sql"),
 )
 PROTECTED_COMPONENT = ".git"
+SELF_MODIFICATION_ENV = "ARI_ALLOW_SELF_MODIFICATION"
 
 
 def state_storage_paths() -> tuple[Path, ...]:
@@ -45,6 +53,28 @@ def state_storage_paths() -> tuple[Path, ...]:
             for path in (core_paths.ARI_ROOT, core_paths.DB_PATH.parent)
         )
     )
+
+
+def python_environment_paths() -> tuple[Path, ...]:
+    """The interpreter environment ARI runs in (virtualenv and base installation)."""
+    return tuple(
+        dict.fromkeys(
+            Path(path).expanduser().resolve()
+            for path in (sys.prefix, sys.exec_prefix, sys.base_prefix)
+        )
+    )
+
+
+def live_runtime_paths() -> tuple[Path, ...]:
+    """ARI's own running code: its source checkout and its Python environment."""
+    return tuple(
+        dict.fromkeys((core_paths.PROJECT_ROOT.resolve(), *python_environment_paths()))
+    )
+
+
+def self_modification_allowed() -> bool:
+    """Operator-only override; read from ARI's own environment, never from a request."""
+    return os.environ.get(SELF_MODIFICATION_ENV) == "1"
 
 
 def protected_absolute_paths() -> tuple[Path, ...]:
@@ -58,6 +88,7 @@ def protected_absolute_paths() -> tuple[Path, ...]:
                 core_paths.PROJECT_ROOT / PROTECTED_COMPONENT,
                 core_paths.LEGACY_STATE_DIR,
                 *state_storage_paths(),
+                *python_environment_paths(),
             )
         )
     )
@@ -71,6 +102,13 @@ def configured_execution_root() -> Path:
     if root == Path(root.anchor):
         raise ValueError("The configured execution root may not be the filesystem root.")
     _reject_state_overlap(root, label="configured execution root")
+    if not env_root and not self_modification_allowed():
+        raise ValueError(
+            "ARI_EXECUTION_ROOT is not set, and the fallback execution root is ARI's own "
+            f"live checkout ({root}). Set ARI_EXECUTION_ROOT to a separate workspace, or "
+            f"set {SELF_MODIFICATION_ENV}=1 to deliberately let ARI modify itself."
+        )
+    _reject_runtime_overlap(root, label="configured execution root")
     return root
 
 
@@ -88,6 +126,7 @@ def resolve_execution_root(requested: Path | str | None = None) -> Path:
             f"Requested execution root is outside the configured execution root: {requested}"
         )
     _reject_state_overlap(resolved, label="requested execution root")
+    _reject_runtime_overlap(resolved, label="requested execution root")
     return resolved
 
 
@@ -105,7 +144,7 @@ def reject_final_symlink(root: Path, raw_path: str | Path) -> None:
 
 
 def protected_write_reason(root: Path, target: Path) -> str | None:
-    """Explain why `target` (already resolved and confined to `root`) is protected."""
+    """Explain why `target` (resolved and validated within `root`) is protected."""
     relative = tuple(part.casefold() for part in target.relative_to(root).parts)
     if PROTECTED_COMPONENT in relative:
         return f"Execution tools may not modify .git internals: {target}"
@@ -131,12 +170,19 @@ def protected_write_reason(root: Path, target: Path) -> str | None:
 
 
 def read_text_nofollow(path: Path) -> str:
-    """Read a regular file without following a symlink at the final component."""
+    """Read a regular file without following a symlink at the final component.
+
+    Path validation cannot prove which inode a path names: a hard link inside the
+    root can alias a file outside it. A file with more than one link is refused.
+    Intermediate directories are still resolved by path (see the module notes).
+    """
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError(f"Execution tools only read regular files: {path}")
+        if info.st_nlink > 1:
+            raise ValueError(f"Execution tools do not read files with multiple hard links: {path}")
         with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as handle:
             return handle.read()
     finally:
@@ -203,6 +249,18 @@ def _reject_state_overlap(root: Path, *, label: str) -> None:
     for state_path in state_storage_paths():
         if _is_within(root, state_path) or _is_within(state_path, root):
             raise ValueError(f"The {label} may not be or contain ARI state storage: {root}")
+
+
+def _reject_runtime_overlap(root: Path, *, label: str) -> None:
+    if self_modification_allowed():
+        return
+    for runtime_path in live_runtime_paths():
+        if _is_within(root, runtime_path) or _is_within(runtime_path, root):
+            raise ValueError(
+                f"The {label} overlaps ARI's live runtime ({runtime_path}): ARI tools must "
+                f"not modify the code or Python environment they run from. Use a separate "
+                f"workspace, or set {SELF_MODIFICATION_ENV}=1 for deliberate self-development."
+            )
 
 
 def _is_within(path: Path, root: Path) -> bool:

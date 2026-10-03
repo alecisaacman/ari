@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -401,3 +402,190 @@ def test_cli_execution_root_obeys_the_configured_root(
                 str(tmp_path / "sibling"),
             ]
         )
+
+
+# --- read aliases -------------------------------------------------------------------
+
+
+def test_hardlinked_file_cannot_be_read_as_an_alias_for_an_outside_inode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ari_core.modules.execution import engine
+
+    _, ExecutionRoot = _modules()
+    configured = _configure(monkeypatch, tmp_path / "configured")
+    monkeypatch.setattr(engine, "ensure_not_paused", lambda: None)
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("outside secret\n", encoding="utf-8")
+    os.link(outside, configured / "alias.txt")
+    (configured / "plain.txt").write_text("plain\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="multiple hard links"):
+        ExecutionRoot().read_file("alias.txt")
+    with pytest.raises(ValueError, match="multiple hard links"):
+        engine.read_file("alias.txt")
+    assert ExecutionRoot().read_file("plain.txt") == "plain\n"
+
+
+# --- live runtime overlap and the production fallback --------------------------------
+
+
+def _project_root() -> Path:
+    from ari_core.core import paths
+
+    return paths.PROJECT_ROOT.resolve()
+
+
+@pytest.mark.unset_execution_root
+def test_unset_execution_root_fails_closed_instead_of_using_the_live_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ari_core.modules.execution import engine
+
+    _, ExecutionRoot = _modules()
+    monkeypatch.setattr(engine, "ensure_not_paused", lambda: None)
+    assert "ARI_EXECUTION_ROOT" not in os.environ
+
+    with pytest.raises(ValueError, match="ARI_EXECUTION_ROOT is not set"):
+        ExecutionRoot()
+    with pytest.raises(ValueError, match="ARI_EXECUTION_ROOT is not set"):
+        engine.write_file("anything.txt", "x\n", db_path=Path(os.devnull))
+    with pytest.raises(ValueError, match="ARI_EXECUTION_ROOT is not set"):
+        engine.execute_command("pytest -q")
+
+
+@pytest.mark.unset_execution_root
+def test_read_only_task_inspection_works_without_an_execution_root(tmp_path: Path) -> None:
+    from ari_core.modules.execution.gateway import RecoveredActionGateway
+
+    gateway = RecoveredActionGateway(tmp_path / "ari.db")  # does not resolve a root
+
+    with pytest.raises(ValueError, match="does not exist"):
+        gateway.inspect_task("missing-task")
+    with pytest.raises(ValueError, match="ARI_EXECUTION_ROOT is not set"):
+        _ = gateway.execution_root
+
+
+@pytest.mark.unset_execution_root
+@pytest.mark.parametrize("value", ["true", "yes", "0", " 1", ""])
+def test_only_the_exact_operator_override_enables_self_modification(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    _, ExecutionRoot = _modules()
+    monkeypatch.setenv("ARI_ALLOW_SELF_MODIFICATION", value)
+
+    with pytest.raises(ValueError, match="ARI_EXECUTION_ROOT is not set"):
+        ExecutionRoot()
+
+
+@pytest.mark.unset_execution_root
+def test_operator_override_allows_self_development_but_keeps_runtime_paths_protected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fs_authority, ExecutionRoot = _modules()
+    monkeypatch.setenv("ARI_ALLOW_SELF_MODIFICATION", "1")
+    project = _project_root()
+    root = ExecutionRoot()
+    venv_target = Path(sys.prefix).resolve() / "lib" / "evil.pth"
+
+    assert root.root == project
+    assert root.resolve_write_path("services/ari-core/src/ari_core/new_module.py")
+    for protected in (
+        "config/migrations/0099_x.sql",
+        "config/schema.sql",
+        ".git/config",
+        str(venv_target),
+    ):
+        if Path(protected).is_absolute() and project not in Path(protected).parents:
+            continue
+        with pytest.raises(ValueError, match="may not modify"):
+            root.resolve_write_path(protected)
+    assert fs_authority.protected_write_reason(project, venv_target) is not None
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "{project}",
+        "{project}/services",
+        "{project}/services/ari-core/src/ari_core",
+        "{project_parent}",
+    ],
+)
+def test_configured_roots_overlapping_the_live_checkout_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    _, ExecutionRoot = _modules()
+    project = _project_root()
+    monkeypatch.setenv(
+        "ARI_EXECUTION_ROOT",
+        configured.format(project=project, project_parent=project.parent),
+    )
+
+    with pytest.raises(ValueError, match="live runtime"):
+        ExecutionRoot()
+
+
+def test_roots_overlapping_the_python_environment_are_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fs_authority, ExecutionRoot = _modules()
+    # Move the checkout elsewhere so only the Python environment can trigger the rule.
+    monkeypatch.setattr(fs_authority.core_paths, "PROJECT_ROOT", tmp_path / "elsewhere")
+    prefix = Path(sys.prefix).resolve()
+    for configured in (prefix, prefix / "lib", prefix.parent):
+        monkeypatch.setenv("ARI_EXECUTION_ROOT", str(configured))
+        with pytest.raises(ValueError, match=re.escape(f"live runtime ({prefix})")):
+            ExecutionRoot()
+
+
+def test_external_and_child_workspaces_are_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, ExecutionRoot = _modules()
+    workspace = _configure(monkeypatch, tmp_path / "external-workspace")
+    (workspace / "child").mkdir()
+
+    assert ExecutionRoot().root == workspace
+    assert ExecutionRoot("child").root == workspace / "child"
+
+
+@pytest.mark.unset_execution_root
+def test_api_requests_cannot_select_or_enable_the_live_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("ARI_HOME", str(tmp_path / "ari-home"))
+    _purge_modules()
+    from ari_api import create_app
+
+    project = str(_project_root())
+    with TestClient(create_app()) as client:
+        responses = [
+            client.get("/execution/context"),
+            client.get(
+                "/execution/context",
+                params={"executionRoot": project, "ARI_ALLOW_SELF_MODIFICATION": "1"},
+            ),
+            client.post(
+                "/execution/coding-loop",
+                json={
+                    "goal": "write a file",
+                    "executionRoot": project,
+                    "allowSelfModification": True,
+                    "ARI_ALLOW_SELF_MODIFICATION": "1",
+                },
+            ),
+            client.post("/execution/files/read", json={"path": "README.md"}),
+            client.post(
+                "/execution/command",
+                json={"command": "pytest -q", "cwd": ".", "timeoutSeconds": 5},
+            ),
+        ]
+
+    for response in responses:
+        assert response.status_code in {400, 422}, response.text
+        if response.status_code == 400:
+            assert "ARI_EXECUTION_ROOT is not set" in response.json()["detail"]
+    assert "ARI_ALLOW_SELF_MODIFICATION" not in os.environ

@@ -237,7 +237,7 @@ def _prepare_command(command: str, cwd: Path) -> PreparedCommand:
     """Map an operator command string onto an explicit command capability.
 
     The string is split without a shell; the resulting request must match a capability,
-    which builds the argv from a trusted executable (see `command_capabilities`).
+    which builds the argv from a fixed-location executable (see `command_capabilities`).
     """
     if not command.strip():
         raise ValueError("command is required")

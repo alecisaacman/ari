@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from ...core.git_inspection import run_git_inspection
 from ...core.paths import PROJECT_ROOT
 
 
@@ -170,14 +170,7 @@ def _required_str_tuple(payload: Mapping[str, object], key: str) -> tuple[str, .
 
 
 def _run_git(args: Sequence[str], cwd: Path) -> GitCommandResult:
-    completed = subprocess.run(
-        ["git", *args],
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
+    completed = run_git_inspection(args, cwd, timeout=10)
     return GitCommandResult(
         stdout=completed.stdout,
         stderr=completed.stderr,
@@ -190,7 +183,10 @@ def _load_commits(
     repo_root: Path,
     runner: GitRunner,
 ) -> list[SourceCommit]:
-    result = runner(("log", "--reverse", "--format=%H%x1f%s", source_range), repo_root)
+    # --end-of-options keeps a ref such as "--output=<file>" from becoming an option.
+    result = runner(
+        ("log", "--reverse", "--format=%H%x1f%s", "--end-of-options", source_range), repo_root
+    )
     if result.returncode != 0:
         raise ValueError(f"Unable to inspect git commits for {source_range}: {result.stderr}")
     commits: list[SourceCommit] = []
@@ -210,7 +206,7 @@ def _load_changed_files(
     repo_root: Path,
     runner: GitRunner,
 ) -> list[str]:
-    result = runner(("diff", "--name-only", source_range), repo_root)
+    result = runner(("diff", "--name-only", "--end-of-options", source_range), repo_root)
     if result.returncode != 0:
         raise ValueError(f"Unable to inspect changed files for {source_range}: {result.stderr}")
     return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})

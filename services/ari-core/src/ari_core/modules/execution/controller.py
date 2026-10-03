@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from ...core.git_inspection import run_git_inspection
 from ...core.paths import DB_PATH
 from ..coordination.db import put_coordination_entity
 from ..memory.context import build_memory_context
@@ -799,14 +800,7 @@ def _preview_status(decision: WorkerDecision, validation_error: str | None) -> s
 
 def _git_changed_paths(repo_root: Path) -> tuple[list[str], bool]:
     try:
-        completed = subprocess.run(
-            ["git", "status", "--short"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
+        completed = run_git_inspection(["status", "--short"], repo_root, timeout=10)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return [], False
     if completed.returncode != 0:
@@ -816,14 +810,7 @@ def _git_changed_paths(repo_root: Path) -> tuple[list[str], bool]:
 
 def _git_current_branch(repo_root: Path) -> str | None:
     try:
-        completed = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
+        completed = run_git_inspection(["branch", "--show-current"], repo_root, timeout=10)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     branch = completed.stdout.strip()

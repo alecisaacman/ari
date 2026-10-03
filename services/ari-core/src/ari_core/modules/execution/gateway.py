@@ -102,7 +102,9 @@ class RecoveredActionGateway:
     ) -> None:
         self.ledger = ExecutionLedger(db_path)
         self.db_path = db_path
-        self.execution_root = ExecutionRoot(execution_root)
+        # Resolved on first use, so read-only inspection does not need an execution root.
+        self._requested_execution_root = execution_root
+        self._execution_root: ExecutionRoot | None = None
         self.clock = clock or (lambda: datetime.now(UTC))
         self.pause_state_reader = pause_state_reader or get_pause_state
         self.tool_registry = tool_registry or get_execution_tool_registry()
@@ -118,6 +120,12 @@ class RecoveredActionGateway:
         self.effect_terminality = effect_terminality
         self.before_execute_hook = before_execute_hook
         self.dispatch_fences = DispatchFences(db_path, clock=self.clock)
+
+    @property
+    def execution_root(self) -> ExecutionRoot:
+        if self._execution_root is None:
+            self._execution_root = ExecutionRoot(self._requested_execution_root)
+        return self._execution_root
 
     def propose_next_action(
         self,

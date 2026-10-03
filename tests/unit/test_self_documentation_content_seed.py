@@ -59,8 +59,8 @@ def test_content_seed_generated_from_mocked_commit_range(tmp_path: Path) -> None
     assert "content seed" in seed.demo_idea.lower()
     assert seed.claims_to_avoid
     assert calls == [
-        ("log", "--reverse", "--format=%H%x1f%s", "abc1234..def4567"),
-        ("diff", "--name-only", "abc1234..def4567"),
+        ("log", "--reverse", "--format=%H%x1f%s", "--end-of-options", "abc1234..def4567"),
+        ("diff", "--name-only", "--end-of-options", "abc1234..def4567"),
     ]
 
 

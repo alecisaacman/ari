@@ -2,17 +2,20 @@
 
 A command request is never trusted as an executable path or a shell string. It names
 a logical capability, and the capability validates the request's shape and builds the
-argv itself, starting from a trusted executable. Anything that is not an explicit
+argv itself, starting from an executable at a fixed location that ARI selects. Binary
+identity is not cryptographically verified. Anything that is not an explicit
 capability is refused.
 
 Classification is about what the *command* can do, not what ARI hopes it does:
 
-- `read_only_inspection` (`ls`, `cat`): fixed system binaries with a fixed option set
-  and every path argument confined to the execution root.
+- `read_only_inspection` (`ls`, `cat`): system binaries with a fixed option set, and
+  every path argument validated to lie within the execution root. Validation is
+  path-based; the binary opens the path again later (see the read notes in
+  docs/execution/execution-authority.md).
 - `code_execution` (`pytest`, `node`): runs local code from the execution root. A test
   file, `conftest.py`, or script can do anything the OS user can. ARI constrains what
-  it *requests* (interpreter, options, paths, environment); it does not contain what
-  the code does. These commands are treated as potentially mutating.
+  it *requests* (interpreter, options, config overrides, paths, environment); it does
+  not contain what the code does. These commands are treated as potentially mutating.
 
 `npm` has no capability: npm scripts are arbitrary package-defined code with their
 own configuration and network behaviour, and no narrow form is defined, so it is
@@ -24,14 +27,20 @@ evidence that an effect cannot land; `run_command` stays `unbounded` for redispa
 
 from __future__ import annotations
 
+import io
+import locale
 import os
+import select
+import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 
 
@@ -50,6 +59,7 @@ class CommandContext:
     cwd: Path
 
     def confined_path(self, raw: str, *, label: str) -> Path:
+        """Validate that `raw` resolves to a path within the execution root (path-based)."""
         if not raw or raw.startswith("-"):
             raise CommandCapabilityError(f"{label} must be a path, not an option: {raw!r}")
         candidate = Path(raw).expanduser()
@@ -59,6 +69,27 @@ class CommandContext:
         if resolved != self.root and self.root not in resolved.parents:
             raise CommandCapabilityError(f"{label} escapes execution root: {raw}")
         return resolved
+
+    def readable_file(self, raw: str, *, label: str) -> Path:
+        """A validated path that is not a symlink or a multiply-linked regular file.
+
+        A hard link is an alias for an inode that may live outside the root, so a
+        file with more than one link is refused rather than read.
+        """
+        if not raw or raw.startswith("-"):
+            raise CommandCapabilityError(f"{label} must be a path, not an option: {raw!r}")
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.cwd / candidate
+        try:
+            info = os.lstat(candidate)
+        except FileNotFoundError:
+            info = None
+        if info is not None and stat.S_ISLNK(info.st_mode):
+            raise CommandCapabilityError(f"{label} may not be a symlink: {raw}")
+        if info is not None and stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+            raise CommandCapabilityError(f"{label} has multiple hard links: {raw}")
+        return self.confined_path(raw, label=label)
 
 
 Matcher = Callable[[Sequence[str]], list[str] | None]
@@ -75,6 +106,7 @@ class CommandCapability:
     path_arguments: str
     match: Matcher
     build: Builder
+    environment: tuple[tuple[str, str], ...] = ()
 
     @property
     def mutating(self) -> bool:
@@ -99,13 +131,14 @@ class PreparedCommand:
     argv: tuple[str, ...]
     cwd: Path
     root: Path
+    environment: tuple[tuple[str, str], ...] = ()
 
     @property
     def mutating(self) -> bool:
         return self.command_class is CommandClass.CODE_EXECUTION
 
 
-# --- trusted executables ---------------------------------------------------------------
+# --- executables at fixed locations ---------------------------------------------------
 
 SYSTEM_BIN_DIRS = ("/bin", "/usr/bin")
 NODE_SEARCH_PATH = os.pathsep.join(("/opt/homebrew/bin", "/usr/local/bin", *SYSTEM_BIN_DIRS))
@@ -116,16 +149,16 @@ def _system_binary(name: str) -> str:
         candidate = Path(directory) / name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
-    raise CommandCapabilityError(f"Trusted system {name} is not available.")
+    raise CommandCapabilityError(f"System {name} is not available in /bin or /usr/bin.")
 
 
-def trusted_python() -> str:
+def selected_python() -> str:
     """The interpreter running ARI; requested interpreter paths are never executed."""
     return sys.executable
 
 
 def is_python_spelling(token: str) -> bool:
-    """Whether a request token names *a* Python interpreter (mapped to the trusted one)."""
+    """Whether a request token names *a* Python interpreter (mapped to ARI's own)."""
     name = Path(token).name
     version = sys.version_info
     return name in {
@@ -136,10 +169,10 @@ def is_python_spelling(token: str) -> bool:
     }
 
 
-def _trusted_node() -> str:
+def _selected_node() -> str:
     node = shutil.which("node", path=NODE_SEARCH_PATH)
     if node is None:
-        raise CommandCapabilityError("Trusted node is not available in system locations.")
+        raise CommandCapabilityError("node is not available in system install locations.")
     return node
 
 
@@ -163,7 +196,7 @@ def _build_cat(args: list[str], context: CommandContext) -> list[str]:
     if not args:
         raise CommandCapabilityError("cat requires at least one path.")
     for path in args:
-        context.confined_path(path, label="cat path")
+        context.readable_file(path, label="cat path")
     return [_system_binary("cat"), "--", *args]
 
 
@@ -174,6 +207,26 @@ PYTEST_FLAGS = frozenset(
 )
 PYTEST_VALUE_OPTIONS = frozenset({"-k", "-m", "--tb", "--maxfail"})
 PYTEST_TB_STYLES = frozenset({"auto", "long", "short", "line", "native", "no"})
+# Generated by ARI, never accepted from a request. They stop root config from adding
+# options the request contract refuses (addopts), importing from outside the root
+# (pythonpath), choosing collection roots (testpaths), or writing logs and cache
+# files elsewhere (log_file, cacheprovider).
+PYTEST_INTERNAL_OPTIONS = (
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=",
+    "-o",
+    "pythonpath=",
+    "-o",
+    "testpaths=",
+    "-o",
+    "log_file=",
+)
+PYTEST_ENVIRONMENT = (
+    ("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1"),
+    ("PYTHONNOUSERSITE", "1"),
+)
 PYTEST_CONFIG_FILES = (
     ("pytest.ini", None),
     (".pytest.ini", None),
@@ -222,7 +275,10 @@ def _build_pytest(args: list[str], context: CommandContext) -> list[str]:
         index += 1
     root = str(context.root)
     return [
-        trusted_python(),
+        selected_python(),
+        # -P: do not put the cwd (the execution root) on sys.path, so a root-local
+        # pytest.py or pytest/ package cannot replace the installed pytest.
+        "-P",
         "-m",
         "pytest",
         "-c",
@@ -231,6 +287,7 @@ def _build_pytest(args: list[str], context: CommandContext) -> list[str]:
         root,
         "--confcutdir",
         root,
+        *PYTEST_INTERNAL_OPTIONS,
         *validated,
     ]
 
@@ -258,11 +315,11 @@ def _match_pytest(command: Sequence[str]) -> list[str] | None:
 def _build_node(args: list[str], context: CommandContext) -> list[str]:
     if len(args) == 2 and args[0] == "--check":
         context.confined_path(args[1], label="node --check path")
-        return [_trusted_node(), "--check", args[1]]
+        return [_selected_node(), "--check", args[1]]
     if len(args) >= 2 and args[0] == "--test":
         for path in args[1:]:
             context.confined_path(path, label="node --test path")
-        return [_trusted_node(), "--test", *args[1:]]
+        return [_selected_node(), "--test", *args[1:]]
     raise CommandCapabilityError(
         "node is limited to `node --check <file>` and `node --test <file>...`."
     )
@@ -277,9 +334,9 @@ COMMAND_CAPABILITIES: dict[str, CommandCapability] = {
         name="ls",
         command_class=CommandClass.READ_ONLY_INSPECTION,
         description="List directories inside the execution root.",
-        executable_identity="system ls from /bin or /usr/bin",
+        executable_identity="ls from /bin or /usr/bin (fixed location, not verified)",
         argv_shape=f"ls [{' '.join(sorted(LS_OPTIONS))}] [path...]",
-        path_arguments="every non-option argument; confined to the execution root",
+        path_arguments="every non-option argument; validated path within the execution root",
         match=_exact("ls"),
         build=_build_ls,
     ),
@@ -287,9 +344,12 @@ COMMAND_CAPABILITIES: dict[str, CommandCapability] = {
         name="cat",
         command_class=CommandClass.READ_ONLY_INSPECTION,
         description="Print files inside the execution root.",
-        executable_identity="system cat from /bin or /usr/bin",
+        executable_identity="cat from /bin or /usr/bin (fixed location, not verified)",
         argv_shape="cat <path>...",
-        path_arguments="every argument; confined to the execution root",
+        path_arguments=(
+            "every argument; validated path within the execution root, not a symlink, "
+            "not a multiply-linked file"
+        ),
         match=_exact("cat"),
         build=_build_cat,
     ),
@@ -300,22 +360,29 @@ COMMAND_CAPABILITIES: dict[str, CommandCapability] = {
             "Run pytest with ARI's own interpreter. Tests and conftest.py are arbitrary "
             "local Python and are not contained."
         ),
-        executable_identity="sys.executable -m pytest (requested interpreter path ignored)",
+        executable_identity=(
+            "sys.executable -P -m pytest (requested interpreter path ignored; "
+            "binary identity not verified)"
+        ),
         argv_shape=(
             "pytest|python -m pytest [-q -v -x -s --no-header -k EXPR -m EXPR "
             "--tb=STYLE --maxfail=N] [path[::node]...]"
         ),
-        path_arguments="test paths and node ids; confined to the execution root",
+        path_arguments="test paths and node ids; validated paths within the execution root",
         match=_match_pytest,
         build=_build_pytest,
+        environment=PYTEST_ENVIRONMENT,
     ),
     "node": CommandCapability(
         name="node",
         command_class=CommandClass.CODE_EXECUTION,
         description="Syntax-check or run Node tests for files inside the execution root.",
-        executable_identity="node from system install locations, not the caller's PATH",
+        executable_identity=(
+            "node from fixed install locations, not the caller's PATH; these may be "
+            "user-writable and the binary is not verified"
+        ),
         argv_shape="node --check <file> | node --test <file>...",
-        path_arguments="every file argument; confined to the execution root",
+        path_arguments="every file argument; validated path within the execution root",
         match=_exact("node"),
         build=_build_node,
     ),
@@ -332,7 +399,7 @@ def prepare_command(
     root: Path,
     cwd: Path | None = None,
 ) -> PreparedCommand:
-    """Resolve a request to exactly one capability and build its trusted argv."""
+    """Resolve a request to exactly one capability and build its argv."""
     if not isinstance(command, (list, tuple)) or not command:
         raise CommandCapabilityError("command is required as a non-empty list[str].")
     if not all(isinstance(item, str) for item in command):
@@ -351,6 +418,7 @@ def prepare_command(
             argv=tuple(argv),
             cwd=context.cwd,
             root=root,
+            environment=capability.environment,
         )
     if command[0] in {"npm", "npx"}:
         raise CommandCapabilityError(
@@ -394,26 +462,73 @@ def command_environment(prepared: PreparedCommand) -> dict[str, str]:
     if prepared.mutating:
         home, tmp = _scratch_dirs(prepared.root)
         env.update({"HOME": str(home), "TMPDIR": str(tmp), "TMP": str(tmp), "TEMP": str(tmp)})
+    env.update(dict(prepared.environment))
     for name in STRIPPED_ENVIRONMENT:
         env.pop(name, None)
     return env
 
 
 def _scratch_dirs(root: Path) -> tuple[Path, Path]:
+    """Create `<root>/.ari-exec/{home,tmp}` relative to directory descriptors.
+
+    Every component is created or opened with `O_NOFOLLOW` relative to its parent's
+    descriptor, so a pre-existing symlink (dangling or not) is refused instead of
+    followed out of the root.
+    """
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        scratch_fd = _open_private_dir(root_fd, SCRATCH_DIR_NAME)
+        try:
+            _ensure_regular_file(scratch_fd, ".gitignore", b"*\n")
+            for name in ("home", "tmp"):
+                os.close(_open_private_dir(scratch_fd, name))
+        finally:
+            os.close(scratch_fd)
+    finally:
+        os.close(root_fd)
     scratch = root / SCRATCH_DIR_NAME
-    home = scratch / "home"
-    tmp = scratch / "tmp"
-    for directory in (scratch, home, tmp):
-        directory.mkdir(exist_ok=True)
-        if directory.is_symlink() or Path(os.path.realpath(directory)) != directory:
-            raise CommandCapabilityError(f"Command scratch directory is not confined: {directory}")
-    ignore = scratch / ".gitignore"
-    if not ignore.exists():
-        ignore.write_text("*\n", encoding="utf-8")
-    return home, tmp
+    return scratch / "home", scratch / "tmp"
+
+
+def _open_private_dir(parent_fd: int, name: str) -> int:
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    try:
+        return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+    except OSError as error:  # ELOOP for a symlink, ENOTDIR for a non-directory
+        raise CommandCapabilityError(
+            f"Command scratch path {name!r} is not a real directory inside the root."
+        ) from error
+
+
+def _ensure_regular_file(dir_fd: int, name: str, content: bytes) -> None:
+    try:
+        fd = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o644,
+            dir_fd=dir_fd,
+        )
+    except FileExistsError:
+        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            raise CommandCapabilityError(
+                f"Command scratch file {name!r} is not a regular file."
+            ) from None
+        return
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(content)
 
 
 TERMINATE_GRACE_SECONDS = 2.0
+
+
+class _LeaderState(Enum):
+    RUNNING = "running"
+    EXITED_UNREAPED = "exited_unreaped"
+    UNKNOWN = "unknown"
 
 
 def run_prepared_command(
@@ -424,48 +539,160 @@ def run_prepared_command(
 ) -> subprocess.CompletedProcess[str]:
     """Run a prepared command as the leader of a new process group.
 
-    On timeout the whole group is terminated, then killed, and `TimeoutExpired` is
-    raised. After a normal return, remaining group members are killed best-effort.
-    Neither step proves an effect did not land: a descendant that started its own
-    session or daemonized escapes the group.
+    Ownership rule: ARI signals the group only while it has *not yet reaped* the
+    leader. An unreaped leader, running or a zombie, keeps its PID and therefore the
+    group ID reserved, so the signal cannot reach an unrelated group that reused the
+    number.
+
+    - Timeout (leader still running at the deadline): SIGTERM the group, wait up to a
+      grace period, SIGKILL the group, reap, raise `TimeoutExpired`.
+    - Normal return: ARI waits for the leader to exit *without reaping it* (kqueue
+      on macOS, `waitid(WNOWAIT)` where available), SIGKILLs any remaining group
+      members, then reaps. Where neither primitive exists, it reaps without the
+      post-return cleanup rather than risk signalling a reused group ID.
+
+    None of this proves an effect did not land. A descendant that calls `setsid` or
+    daemonizes leaves the group, and code in the ARI process that reaps arbitrary
+    children (`waitpid(-1)`) would break the ownership rule.
     """
+    argv = list(prepared.argv)
     process = subprocess.Popen(
-        list(prepared.argv),
+        argv,
         cwd=str(prepared.cwd),
         env=command_environment(prepared),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         start_new_session=True,
         pass_fds=tuple(pass_fds),
     )
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    deadline = time.monotonic() + timeout_seconds
     try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = process.poll() is None
-        _signal_group(process.pid, signal.SIGTERM if timed_out else signal.SIGKILL)
-        try:
-            stdout, stderr = process.communicate(timeout=TERMINATE_GRACE_SECONDS)
-        except subprocess.TimeoutExpired:
-            _signal_group(process.pid, signal.SIGKILL)
-            stdout, stderr = process.communicate()
-        if timed_out:
-            raise subprocess.TimeoutExpired(
-                list(prepared.argv), timeout_seconds, output=stdout, stderr=stderr
-            ) from None
-    finally:
-        if process.poll() is None:
-            _signal_group(process.pid, signal.SIGKILL)
+        pipes_closed = _drain(process, output, deadline)
+        remaining = max(0.0, deadline - time.monotonic()) if pipes_closed else 0.0
+        state = _wait_for_exit_unreaped(process.pid, remaining)
+        if state is _LeaderState.RUNNING or (
+            state is _LeaderState.UNKNOWN and not pipes_closed
+        ):
+            _terminate_group(process, output)
             process.wait()
-    _signal_group(process.pid, signal.SIGKILL)  # best-effort: remaining group members
-    return subprocess.CompletedProcess(list(prepared.argv), process.returncode, stdout, stderr)
+            raise subprocess.TimeoutExpired(
+                argv,
+                timeout_seconds,
+                output=_decode(output["stdout"]),
+                stderr=_decode(output["stderr"]),
+            )
+        if state is _LeaderState.EXITED_UNREAPED:
+            _signal_group(process, signal.SIGKILL)  # best-effort: remaining members
+            if not pipes_closed:
+                _drain(process, output, time.monotonic() + TERMINATE_GRACE_SECONDS)
+            process.wait()
+        else:
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                _terminate_group(process, output)  # still unreaped, so still ours
+                process.wait()
+                raise subprocess.TimeoutExpired(
+                    argv,
+                    timeout_seconds,
+                    output=_decode(output["stdout"]),
+                    stderr=_decode(output["stderr"]),
+                ) from None
+    finally:
+        if process.returncode is None:
+            _signal_group(process, signal.SIGKILL)
+            process.wait()
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
+    return subprocess.CompletedProcess(
+        argv, process.returncode, _decode(output["stdout"]), _decode(output["stderr"])
+    )
 
 
-def _signal_group(pgid: int, sig: signal.Signals) -> None:
+def _terminate_group(
+    process: subprocess.Popen[bytes],
+    output: dict[str, bytearray],
+) -> None:
+    _signal_group(process, signal.SIGTERM)
+    if _wait_for_exit_unreaped(process.pid, TERMINATE_GRACE_SECONDS) is _LeaderState.UNKNOWN:
+        _drain(process, output, time.monotonic() + TERMINATE_GRACE_SECONDS)
+    _signal_group(process, signal.SIGKILL)
+    _drain(process, output, time.monotonic() + TERMINATE_GRACE_SECONDS)
+
+
+def _drain(
+    process: subprocess.Popen[bytes],
+    output: dict[str, bytearray],
+    deadline: float,
+) -> bool:
+    """Read stdout/stderr until both reach EOF (True) or the deadline passes (False)."""
+    streams = {"stdout": process.stdout, "stderr": process.stderr}
+    with selectors.DefaultSelector() as selector:
+        for name, stream in streams.items():
+            if stream is not None and not stream.closed:
+                selector.register(stream, selectors.EVENT_READ, name)
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            for key, _ in selector.select(remaining):
+                chunk = os.read(key.fd, 65536)
+                if chunk:
+                    output[key.data].extend(chunk)
+                else:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()  # type: ignore[union-attr]
+    return True
+
+
+def _wait_for_exit_unreaped(pid: int, timeout: float) -> _LeaderState:
+    """Wait up to `timeout` for `pid` to exit without reaping it."""
+    if hasattr(os, "waitid"):
+        end = time.monotonic() + max(timeout, 0.0)
+        while True:
+            try:
+                info = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+            except ChildProcessError:
+                return _LeaderState.UNKNOWN
+            if info is not None:
+                return _LeaderState.EXITED_UNREAPED
+            if time.monotonic() >= end:
+                return _LeaderState.RUNNING
+            time.sleep(0.01)
+    if hasattr(select, "kqueue"):
+        queue = select.kqueue()
+        try:
+            event = select.kevent(
+                pid,
+                filter=select.KQ_FILTER_PROC,
+                flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                fflags=select.KQ_NOTE_EXIT,
+            )
+            try:
+                events = queue.control([event], 1, max(timeout, 0.0))
+            except OSError:
+                return _LeaderState.UNKNOWN
+            return _LeaderState.EXITED_UNREAPED if events else _LeaderState.RUNNING
+        finally:
+            queue.close()
+    return _LeaderState.UNKNOWN
+
+
+def _signal_group(process: subprocess.Popen[bytes], sig: signal.Signals) -> None:
+    if process.returncode is not None:
+        raise RuntimeError("Refusing to signal the process group of an already-reaped leader.")
+    pgid = process.pid
     if pgid <= 1 or pgid == os.getpgrp():
         return
     try:
         os.killpg(pgid, sig)
     except (ProcessLookupError, PermissionError):
         pass
+
+
+def _decode(data: bytes | bytearray) -> str:
+    encoding = locale.getpreferredencoding(False)
+    return io.TextIOWrapper(io.BytesIO(bytes(data)), encoding=encoding, errors="replace").read()

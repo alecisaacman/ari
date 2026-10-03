@@ -219,7 +219,7 @@ def test_every_disallowed_pytest_option_or_path_is_rejected(
             prepare_command([*spelling, *args], root=root)
 
 
-def test_legitimate_pytest_invocations_run_with_the_trusted_interpreter(root: Path) -> None:
+def test_legitimate_pytest_invocations_run_with_aris_interpreter(root: Path) -> None:
     sandbox = ExecutionRoot(root)
     plain = sandbox.run_command(["pytest", "-q", "test_ok.py"])
     shaped = sandbox.run_command(
@@ -230,8 +230,12 @@ def test_legitimate_pytest_invocations_run_with_the_trusted_interpreter(root: Pa
 
     assert plain.success and "1 passed" in plain.stdout
     assert shaped.success and "1 passed" in shaped.stdout
-    assert prepared.argv[:3] == (sys.executable, "-m", "pytest")
-    assert prepared.argv[3:9] == ("-c", os.devnull, "--rootdir", str(root), "--confcutdir", str(root))
+    assert prepared.argv[:4] == (sys.executable, "-P", "-m", "pytest")
+    assert prepared.argv[4:10] == (
+        "-c", os.devnull, "--rootdir", str(root), "--confcutdir", str(root)
+    )
+    assert prepared.argv[10:20] == capabilities.PYTEST_INTERNAL_OPTIONS
+    assert prepared.argv[20:] == ("test_ok.py",)
     assert prepared.command_class is CommandClass.CODE_EXECUTION
 
 
@@ -261,7 +265,7 @@ def test_root_local_pytest_config_is_pinned(root: Path) -> None:
 
     prepared = prepare_command(["pytest"], root=root)
 
-    assert prepared.argv[3:5] == ("-c", str(root / "pyproject.toml"))
+    assert prepared.argv[4:6] == ("-c", str(root / "pyproject.toml"))
 
 
 def test_inherited_hostile_environment_does_not_affect_pytest(
@@ -288,7 +292,12 @@ def test_inherited_hostile_environment_does_not_affect_pytest(
         assert name not in env
     assert env["HOME"] == str(root / ".ari-exec" / "home")
     assert env["TMPDIR"] == str(root / ".ari-exec" / "tmp")
-    assert set(env) <= {"PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE"}
+    assert env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+    assert env["PYTHONNOUSERSITE"] == "1"
+    assert set(env) <= {
+        "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTHONNOUSERSITE",
+    }
 
 
 def test_read_only_commands_get_no_scratch_home(root: Path) -> None:
@@ -506,3 +515,208 @@ def test_process_cleanup_never_yields_a_landing_token(tmp_path: Path) -> None:
     with pytest.raises(DispatchLandingUnproven, match="unbounded"):
         _rule_out(recovered)
     assert _fences(recovered)[0]["landing_token"] is None
+
+
+# --- pytest module identity and root configuration ----------------------------------------
+
+
+@pytest.mark.parametrize("shadow", ["pytest.py", "pytest/__init__.py"])
+def test_root_local_module_cannot_shadow_pytest(root: Path, tmp_path: Path, shadow: str) -> None:
+    marker = tmp_path / "shadow-ran"
+    target = root / shadow
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(
+        f"import pathlib\npathlib.Path({str(marker)!r}).write_text('ran')\n", encoding="utf-8"
+    )
+
+    result = ExecutionRoot(root).run_command(["pytest", "-q", "test_ok.py"])
+
+    assert result.success and "1 passed" in result.stdout
+    assert not marker.exists()
+
+
+def test_root_config_cannot_add_options_paths_or_output_locations(
+    root: Path, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "above_root_module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (root / "pytest.ini").write_text(
+        "[pytest]\n"
+        f"addopts = --junitxml={outside}/junit.xml --basetemp={outside}/basetemp --co\n"
+        "pythonpath = ..\n"
+        f"log_file = {outside}/pytest.log\n"
+        f"cache_dir = {outside}/cache\n"
+        "testpaths = ..\n",
+        encoding="utf-8",
+    )
+    (root / "test_imports.py").write_text(
+        "import importlib.util\n\n"
+        "def test_above_root_is_not_importable():\n"
+        "    assert importlib.util.find_spec('above_root_module') is None\n",
+        encoding="utf-8",
+    )
+
+    result = ExecutionRoot(root).run_command(["pytest", "-q", "test_imports.py", "test_ok.py"])
+
+    assert result.success and "2 passed" in result.stdout, result.stdout + result.stderr
+    assert list(outside.iterdir()) == []
+
+
+def test_plugin_autoload_and_ambient_plugin_variables_are_disabled(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib.metadata
+
+    installed = {entry.name for entry in importlib.metadata.entry_points(group="pytest11")}
+    monkeypatch.setenv("PYTEST_PLUGINS", "pytest_cov")
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-p pytest_cov")
+    (root / "test_plugins.py").write_text(
+        "def test_no_autoloaded_plugins(pytestconfig):\n"
+        "    names = {name for name, _ in pytestconfig.pluginmanager.list_name_plugin()}\n"
+        f"    assert not names & set({sorted(installed)!r}), names\n",
+        encoding="utf-8",
+    )
+
+    result = ExecutionRoot(root).run_command(["pytest", "-q", "test_plugins.py"])
+
+    assert installed, "the environment should have at least one entry-point plugin"
+    assert result.success and "1 passed" in result.stdout, result.stdout + result.stderr
+
+
+# --- scratch directory creation -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("planted", [".ari-exec", ".ari-exec/.gitignore", ".ari-exec/home", ".ari-exec/tmp"])
+def test_scratch_creation_refuses_symlinks_and_never_writes_outside(
+    root: Path, tmp_path: Path, planted: str
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    dangling = outside / "created-by-ari"
+    link = root / planted
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(dangling if planted.endswith(".gitignore") else outside)
+
+    with pytest.raises(CommandCapabilityError, match="scratch"):
+        ExecutionRoot(root).run_command(["pytest", "-q", "test_ok.py"])
+
+    assert not dangling.exists()
+    assert list(outside.iterdir()) == []
+
+
+def test_scratch_creation_reuses_real_directories(root: Path) -> None:
+    sandbox = ExecutionRoot(root)
+    sandbox.run_command(["pytest", "-q", "test_ok.py"])
+    second = sandbox.run_command(["pytest", "-q", "test_ok.py"])
+
+    assert second.success
+    assert (root / ".ari-exec" / ".gitignore").read_text(encoding="utf-8") == "*\n"
+
+
+# --- cat aliases ---------------------------------------------------------------------------
+
+
+def test_cat_refuses_symlinks_and_hardlinked_aliases(root: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    os.link(outside, root / "hardlink.txt")
+    (root / "inside-link.txt").symlink_to(root / "a.txt")
+
+    for path, reason in (("hardlink.txt", "hard links"), ("inside-link.txt", "symlink")):
+        with pytest.raises(CommandCapabilityError, match=reason):
+            prepare_command(["cat", path], root=root)
+
+
+# --- process-group ownership ---------------------------------------------------------------
+
+
+@pytest.fixture
+def signal_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, bool]]:
+    """Record every killpg with whether the group leader still existed (unreaped)."""
+    calls: list[tuple[int, int, bool]] = []
+    real_killpg = os.killpg
+
+    def recording_killpg(pgid: int, sig: int) -> None:
+        try:
+            os.kill(pgid, 0)  # succeeds for a running or zombie (unreaped) leader
+            leader_present = True
+        except ProcessLookupError:
+            leader_present = False
+        calls.append((pgid, sig, leader_present))
+        real_killpg(pgid, sig)
+
+    monkeypatch.setattr(os, "killpg", recording_killpg)
+    return calls
+
+
+def _lingering_child(root: Path, pid_file: Path, *, then_sleep: bool = False) -> PreparedCommand:
+    return _python_command(
+        root,
+        f"""
+        import pathlib, subprocess, sys, time
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        pathlib.Path({str(pid_file)!r}).write_text(str(child.pid))
+        {"time.sleep(60)" if then_sleep else ""}
+        """,
+    )
+
+
+def test_post_return_cleanup_only_signals_while_the_leader_is_unreaped(
+    root: Path, signal_log: list[tuple[int, int, bool]]
+) -> None:
+    pid_file = root / "member.pid"
+
+    completed = run_prepared_command(_lingering_child(root, pid_file), timeout_seconds=30)
+
+    assert completed.returncode == 0
+    assert signal_log, "the lingering group member should have been signalled"
+    assert all(present for _pgid, _sig, present in signal_log)
+    assert _wait_until_gone(int(pid_file.read_text()))
+
+
+def test_timeout_signals_term_then_kill_while_the_leader_is_unreaped(
+    root: Path, signal_log: list[tuple[int, int, bool]]
+) -> None:
+    import signal
+
+    pid_file = root / "member.pid"
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_prepared_command(_lingering_child(root, pid_file, then_sleep=True), timeout_seconds=1.5)
+
+    assert [sig for _pgid, sig, _present in signal_log][:2] == [signal.SIGTERM, signal.SIGKILL]
+    assert all(present for _pgid, _sig, present in signal_log)
+    assert _wait_until_gone(int(pid_file.read_text()))
+
+
+def test_without_a_non_reaping_wait_post_return_cleanup_is_skipped(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    signal_log: list[tuple[int, int, bool]],
+) -> None:
+    pid_file = root / "member.pid"
+    monkeypatch.setattr(
+        capabilities,
+        "_wait_for_exit_unreaped",
+        lambda _pid, _timeout: capabilities._LeaderState.UNKNOWN,
+    )
+
+    try:
+        completed = run_prepared_command(_lingering_child(root, pid_file), timeout_seconds=30)
+        assert completed.returncode == 0
+        assert signal_log == []  # never signals a group after reaping its leader
+    finally:
+        os.kill(int(pid_file.read_text()), 9)
+
+
+def test_signalling_a_reaped_leaders_group_is_refused(root: Path) -> None:
+    import signal
+
+    process = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    process.wait()
+
+    with pytest.raises(RuntimeError, match="already-reaped"):
+        capabilities._signal_group(process, signal.SIGKILL)

@@ -5,6 +5,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from ari_core.core.git_inspection import run_git_inspection
+
 
 @dataclass(frozen=True, slots=True)
 class VerificationCommandResult:
@@ -94,22 +96,8 @@ def inspect_repo_state(
 
 def _git_changed_paths(repo_root: Path) -> tuple[list[str], str, bool]:
     try:
-        completed = subprocess.run(
-            ["git", "status", "--short"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-        diff_completed = subprocess.run(
-            ["git", "diff", "--shortstat"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+        completed = run_git_inspection(["status", "--short"], repo_root, timeout=15)
+        diff_completed = run_git_inspection(["diff", "--shortstat"], repo_root, timeout=15)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return [], "", False
 
