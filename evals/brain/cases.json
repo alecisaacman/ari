@@ -1,0 +1,22 @@
+[
+  {"id": "plate-today", "message": "what's on my plate today?", "category": "state", "expect_tools": ["get_open_loops"], "escalate": false},
+  {"id": "anything-urgent", "message": "anything urgent?", "category": "state", "expect_any_tool": ["get_open_loops", "get_recent_signals_and_alerts", "get_daily_state"], "escalate": false},
+  {"id": "week-look", "message": "how's my week looking?", "category": "state", "expect_any_tool": ["get_weekly_state", "get_open_loops"], "escalate": false},
+  {"id": "win-condition", "message": "what did I say my win condition was today?", "category": "state", "expect_tools": ["get_daily_state"], "reply_mentions": ["outline"], "escalate": false},
+  {"id": "remind-email", "message": "remind me to email Professor Chen about the 537 project on Thursday", "category": "capture", "expect_tools": ["create_open_loop"], "escalate": false},
+  {"id": "applied-stripe", "message": "just applied to Stripe for the data analyst role", "category": "capture", "expect_tool_input": {"create_open_loop": {"kind": "job_application", "company": "Stripe"}}, "escalate": false},
+  {"id": "two-items", "message": "add buy printer ink and renew my parking permit to my list", "category": "capture", "expect_tool_count": {"create_open_loop": 2}, "escalate": false},
+  {"id": "watch-later", "message": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "category": "capture", "expect_tools": ["save_for_later"], "expect_no_reply": true, "escalate": false},
+  {"id": "ambiguous-link", "message": "https://www.examplecoffee.com/menu", "category": "capture", "forbid_tools": ["create_open_loop", "save_for_later"], "reply_mentions": ["?"], "escalate": false},
+  {"id": "done-fomc", "message": "finished the FOMC paper draft", "category": "resolve", "expect_tools": ["resolve_open_loop"], "escalate": false},
+  {"id": "close-ink", "message": "close out the printer ink one", "category": "resolve", "expect_tools": ["resolve_open_loop"], "escalate": false},
+  {"id": "thanks", "message": "ok thanks", "category": "chat", "forbid_tools": ["create_open_loop", "resolve_open_loop"], "max_reply_chars": 200, "escalate": false},
+  {"id": "ramp-hiring", "message": "is Ramp still hiring data analysts?", "category": "research", "escalate": true},
+  {"id": "fed-meeting", "message": "what did the Fed decide at its most recent meeting?", "category": "research", "escalate": true},
+  {"id": "draft-followup", "message": "draft a short follow-up note to the Stripe recruiter", "category": "drafting", "escalate": true},
+  {"id": "plan-week", "message": "help me plan this week around the econ paper due Friday", "category": "planning", "escalate": true},
+  {"id": "why-premium", "message": "why would the construction wage premium have shrunk after 2008?", "category": "analysis", "escalate": true},
+  {"id": "notes-file", "message": "write a today.md file in my workspace with my top 3 priorities", "category": "action", "expect_tools": ["propose_action"], "escalate": true},
+  {"id": "run-tests", "message": "run the tests in my workspace", "category": "action", "expect_tool_input": {"propose_action": {"action_type": "run_command"}}, "escalate": true},
+  {"id": "explicit-think", "message": "think: should I prioritize the Stripe or Ramp application this week?", "category": "explicit", "escalate": true}
+]

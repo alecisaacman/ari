@@ -234,3 +234,23 @@ class SkillInvocationRow(Base):
     summary: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     is_error: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BrainUsageRow(Base):
+    """One model request ARI's brain made, with what it cost."""
+
+    __tablename__ = "brain_usage"
+    __table_args__ = (Index("ix_brain_usage_occurred_at", "occurred_at"),)
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    channel: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(64))
+    input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    web_searches: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Integer micro-dollars, so monthly totals never accumulate float error.
+    cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0)
+    escalated: Mapped[bool] = mapped_column(Boolean, default=False)

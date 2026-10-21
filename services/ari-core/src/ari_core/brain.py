@@ -14,6 +14,7 @@ through ARI's canonical execution gateway.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -24,6 +25,7 @@ import anthropic
 from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
 from sqlalchemy.orm import Session
 
+from ari_core.brain_usage import ModelCall
 from ari_core.history import get_latest_run_details
 from ari_core.skills import MCP_BETA_HEADER, extract_resolved_skill_invocations
 from ari_core.state import (
@@ -35,17 +37,27 @@ from ari_core.state import (
     resolve_open_loop,
 )
 
-DEFAULT_MODEL = os.environ.get("ARI_BRAIN_MODEL", "claude-sonnet-5-5")
-# Chat replies are latency-sensitive; raise effort with ARI_BRAIN_EFFORT if
-# answers need more depth.
-DEFAULT_EFFORT = os.environ.get("ARI_BRAIN_EFFORT", "low")
+# Haiku answers first; it hands a message to the deeper model when it needs
+# research, drafting, judgment, or a workspace change, or when Alec asks.
+FAST_MODEL = os.environ.get("ARI_BRAIN_FAST_MODEL", "claude-haiku-5-5")
+DEEP_MODEL = os.environ.get("ARI_BRAIN_DEEP_MODEL", os.environ.get("ARI_BRAIN_MODEL", "claude-sonnet-5-5"))
+FAST_EFFORT = os.environ.get("ARI_BRAIN_FAST_EFFORT", "low")
+DEEP_EFFORT = os.environ.get("ARI_BRAIN_DEEP_EFFORT", "medium")
 # Thinking tokens count against this, so it is far above a text reply's length.
 MAX_TOKENS = 16000
 NO_REPLY_SENTINEL = "NO_REPLY"
 MAX_TOOL_TURNS = 6
-# Server-side refusal fallback: if one model declines, another answers instead
-# of ARI going silent.
+# Server-side refusal fallback for the deep model: if it declines, another model
+# answers instead of ARI going silent. Haiku has no server-side fallback.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# The two models get different tools, and each model's thinking blocks are bound
+# to the request that produced them. Dropping a mismatched block is the documented
+# alternative to a 400, so a model switch just loses the other model's reasoning.
+BINDING_BETA = "thinking-binding-controls-2026-08-01"
+ESCALATE_TOOL_NAME = "use_deeper_model"
+# Alec can ask for the deeper model directly: "think: ...", "research: ...".
+DEEP_REQUEST_RE = re.compile(r"^(think|think hard|deep|research)\s*[:,-]", re.IGNORECASE)
+LONG_MESSAGE_CHARS = 600
 REFUSAL_REPLY = "I can't help with that one."
 # A persisted conversation stays append-only until it passes this many messages.
 MAX_HISTORY_MESSAGES = 60
@@ -56,6 +68,8 @@ ROLLED_HISTORY_MESSAGES = 20
 # this module stays decoupled from ari_memory/Postgres specifics.
 GetMcpRequestArgs = Callable[[], tuple[list[dict[str, Any]], list[dict[str, Any]]]]
 LogInvocation = Callable[[SkillKind, str, str, str, dict[str, Any], bool], None]
+# Receives every model request's usage, and whether the deeper model served it.
+RecordCall = Callable[[ModelCall, bool], None]
 
 
 def _no_mcp_servers() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -127,6 +141,29 @@ already knew.
 Reply with exactly "NO_REPLY" only for save_for_later cases. Everything else gets a \
 real, short reply.
 """
+
+FAST_SYSTEM_ADDENDUM = f"""
+
+You are ARI's fast model. You handle Alec's records yourself: reading his open \
+loops and state, and capturing, resolving, or saving things. Call {ESCALATE_TOOL_NAME} \
+instead of answering when a message needs: looking anything up on the web, research, \
+drafting or writing, planning, analysis or comparisons, explaining why, any change to \
+files or running tests, or when you are not confident you can answer it well. You \
+don't have tools for those; ARI's deeper model does.
+"""
+
+ESCALATE_TOOL: dict[str, Any] = {
+    "name": ESCALATE_TOOL_NAME,
+    "description": (
+        "Hand this message to ARI's deeper model, which can search the web, draft, plan, "
+        "analyze, and propose workspace changes. Say briefly why."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {"reason": {"type": "string"}},
+        "required": ["reason"],
+    },
+}
 
 WEB_SEARCH_TOOL: dict[str, Any] = {
     "type": "web_search_20260209",
@@ -386,6 +423,18 @@ def make_tool_dispatcher(
     return dispatch
 
 
+FAST_TOOL_NAMES = {
+    "get_open_loops",
+    "get_daily_state",
+    "get_weekly_state",
+    "get_recent_signals_and_alerts",
+    "create_open_loop",
+    "resolve_open_loop",
+    "save_for_later",
+}
+FAST_TOOLS: list[dict[str, Any]] = [tool for tool in TOOLS if tool["name"] in FAST_TOOL_NAMES] + [ESCALATE_TOOL]
+
+
 def roll_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return a persisted conversation that the next request can replay.
 
@@ -396,16 +445,24 @@ def roll_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     if len(messages) <= MAX_HISTORY_MESSAGES:
         return messages
-    starts = [
-        index
-        for index, message in enumerate(messages)
-        if message.get("role") == "user" and isinstance(message.get("content"), str)
-    ]
+    starts = [index for index, message in enumerate(messages) if _is_alec_message(message)]
     cutoff = len(messages) - ROLLED_HISTORY_MESSAGES
     start = next((index for index in starts if index >= cutoff), None)
     if start is None:
         start = starts[-1] if starts else len(messages)
     return [_without_thinking(message) for message in messages[start:]]
+
+
+def _is_alec_message(message: dict[str, Any]) -> bool:
+    """A user turn Alec wrote, as opposed to one carrying tool results."""
+    if message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if isinstance(content, str):
+        return True
+    return isinstance(content, list) and not any(
+        isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+    )
 
 
 def _without_thinking(message: dict[str, Any]) -> dict[str, Any]:
@@ -420,55 +477,115 @@ def _without_thinking(message: dict[str, Any]) -> dict[str, Any]:
     return {**message, "content": kept}
 
 
+@dataclass(frozen=True, slots=True)
+class _ModelConfig:
+    model: str
+    effort: str
+    system: str
+    tools: list[dict[str, Any]]
+    mcp_servers: list[dict[str, Any]]
+    deep: bool
+
+
 def respond_to_message(
     *,
     text: str,
     history: list[dict[str, Any]],
     dispatch_tool: Callable[[str, dict[str, Any]], dict[str, Any]],
-    model: str = DEFAULT_MODEL,
-    effort: str = DEFAULT_EFFORT,
+    model: str | None = None,
     get_mcp_request_args: GetMcpRequestArgs = _no_mcp_servers,
     log_invocation: LogInvocation = _no_op_log_invocation,
+    record_call: RecordCall | None = None,
     client: Any | None = None,
+    now: datetime | None = None,
 ) -> BrainResponse:
-    """Send a message to the brain, executing any tool calls it makes, and
-    return its final reply plus the updated conversation history.
+    """Answer one message from Alec, running any tools the model calls.
 
-    get_mcp_request_args and log_invocation default to no-ops, so callers
-    that don't pass them (existing tests, anything not yet wired to a
-    skill registry) get exactly today's behavior: no MCP servers offered,
-    no audit rows written. This is additive — it does not change whether
-    or when the brain decides to call a skill, only what's offered to it
-    and what gets recorded afterward.
+    The fast model answers first. If it calls use_deeper_model, or Alec asked
+    for depth, the whole turn is answered by the deep model instead; the fast
+    model's partial turn is discarded, and its cost is still recorded. Passing
+    `model` pins one model with the deep model's tools.
+
+    get_mcp_request_args and log_invocation default to no-ops, so callers that
+    don't pass them get no MCP servers and no skill audit rows.
     """
     client = client or anthropic.Anthropic()
-    messages: list[dict[str, Any]] = [*history, {"role": "user", "content": text}]
+    sent_at = (now or datetime.now(tz=UTC)).astimezone().strftime("%A %B %-d, %Y, %-I:%M %p %Z")
+    user_turn = {
+        "role": "user",
+        # The time rides with the message, so the system prompt stays cacheable.
+        "content": [{"type": "text", "text": text}, {"type": "text", "text": f"(Sent {sent_at}.)"}],
+    }
+    base = [*history, user_turn]
 
-    # Fetched once per message, not per tool-use turn: which MCP servers are
-    # enabled doesn't change mid-conversation, and this avoids a DB round
-    # trip on every one of MAX_TOOL_TURNS turns.
+    # Fetched once per message: which MCP servers are enabled doesn't change
+    # mid-conversation. Skills are offered only to the deep model.
     mcp_servers, mcp_tools = get_mcp_request_args()
-    all_tools = [*TOOLS, WEB_SEARCH_TOOL, *mcp_tools]
+    deep = _ModelConfig(
+        model=model or DEEP_MODEL,
+        effort=DEEP_EFFORT,
+        system=SYSTEM_PROMPT,
+        tools=[*TOOLS, WEB_SEARCH_TOOL, *mcp_tools],
+        mcp_servers=mcp_servers,
+        deep=True,
+    )
+    wants_depth = bool(DEEP_REQUEST_RE.match(text.strip())) or len(text) > LONG_MESSAGE_CHARS
+    if model is None and not wants_depth:
+        fast = _ModelConfig(
+            model=FAST_MODEL,
+            effort=FAST_EFFORT,
+            system=SYSTEM_PROMPT + FAST_SYSTEM_ADDENDUM,
+            tools=FAST_TOOLS,
+            mcp_servers=[],
+            deep=False,
+        )
+        answered = _run_turn(client, fast, base, dispatch_tool, log_invocation, record_call)
+        if answered is not None:
+            return answered
+    answered = _run_turn(client, deep, base, dispatch_tool, log_invocation, record_call)
+    assert answered is not None  # the deep model has no escalation tool
+    return answered
 
-    betas = [FALLBACK_BETA, *([MCP_BETA_HEADER] if mcp_servers else [])]
-    extra: dict[str, Any] = {"mcp_servers": mcp_servers} if mcp_servers else {}
+
+def _run_turn(
+    client: Any,
+    config: _ModelConfig,
+    base: list[dict[str, Any]],
+    dispatch_tool: Callable[[str, dict[str, Any]], dict[str, Any]],
+    log_invocation: LogInvocation,
+    record_call: RecordCall | None,
+) -> BrainResponse | None:
+    """Run one model's tool loop. None means the fast model asked to escalate."""
+    messages = list(base)
+    betas = [BINDING_BETA]
+    extra: dict[str, Any] = {}
+    if config.model.startswith(("claude-sonnet", "claude-opus")):
+        betas.append(FALLBACK_BETA)
+        extra["fallbacks"] = "default"
+    if config.mcp_servers:
+        betas.append(MCP_BETA_HEADER)
+        extra["mcp_servers"] = config.mcp_servers
 
     for _ in range(MAX_TOOL_TURNS):
-        # The beta endpoint carries the refusal fallback and, when skills are
-        # registered, the MCP servers. Thinking is adaptive (the default), and
-        # its blocks are replayed unchanged within and across turns.
         response = client.beta.messages.create(
-            model=model,
+            model=config.model,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            tools=all_tools,
+            system=config.system,
+            tools=config.tools,
             messages=messages,
-            output_config={"effort": effort},
-            fallbacks="default",
+            thinking={"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
+            output_config={"effort": config.effort},
+            # Caches the system prompt, tools, and conversation so far.
+            cache_control={"type": "ephemeral"},
             betas=betas,
             **extra,
         )
+        if record_call is not None:
+            record_call(ModelCall.from_response(response), config.deep)
         assistant_content = [block.model_dump(exclude_none=True) for block in response.content]
+
+        if any(block.type == "tool_use" and block.name == ESCALATE_TOOL_NAME for block in response.content):
+            return None
         messages.append({"role": "assistant", "content": assistant_content})
 
         if response.stop_reason == "refusal":
@@ -477,12 +594,8 @@ def respond_to_message(
             # A long server-side tool turn (web search) paused; resend to continue it.
             continue
 
-        # web_search and MCP tools run server-side inside this same API call
-        # (Anthropic executes them and feeds results back to Claude before
-        # responding) — only client-side tools show up as
-        # block.type == "tool_use" here and need dispatch_tool.
-        # stop_reason == "tool_use" means a client tool is actually waiting
-        # on us, never an already-resolved web_search/MCP call.
+        # web_search and MCP tools run server-side inside this same API call --
+        # only client-side tools show up as tool_use blocks needing dispatch_tool.
         for resolved in extract_resolved_skill_invocations(assistant_content):
             log_invocation(
                 resolved["skill_kind"],

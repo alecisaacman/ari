@@ -52,20 +52,84 @@ def no_tools(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
     raise AssertionError("no tool expected")
 
 
-def test_request_uses_sonnet_5_5_with_fallback_and_low_effort() -> None:
+@dataclass
+class Usage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    server_tool_use: Any = None
+
+
+def test_routine_message_is_answered_by_haiku_with_caching_and_no_fallback() -> None:
     client = FakeClient([Response([Block("text", text="Nothing urgent today.")], "end_turn")])
 
     result = brain.respond_to_message(text="anything urgent?", history=[], dispatch_tool=no_tools, client=client)
 
     request = client.requests[0]
     assert result.reply == "Nothing urgent today."
-    assert request["model"] == "claude-sonnet-5-5"
-    assert request["fallbacks"] == "default"
-    assert brain.FALLBACK_BETA in request["betas"]
+    assert request["model"] == "claude-haiku-5-5"
     assert request["output_config"] == {"effort": "low"}
+    assert request["cache_control"] == {"type": "ephemeral"}
+    assert request["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert "fallbacks" not in request  # Haiku has no server-side fallback
+    names = {tool["name"] for tool in request["tools"]}
+    assert brain.ESCALATE_TOOL_NAME in names
+    assert {"propose_action", "web_search"}.isdisjoint(names)
     assert request["max_tokens"] >= 16000
-    assert "thinking" not in request
-    assert {"type": "web_search_20260209", "name": "web_search", "max_uses": 2} in request["tools"]
+
+
+def test_haiku_hands_the_turn_to_sonnet_which_answers_it_from_a_clean_start() -> None:
+    client = FakeClient(
+        [
+            Response([Block("tool_use", id="e1", name=brain.ESCALATE_TOOL_NAME, input={"reason": "research"})], "tool_use"),
+            Response([Block("text", text="Stripe froze hiring in March.")], "end_turn"),
+        ]
+    )
+    calls: list[tuple[str, bool]] = []
+
+    result = brain.respond_to_message(
+        text="is Stripe still hiring?",
+        history=[],
+        dispatch_tool=no_tools,
+        client=client,
+        record_call=lambda call, deep: calls.append((call.model, deep)),
+    )
+
+    fast, deep = client.requests
+    assert deep["model"] == "claude-sonnet-5-5"
+    assert deep["fallbacks"] == "default"
+    assert brain.FALLBACK_BETA in deep["betas"]
+    assert {"type": "web_search_20260209", "name": "web_search", "max_uses": 2} in deep["tools"]
+    # Sonnet sees the conversation and Alec's message, not Haiku's abandoned turn.
+    assert deep["messages"] == fast["messages"]
+    assert result.reply == "Stripe froze hiring in March."
+    assert [deep_flag for _, deep_flag in calls] == [False, True]
+    assert all(message["role"] != "assistant" or message["content"][0].get("name") != brain.ESCALATE_TOOL_NAME
+               for message in result.messages)
+
+
+def test_alec_can_ask_for_the_deeper_model_directly() -> None:
+    client = FakeClient([Response([Block("text", text="Here's a plan.")], "end_turn")])
+
+    brain.respond_to_message(text="think: how should I prep for Friday?", history=[], dispatch_tool=no_tools, client=client)
+
+    assert [request["model"] for request in client.requests] == ["claude-sonnet-5-5"]
+
+
+def test_each_request_is_costed_from_its_usage() -> None:
+    response = Response([Block("text", text="ok")], "end_turn")
+    response.model = "claude-haiku-5-5"  # type: ignore[attr-defined]
+    response.usage = Usage(input_tokens=1_000, output_tokens=200, cache_read_input_tokens=4_000)  # type: ignore[attr-defined]
+    recorded = []
+
+    brain.respond_to_message(
+        text="hi", history=[], dispatch_tool=no_tools, client=FakeClient([response]),
+        record_call=lambda call, deep: recorded.append(call),
+    )
+
+    # 1,000 x $0.10 + 4,000 x $0.01 + 200 x $0.50 per million tokens
+    assert abs(recorded[0].cost_usd - 0.00024) < 1e-9
 
 
 def test_tool_results_are_fed_back_and_thinking_is_replayed_unchanged() -> None:
@@ -83,6 +147,7 @@ def test_tool_results_are_fed_back_and_thinking_is_replayed_unchanged() -> None:
         return {"open_loops": [{"title": "call Sam"}]}
 
     result = brain.respond_to_message(text="what's open?", history=[], dispatch_tool=dispatch, client=client)
+    assert client.requests[1]["model"] == "claude-haiku-5-5"
 
     assert calls == ["get_open_loops"]
     assert result.reply == "One loop: call Sam."
@@ -98,7 +163,7 @@ def test_paused_server_tool_turn_is_resumed_not_answered_early() -> None:
         ]
     )
 
-    result = brain.respond_to_message(text="look this up", history=[], dispatch_tool=no_tools, client=client)
+    result = brain.respond_to_message(text="research: look this up", history=[], dispatch_tool=no_tools, client=client)
 
     assert result.reply == "Found it."
     assert len(client.requests) == 2
@@ -126,7 +191,7 @@ def test_history_is_append_only_until_it_rolls() -> None:
 def test_rolled_history_starts_at_alec_and_drops_thinking_once() -> None:
     history: list[dict[str, Any]] = []
     for index in range(40):
-        history.append({"role": "user", "content": f"message {index}"})
+        history.append({"role": "user", "content": [{"type": "text", "text": f"message {index}"}]})
         history.append(
             {
                 "role": "assistant",
@@ -141,7 +206,7 @@ def test_rolled_history_starts_at_alec_and_drops_thinking_once() -> None:
     rolled = roll_history(history)
 
     assert len(rolled) <= brain.ROLLED_HISTORY_MESSAGES + 2
-    assert rolled[0]["role"] == "user" and isinstance(rolled[0]["content"], str)
+    assert rolled[0]["role"] == "user" and rolled[0]["content"][0]["type"] == "text"
     assert all(
         block.get("type") != "thinking"
         for message in rolled

@@ -7,8 +7,10 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from ari_core import brain_usage
 from ari_core.action_desk import ActionDesk
 from ari_core.brain import BrainResponse
+from ari_core.brain_usage import ModelCall, record_model_call
 from ari_core.core import pause as pause_module
 from ari_imessage_gateway.config import ImessageSettings
 from ari_imessage_gateway.gateway import ImessageGateway
@@ -65,6 +67,8 @@ def session_factory(ledger_dir: Path) -> sessionmaker[Session]:
 @pytest.fixture(autouse=True)
 def isolated_pause(monkeypatch: pytest.MonkeyPatch, ledger_dir: Path) -> None:
     monkeypatch.setattr(pause_module, "PAUSED_MARKER_PATH", ledger_dir / ".paused")
+    monkeypatch.setattr(brain_usage, "_budget_file", lambda: ledger_dir / "brain-budget.json")
+    monkeypatch.delenv("ARI_BRAIN_MONTHLY_BUDGET_USD", raising=False)
 
 
 @pytest.fixture
@@ -366,3 +370,62 @@ def test_dump_job_runs_sqlite3_directly_and_escapes_identifiers(settings) -> Non
     assert "-readonly" in dump["ProgramArguments"]
     poll = plistlib.loads(plists["com.test.ari.imessage-poll.plist"])
     assert "ANTHROPIC_API_KEY" not in poll.get("EnvironmentVariables", {})
+
+
+def spend(session_factory, model: str, output_tokens: int) -> None:
+    with session_factory() as session:
+        record_model_call(
+            session,
+            ModelCall(model=model, input_tokens=0, output_tokens=output_tokens, cache_write_tokens=0,
+                      cache_read_tokens=0, web_searches=0),
+            channel="imessage",
+            escalated=model.startswith("claude-sonnet"),
+        )
+
+
+def test_spend_command_reports_this_month_without_calling_a_model(settings, session_factory) -> None:
+    spend(session_factory, "claude-sonnet-5-5", 100_000)  # $1.00
+    brain = FakeBrain()
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=brain, messages=messages)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "ARI spend?"))
+
+    gateway.poll_once()
+
+    assert brain.texts == []
+    assert messages.sent[-1][1] == "$1.00 of $5.00 this month, over 1 model requests (1 on the deeper model)."
+
+
+def test_exhausted_budget_stops_model_calls_until_alec_raises_it(settings, session_factory) -> None:
+    spend(session_factory, "claude-sonnet-5-5", 500_000)  # $5.00
+    brain = FakeBrain(reply="Here you go.")
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=brain, messages=messages)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "what's on today?"))
+
+    gateway.poll_once()
+
+    assert brain.texts == []
+    assert "budget" in messages.sent[-1][1]
+    write_dump(settings, (1, "old"), (2, "what's on today?"), (3, "ARI budget 10"), (4, "what's on today, then?"))
+    gateway.poll_once()
+    assert brain_usage.monthly_budget_usd() == 10.0
+    assert brain.texts == ["what's on today, then?"]
+
+
+def test_brain_requests_are_recorded_through_the_gateway(settings, session_factory) -> None:
+    def costly(*, text, history, record_call, **_: Any) -> BrainResponse:
+        record_call(ModelCall("claude-haiku-5-5", 2_000, 100, 0, 0, 0), False)
+        return BrainResponse(reply="ok", messages=[*history, {"role": "user", "content": text}])
+
+    gateway = make_gateway(settings, session_factory, brain=costly)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "hi"))
+    gateway.poll_once()
+
+    with session_factory() as session:
+        month = brain_usage.month_spend(session)
+    assert month.requests == 1
+    assert abs(month.spent_usd - 0.00025) < 1e-9

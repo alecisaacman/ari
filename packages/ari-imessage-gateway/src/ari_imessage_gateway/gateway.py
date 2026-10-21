@@ -5,9 +5,11 @@ self-thread snapshot and, for each one, in order:
 
 1. control commands ("ARI stop", "ARI resume") pause or resume ARI;
 2. while paused, nothing else is acted on;
-3. a "yes" or "no" with a proposal waiting approves or declines it. That is
+3. "ARI spend" and "ARI budget N" report or set the monthly model budget;
+4. a "yes" or "no" with a proposal waiting approves or declines it. That is
    decided here, from Alec's own words, never by the model;
-4. anything else goes to ARI's brain, and its reply goes back into the thread.
+5. anything else goes to ARI's brain, unless this month's budget is used up,
+   and its reply goes back into the thread.
 
 Then ARI sends any new important alerts, with the reason it raised them.
 
@@ -27,6 +29,7 @@ from typing import Any
 
 from ari_core.action_desk import ActionDesk, PendingProposal, describe_result
 from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message, roll_history
+from ari_core.brain_usage import ModelCall, month_spend, record_model_call, set_monthly_budget_usd
 from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
@@ -52,6 +55,8 @@ NOTIFY_LEVELS = {
 STOP_RE = re.compile(r"^ari,?\s+(stop|pause)$")
 RESUME_RE = re.compile(r"^ari,?\s+(resume|start|go)$")
 APPROVE_RE = re.compile(r"^(yes|y|yep|yeah|approve|approved|do it|go ahead)(?:\s+(\d+))?$")
+SPEND_RE = re.compile(r"^ari,?\s+(spend|spending|cost|costs|usage)\??$")
+BUDGET_RE = re.compile(r"^ari,?\s+budget\s+\$?(\d+(?:\.\d+)?)$")
 DECLINE_RE = re.compile(r"^(no|n|nope|cancel|decline|don't|dont)(?:\s+(\d+))?$")
 
 Respond = Callable[..., BrainResponse]
@@ -147,6 +152,14 @@ class ImessageGateway:
             return self._reply(
                 reply_to, history, text, "Resumed. I didn't act on anything you sent while I was paused.", report
             )
+        if SPEND_RE.match(command):
+            with self.session_factory() as session:
+                return self._reply(reply_to, history, text, month_spend(session).describe(), report)
+        budget = BUDGET_RE.match(command)
+        if budget:
+            if not self.dry_run:
+                set_monthly_budget_usd(float(budget.group(1)))
+            return self._reply(reply_to, history, text, f"Monthly budget set to ${float(budget.group(1)):.2f}.", report)
         if get_pause_state()["paused"]:
             return history
 
@@ -154,6 +167,18 @@ class ImessageGateway:
         pending = self.action_desk.pending() if self.action_desk else []
         if approval and pending:
             return self._reply(reply_to, history, text, self._decide(approval, pending), report)
+
+        with self.session_factory() as session:
+            spend = month_spend(session)
+        if spend.exhausted:
+            return self._reply(
+                reply_to,
+                history,
+                text,
+                f"I've used this month's ${spend.budget_usd:.2f} budget, so I'm not calling a model. "
+                "Text \"ARI budget\" with a new amount to raise it.",
+                report,
+            )
 
         dispatch = make_tool_dispatcher(
             self.session_factory,
@@ -167,6 +192,7 @@ class ImessageGateway:
             dispatch_tool=dispatch,
             get_mcp_request_args=self._mcp_request_args,
             log_invocation=self._log_invocation,
+            record_call=self._record_call,
         )
         if response.reply:
             self._send(reply_to, response.reply, report)
@@ -265,6 +291,11 @@ class ImessageGateway:
         suffix = f" - {note}" if note else ""
         with saved.open("a", encoding="utf-8") as handle:
             handle.write(f"- [{self.now().isoformat()}] {link}{suffix}\n")
+
+    def _record_call(self, call: ModelCall, deep: bool) -> None:
+        # Recorded even in a dry run: the model was really called and really billed.
+        with self.session_factory() as session:
+            record_model_call(session, call, channel=CHANNEL, escalated=deep)
 
     def _mcp_request_args(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         with self.session_factory() as session:

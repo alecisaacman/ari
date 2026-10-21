@@ -23,6 +23,41 @@ reasons on its own, and neither does any other surface.
   to 07:00) hold back everything but urgent alerts.
 - **Stop it.** "ARI stop" pauses everything, including execution. "ARI resume"
   resumes. Messages sent while paused are not acted on.
+- **Watch the cost.** "ARI spend" reports this month's model spend against the
+  budget. "ARI budget 10" sets the monthly budget to $10.
+
+## Which model answers, and what it costs
+
+Polling, alerts, approvals, and the text commands above never call a model. Only
+a message for the brain does.
+
+- **Claude Haiku 5.5 answers first** (effort `low`). It reads and updates
+  Alec's records: open loops, daily and weekly state, signals, saved links.
+- **Claude Sonnet 5.5 takes over** (effort `medium`, with server-side refusal
+  fallback) when Haiku calls `use_deeper_model`. Haiku does this for web lookups,
+  research, drafting, planning, analysis, "why" questions, workspace changes, or
+  anything it isn't confident about. Sonnet also takes messages Alec starts with
+  `think:`, `research:`, or `deep:`, and messages over 600 characters. Sonnet
+  answers the whole turn from a clean start; Haiku's abandoned attempt is not
+  kept, but its cost is.
+- **Every request is cached** (`cache_control`), so the system prompt, tools,
+  and conversation so far cost a tenth of the input rate on repeat.
+- **Every request is costed** from the usage the API reports and recorded in
+  `brain_usage`. Before calling a model, the gateway checks the month's total
+  against the budget ($5 by default, `ARI_BRAIN_MONTHLY_BUDGET_USD`, or "ARI
+  budget N"). Over budget, ARI replies without calling a model. The message that
+  crosses the line is the last one billed.
+- The two models get different tools, and each model's thinking is bound to the
+  request that produced it, so requests set
+  `prefix_mismatch_behavior: "drop_block"`: after a model switch, the other
+  model's reasoning is dropped instead of failing the request.
+
+Estimated, not measured: about $1 to $4 a month at 20 messages a day, depending
+on how often messages need Sonnet. `evals/brain/run_eval.py` measures it. It
+runs 20 realistic messages through the routed brain and through Sonnet alone,
+against seeded state with every action as a dry run, and reports pass rates, cost,
+latency, and each reply. It calls the real API, and `--max-usd` caps what it can
+spend.
 
 ## How it works
 
