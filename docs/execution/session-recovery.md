@@ -33,6 +33,16 @@ explicit session/recovery state.
   checkpoint and prior attempt.
 - Reconciliation copies, but never widens, restrictions and authority state.
 
+## Start-of-task handoff
+
+A freshly planned task reaches the same handshake without a lost worker.
+`hand_off_to_worker` closes ARI's planning attempt as `handed_off` (lifecycle
+`succeeded`, never `stale`), creates the worker's attempt under the same `task_id`
+with a lease, and issues a continuation packet from the canonical checkpoint. The
+task then waits for acknowledgement exactly as after recovery. Only the task's
+active, unended attempt can hand off, and only from `waiting_for_worker` or
+`active`.
+
 ## Continuation handshake
 
 ARI builds the continuation packet only from canonical task, checkpoint, and

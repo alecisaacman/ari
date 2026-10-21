@@ -3,6 +3,7 @@ from io import StringIO
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from ari_api import create_app
 from ari_api.schemas import (
     build_active_open_loops_response,
@@ -47,6 +48,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+
+@pytest.fixture(autouse=True)
+def _controller_read_target(configured_execution_root: Path) -> None:
+    # Legacy controller reads resolve inside ARI's configured execution root, not the
+    # live checkout, so the file the controller decisions read must exist there.
+    target = configured_execution_root / "tests" / "unit" / "test_models.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
 
 
 def test_latest_run_endpoint_returns_canonical_latest_history_read_model() -> None:

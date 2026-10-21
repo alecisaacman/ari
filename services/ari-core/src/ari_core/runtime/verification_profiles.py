@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from ..core import paths as core_paths
+from ..modules.execution.runtime_adapter import RuntimeExecutionAdapter, RuntimeStepRequest
 from .repo_inspector import RepoInspectionResult
 
 CheckClassification = Literal["success", "partial_success", "failure"]
+CommandRunner = Callable[[Sequence[str]], "CommandExecutionResult"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +51,9 @@ class VerificationContext:
     worker_stdout: str
     worker_stderr: str
     worker_exit_code: int | None
+    # Runs a verification command. Unset, commands go through ARI's canonical
+    # execution adapter rooted at `repo_root`; there is no other way to run one.
+    command_runner: CommandRunner | None = None
 
 
 class Check:
@@ -103,7 +108,7 @@ class TestPasses(Check):
 
     def evaluate(self, context: VerificationContext) -> VerificationCheckResult:
         command = [sys.executable, "-m", "pytest", self.path, "-q"]
-        result = _run_command(command, context.repo_root)
+        result = _run_command(command, context)
         details = f"{self.path} {'passed' if result.success else 'failed'}"
         return VerificationCheckResult(
             check_type="TestPasses",
@@ -331,28 +336,86 @@ def _build_profile_from_slice(slice_spec) -> VerificationProfile:
     return VerificationProfile(slice_key=slice_spec.key, checks=checks)
 
 
-def _run_command(command: Sequence[str], repo_root: Path) -> CommandExecutionResult:
-    completed = subprocess.run(
-        list(command),
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    return CommandExecutionResult(
-        command=list(command),
-        success=completed.returncode == 0,
-        exit_code=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-    )
+VERIFIER_IDENTITY = "ari-verifier"
+VERIFICATION_COMMAND_TIMEOUT_SECONDS = 120
+
+
+def canonical_command_runner(
+    execution: RuntimeExecutionAdapter,
+    *,
+    loop_id: str | None = None,
+) -> CommandRunner:
+    """Run each verification command as one canonical ARI step.
+
+    The command must resolve to an explicit command capability; anything else is
+    refused by the gateway and reported as a failed check, never run another way.
+    """
+
+    def run(command: Sequence[str]) -> CommandExecutionResult:
+        argv = [str(part) for part in command]
+        step = execution.run_step(
+            RuntimeStepRequest(
+                action={
+                    "type": "run_command",
+                    "command": argv,
+                    "timeout_seconds": VERIFICATION_COMMAND_TIMEOUT_SECONDS,
+                },
+                objective="Verify a runtime slice with an explicit command capability.",
+                reason=f"Verification command: {' '.join(argv)}",
+                worker_identity=VERIFIER_IDENTITY,
+                loop_id=loop_id,
+                worker_capabilities=("run_command",),
+            )
+        )
+        if not step.executed or step.result is None:
+            return CommandExecutionResult(
+                command=argv,
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=f"ARI did not run the verification command: {step.reason}",
+            )
+        result = step.result
+        exit_code = result.get("exit_code")
+        return CommandExecutionResult(
+            command=argv,
+            success=bool(result.get("success")),
+            exit_code=exit_code if isinstance(exit_code, int) else -1,
+            stdout=str(result.get("stdout") or ""),
+            stderr=str(result.get("stderr") or ""),
+        )
+
+    return run
+
+
+def default_command_runner(repo_root: Path) -> CommandRunner:
+    """A canonical runner rooted at `repo_root`, or one that refuses every command."""
+    try:
+        return canonical_command_runner(RuntimeExecutionAdapter(core_paths.DB_PATH, execution_root=repo_root))
+    except ValueError as error:
+        refusal = f"ARI refused the verification execution root: {error}"
+
+        def refuse(command: Sequence[str]) -> CommandExecutionResult:
+            return CommandExecutionResult(
+                command=[str(part) for part in command],
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=refusal,
+            )
+
+        return refuse
+
+
+def _run_command(command: Sequence[str], context: VerificationContext) -> CommandExecutionResult:
+    runner = context.command_runner or default_command_runner(context.repo_root)
+    return runner(command)
 
 
 def _command_succeeds_check(context: VerificationContext, config: dict[str, object]) -> VerificationCheckResult:
     raw_command = config.get("command", [])
     command = [str(part) for part in raw_command]
-    result = _run_command(command, context.repo_root)
+    result = _run_command(command, context)
     description = str(config.get("description", f"Command succeeded: {' '.join(command)}"))
     details = description if result.success else result.stderr or result.stdout or "command failed"
     return VerificationCheckResult(

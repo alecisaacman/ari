@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from ..core.paths import DB_PATH, PROJECT_ROOT
 from ..modules.coordination.db import list_coordination_entities, put_coordination_entity
+from ..modules.execution.runtime_adapter import RuntimeExecutionAdapter
 from .action_plans import ActionPlan, build_action_plan
 from .codex_adapter import CodexAdapter
 from .loop_runner import LoopRunnerResult, run_goal_loop
@@ -18,6 +19,7 @@ from .verification_profiles import (
     VerificationContext,
     VerificationProfile,
     VerificationResult,
+    canonical_command_runner,
     evaluate_profile,
     verification_profile_for_slice,
 )
@@ -251,6 +253,19 @@ class SelfImprovementRunner:
         repo_root = Path(cwd or PROJECT_ROOT).expanduser().resolve()
         cycles: list[SelfImprovementCycle] = []
         loop_id = f"self-improvement-run-{uuid4()}"
+        # Verification commands run only as canonical ARI steps in this root. A root
+        # ARI refuses stops the run before any slice is attempted.
+        try:
+            execution = RuntimeExecutionAdapter(self.db_path, execution_root=repo_root)
+        except ValueError as error:
+            return SelfImprovementRunResult(
+                goal=goal,
+                status="blocked",
+                reason=f"ARI refused the execution root: {error}",
+                cycles_run=0,
+                cycles=[],
+            )
+        command_runner = canonical_command_runner(execution, loop_id=loop_id)
         previous_loops = self._load_previous_loops()
         controller_history = self._load_previous_controller_decisions()
         execution_intent = _load_execution_intent(repo_root)
@@ -318,6 +333,7 @@ class SelfImprovementRunner:
                     worker_stdout="" if worker_run is None else worker_run.stdout,
                     worker_stderr="" if worker_run is None else worker_run.stderr,
                     worker_exit_code=None if worker_run is None else worker_run.exit_code,
+                    command_runner=command_runner,
                 ),
             )
             verification_status, reason, next_control_action = _evaluate_slice_result(
@@ -578,6 +594,8 @@ def _evaluate_slice_result(
         return "retry", loop_result.reason, "retry"
     if loop_result.status == "escalate":
         return "escalate", loop_result.reason, "escalate"
+    if loop_result.status in {"blocked", "awaiting_approval"}:
+        return loop_result.status, loop_result.reason, loop_result.status
 
     if verification_result.classification == "success" and slice_spec.expected_paths:
         return "continue", "The bounded slice produced strong repo and verification evidence.", "continue"

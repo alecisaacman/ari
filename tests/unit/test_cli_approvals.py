@@ -1,7 +1,9 @@
 from datetime import UTC, date, datetime, timedelta
 from io import StringIO
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import pytest
 from ari_cli.main import run_cli
 from ari_core import RunSignalOrchestrationInput, get_latest_run_details, run_signal_orchestration
 from ari_memory import Base, DailyStateRepository, OpenLoopRepository, WeeklyStateRepository
@@ -18,6 +20,15 @@ from ari_state import (
 )
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+
+
+@pytest.fixture(autouse=True)
+def _controller_read_target(configured_execution_root: Path) -> None:
+    # Legacy controller reads resolve inside ARI's configured execution root, not the
+    # live checkout, so the file the controller decisions read must exist there.
+    target = configured_execution_root / "tests" / "unit" / "test_models.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
 
 
 def test_cli_lists_pending_approvals() -> None:

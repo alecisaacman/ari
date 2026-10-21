@@ -224,23 +224,32 @@ mechanisms listed. It does not make arbitrary Git operations on an untrusted
 repository safe, and `core.worktree` can still point inspection (read-only) at a
 directory outside the root.
 
+## Runtime loops
+
+The runtime worker loop, the self-improvement runner, verification profiles, the
+runtime repo inspector's verification commands, and the legacy controller executor
+reach these rules only through the canonical runtime adapter. Each effectful step is
+one ARI task dispatched once by the recovered-action gateway. See
+[Runtime Execution Convergence](runtime-convergence.md).
+
+Provider workers (`codex exec` or another configured command) remain
+operator-configured arbitrary code. The adapter decides *whether and when* one runs,
+in which execution root, and records it; it does not contain what the worker does.
+
 ## What is still outside this boundary
 
 These paths start processes or write files without these rules:
 
-- legacy `ari_core/executor.py` + `ari_core/authority.py`: exact-string
-  `pytest -q` in the repo root, via the ambient `PATH` and environment, with no
-  timeout (arbitrary local code)
-- `runtime/verification_profiles.py`: profile-defined commands with the inherited
-  environment (arbitrary local code)
-- `runtime/worker_backend.py`, `runtime/self_improvement_runner.py`: provider
-  workers such as `codex exec` (operator-configured arbitrary code)
 - `runtime/playground.py`: `git init/config/add/commit` with the inherited
   environment, and a recursive workspace reset on an operator-supplied path. By code
   reading, that reset's `is_dir()` check follows symlinked directories, so it can
   delete a link target's contents (operator-controlled).
 - documentation suits (`ffmpeg`, `screencapture`) and the career-command adapter
   (operator-controlled)
+- `ExecutionController.run()` (and so the one-step coding loop and approved retry
+  execution), operator engine actions, and the direct execution API/CLI file and
+  command endpoints: these use `execute_action` plus `ExecutionRoot`, so the rules
+  above apply, but not the gateway's decision, fence, and idempotency sequence
 - task restrictions are enforced only by the recovered-action gateway, not by
   `ExecutionController.run()`, the coding loop, or operator actions
 - a `no network` restriction is not enforced against code-execution capabilities

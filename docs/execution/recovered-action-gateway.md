@@ -99,9 +99,12 @@ uncertain.
 
 ## Remaining bypass paths
 
-This slice intentionally converges only recovered pending actions. The following
-legacy paths still invoke execution machinery without this recovered-action
-gateway and require a later convergence slice:
+Recovered pending actions and every runtime-loop step use this gateway. Runtime
+steps enter it through `RuntimeExecutionAdapter`, which plans a one-action task and
+hands it to its worker with `ExecutionSessionManager.hand_off_to_worker`; see
+[Runtime Execution Convergence](runtime-convergence.md). The following paths still
+invoke execution machinery without this gateway and require a later convergence
+slice:
 
 - `ExecutionController.run()` multi-action plans
 - operator actions in `modules/execution/engine.py`

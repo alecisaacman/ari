@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -52,6 +52,7 @@ def inspect_repo_state(
     worker_stdout: str = "",
     worker_stderr: str = "",
     worker_exit_code: int | None = None,
+    command_runner: Callable[[Sequence[str]], object] | None = None,
 ) -> RepoInspectionResult:
     root = Path(repo_root).expanduser().resolve()
     changed_paths, diff_summary, git_available = _git_changed_paths(root)
@@ -72,7 +73,7 @@ def inspect_repo_state(
         for path in expected_paths
     }
     symbol_results = _symbol_matches(root, expected_symbols or {})
-    verification_runs = _run_verification_commands(root, verification_commands)
+    verification_runs = _run_verification_commands(root, verification_commands, command_runner)
     verification_passed = all(run.success for run in verification_runs) if verification_runs else False
     tests_passed = verification_passed and any(_looks_like_test_command(run.command) for run in verification_runs)
     if not verification_runs:
@@ -134,24 +135,25 @@ def _symbol_matches(repo_root: Path, expected_symbols: Mapping[str, Sequence[str
 def _run_verification_commands(
     repo_root: Path,
     commands: Sequence[Sequence[str]],
+    command_runner: Callable[[Sequence[str]], object] | None,
 ) -> list[VerificationCommandResult]:
+    if not commands:
+        return []
+    if command_runner is None:
+        # Imported here: verification_profiles depends on this module.
+        from .verification_profiles import default_command_runner
+
+        command_runner = default_command_runner(repo_root)
     results: list[VerificationCommandResult] = []
     for command in commands:
-        completed = subprocess.run(
-            list(command),
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
+        completed = command_runner(command)
         results.append(
             VerificationCommandResult(
                 command=list(command),
-                success=completed.returncode == 0,
-                exit_code=completed.returncode,
-                stdout=completed.stdout,
-                stderr=completed.stderr,
+                success=bool(getattr(completed, "success", False)),
+                exit_code=int(getattr(completed, "exit_code", -1)),
+                stdout=str(getattr(completed, "stdout", "")),
+                stderr=str(getattr(completed, "stderr", "")),
             )
         )
     return results

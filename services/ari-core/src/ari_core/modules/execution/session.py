@@ -415,6 +415,174 @@ class ExecutionSessionManager:
             continuation_packet_id=packet_id,
         )
 
+    def hand_off_to_worker(
+        self,
+        attempt_id: str,
+        *,
+        worker_identity: str,
+        lease_seconds: int,
+        worker_session_ref: str | None = None,
+    ) -> AttemptRecoveryDecision:
+        """Hand a freshly planned task from ARI's planning attempt to a named worker.
+
+        This is the start-of-task counterpart of `reconcile_stale_attempt`: the planning
+        attempt closes as a deliberate handoff (not a worker loss), a worker attempt is
+        created under the same task, and the worker receives the same canonical
+        continuation packet it must acknowledge before the recovered-action gateway will
+        dispatch anything. Restrictions, authority scope, and approval state are copied
+        from the canonical checkpoint and never widened.
+        """
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be positive.")
+        now = self._now()
+        expires = now + timedelta(seconds=lease_seconds)
+        worker_attempt_id = f"attempt-{uuid4()}"
+        session_id = f"session-{uuid4()}"
+        packet_id = f"continuation-{uuid4()}"
+        handoff_reason = "ARI handed the planned task to a worker."
+        with self.ledger._transaction() as connection:
+            planning_attempt = self._require_attempt_by_id(connection, attempt_id)
+            task = self._require_task(connection, str(planning_attempt["task_id"]))
+            self._ensure_task_can_recover(task)
+            if TaskLifecycleState(task["lifecycle_state"]) not in {
+                TaskLifecycleState.WAITING_FOR_WORKER,
+                TaskLifecycleState.ACTIVE,
+            }:
+                raise ValueError(
+                    f"Task state {task['lifecycle_state']} cannot be handed to a worker."
+                )
+            if task["active_attempt_id"] != attempt_id:
+                raise ValueError("Only the task's active attempt can hand off to a worker.")
+            if planning_attempt["ended_at"] is not None:
+                raise ValueError("A terminal attempt cannot hand off to a worker.")
+            checkpoint = connection.execute(
+                "select * from ari_execution_checkpoints where checkpoint_id = ?",
+                (task["latest_checkpoint_id"],),
+            ).fetchone()
+            if checkpoint is None:
+                raise ValueError("Task has no canonical checkpoint for a worker handoff.")
+            connection.execute(
+                """
+                update ari_execution_attempts
+                set status = 'handed_off', lifecycle_state = ?, ended_at = ?,
+                    recovery_json = ?, replacement_attempt_id = ?
+                where attempt_id = ?
+                """,
+                (
+                    AttemptLifecycleState.SUCCEEDED,
+                    _iso(now),
+                    _json({"handoff": True, "checkpoint_id": checkpoint["checkpoint_id"]}),
+                    worker_attempt_id,
+                    attempt_id,
+                ),
+            )
+            self.ledger._insert_attempt(
+                connection,
+                attempt_id=worker_attempt_id,
+                task_id=str(task["task_id"]),
+                executor_id=worker_identity,
+                backend_id=str(planning_attempt["backend_id"]),
+                model_ref=planning_attempt["model_ref"],
+                continuation_checkpoint_id=str(checkpoint["checkpoint_id"]),
+                provenance={
+                    "handoff_reason": handoff_reason,
+                    "prior_attempt_id": attempt_id,
+                    "checkpoint_id": checkpoint["checkpoint_id"],
+                },
+                now=_iso(now),
+            )
+            connection.execute(
+                """
+                update ari_execution_attempts
+                set status = ?, lifecycle_state = ?, session_id = ?, worker_identity = ?,
+                    worker_session_ref = ?, lease_started_at = ?, lease_expires_at = ?,
+                    last_seen_at = ?, prior_attempt_id = ?, continuation_packet_id = ?,
+                    waiting_reason = ?
+                where attempt_id = ?
+                """,
+                (
+                    AttemptLifecycleState.AWAITING_CONTINUATION_ACKNOWLEDGEMENT,
+                    AttemptLifecycleState.AWAITING_CONTINUATION_ACKNOWLEDGEMENT,
+                    session_id,
+                    worker_identity,
+                    worker_session_ref,
+                    _iso(now),
+                    _iso(expires),
+                    _iso(now),
+                    attempt_id,
+                    packet_id,
+                    "Worker must acknowledge canonical task state.",
+                    worker_attempt_id,
+                ),
+            )
+            packet = self._build_packet(
+                packet_id=packet_id,
+                task=task,
+                old_attempt=planning_attempt,
+                replacement_attempt_id=worker_attempt_id,
+                checkpoint=checkpoint,
+                recovery_reason=handoff_reason,
+            )
+            packet_json = _json(sanitize_payload(packet.to_dict()))
+            connection.execute(
+                """
+                insert into ari_execution_continuation_packets (
+                    packet_id, task_id, attempt_id, prior_attempt_id, checkpoint_id,
+                    packet_json, payload_sha256, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    packet_id,
+                    task["task_id"],
+                    worker_attempt_id,
+                    attempt_id,
+                    checkpoint["checkpoint_id"],
+                    packet_json,
+                    hashlib.sha256(packet_json.encode("utf-8")).hexdigest(),
+                    _iso(now),
+                ),
+            )
+            connection.execute(
+                """
+                update ari_execution_tasks
+                set lifecycle_state = ?, active_attempt_id = ?, updated_at = ?,
+                    recovery_block_reason = ?, row_version = row_version + 1
+                where task_id = ?
+                """,
+                (
+                    TaskLifecycleState.AWAITING_CONTINUATION_ACKNOWLEDGEMENT,
+                    worker_attempt_id,
+                    _iso(now),
+                    "Awaiting worker acknowledgement of canonical task state.",
+                    task["task_id"],
+                ),
+            )
+            self._insert_event(
+                connection,
+                task_id=str(task["task_id"]),
+                attempt_id=worker_attempt_id,
+                event_type="worker.handoff_prepared",
+                payload={
+                    "planning_attempt_id": attempt_id,
+                    "worker_attempt_id": worker_attempt_id,
+                    "worker_identity": worker_identity,
+                    "checkpoint_id": checkpoint["checkpoint_id"],
+                    "packet_id": packet_id,
+                },
+                provenance={"authority": "ari", "operation": "worker_handoff"},
+                now=now,
+            )
+        return AttemptRecoveryDecision(
+            task_id=str(task["task_id"]),
+            attempt_id=attempt_id,
+            classification=RecoveryClassification.HEALTHY,
+            reason=handoff_reason,
+            recoverable=False,
+            latest_checkpoint_id=str(checkpoint["checkpoint_id"]),
+            replacement_attempt_id=worker_attempt_id,
+            continuation_packet_id=packet_id,
+        )
+
     def acknowledge_continuation(
         self,
         *,

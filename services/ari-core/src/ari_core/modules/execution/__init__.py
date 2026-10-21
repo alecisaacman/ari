@@ -88,6 +88,13 @@ from .planners import (
     resolve_execution_planner,
 )
 from .reconciliation import EffectReconciler, ReconciliationRefused
+from .runtime_adapter import (
+    WORKER_INVOCATION_ACTION,
+    CanonicalStepResult,
+    PreparedRuntimeStep,
+    RuntimeExecutionAdapter,
+    RuntimeStepRequest,
+)
 from .sandbox import ExecutionRoot
 from .session import ExecutionSessionManager
 from .tools import ExecutionTool, ExecutionToolRegistry, get_execution_tool_registry
@@ -97,6 +104,11 @@ __all__ = [
     "ExecutionLedger",
     "ExecutionSessionManager",
     "RecoveredActionGateway",
+    "CanonicalStepResult",
+    "PreparedRuntimeStep",
+    "RuntimeExecutionAdapter",
+    "RuntimeStepRequest",
+    "WORKER_INVOCATION_ACTION",
     "DispatchFences",
     "DispatchFenceState",
     "DispatchLandingProof",

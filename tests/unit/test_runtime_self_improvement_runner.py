@@ -213,8 +213,11 @@ def test_self_improvement_runner_retries_same_slice_when_verification_evidence_i
     db_path = tmp_path / "state" / "networking.db"
     repo_root = tmp_path / "repo"
     repo_root.mkdir(parents=True, exist_ok=True)
+    (repo_root / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
     calls: list[str] = []
 
+    # Verification commands run through ARI's pytest capability, so they must name
+    # tests inside the execution root.
     catalog = (
         ImprovementSlice(
             key="controller-loop",
@@ -224,7 +227,7 @@ def test_self_improvement_runner_retries_same_slice_when_verification_evidence_i
             priority=100,
             expected_paths=("controller.py",),
             expected_symbols={"controller.py": ("READY",)},
-            verification_commands=((sys.executable, "-m", "pytest", "--version"),),
+            verification_commands=((sys.executable, "-m", "pytest", "test_ok.py", "-q"),),
         ),
     )
 

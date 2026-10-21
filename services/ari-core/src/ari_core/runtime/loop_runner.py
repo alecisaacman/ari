@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 from ..core.paths import DB_PATH, PROJECT_ROOT
 from ..modules.coordination.db import put_coordination_entity
+from ..modules.execution.contracts import ResumeDecision
+from ..modules.execution.runtime_adapter import (
+    WORKER_INVOCATION_ACTION,
+    CanonicalStepResult,
+    RuntimeExecutionAdapter,
+    RuntimeStepRequest,
+)
 from .codex_adapter import CodexAdapter, CodexInvocationResult
 from .response_contract import build_cli_response, render_cli_response
 
@@ -30,6 +37,7 @@ class LoopRunnerResult:
     cycles_run: int
     worker_runs: list[CodexInvocationResult]
     persisted_loop: dict[str, object] | None = None
+    canonical_steps: list[CanonicalStepResult] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -40,6 +48,7 @@ class LoopRunnerResult:
             "cyclesRun": self.cycles_run,
             "workerRuns": [run.to_dict() for run in self.worker_runs],
             "persistedLoop": self.persisted_loop,
+            "canonicalSteps": [step.to_dict() for step in self.canonical_steps],
         }
 
 
@@ -70,21 +79,51 @@ class LoopRunner:
         resolved_cwd = Path(cwd or PROJECT_ROOT).expanduser().resolve()
         worker_runs: list[CodexInvocationResult] = []
         persisted_worker_runs: list[dict[str, object]] = []
+        canonical_steps: list[CanonicalStepResult] = []
         control = LoopControl(status="escalate", reason="The loop did not produce a usable worker result.")
+        worker_identity = _worker_identity(self.adapter)
+
+        # Every worker invocation is one canonical ARI step. An execution root ARI
+        # refuses stops the loop before any task or side effect exists.
+        try:
+            execution = RuntimeExecutionAdapter(
+                self.db_path,
+                execution_root=resolved_cwd,
+                workers={worker_identity: self.adapter},
+            )
+        except ValueError as error:
+            execution = None
+            control = LoopControl(status="blocked", reason=f"ARI refused the execution root: {error}")
 
         for cycle_index in range(1, max_cycles + 1):
+            if execution is None:
+                break
             prompt = _build_prompt(
                 goal,
                 previous_run=worker_runs[-1] if worker_runs else None,
                 cycle_index=cycle_index,
                 prepared_prompt=prepared_prompt,
             )
-            invocation = self.adapter.invoke(prompt, cwd=resolved_cwd)
+            step = execution.run_step(
+                RuntimeStepRequest(
+                    action={"type": WORKER_INVOCATION_ACTION, "worker": worker_identity, "prompt": prompt},
+                    objective=goal,
+                    reason=f"Cycle {cycle_index}: hand the goal to the worker.",
+                    worker_identity=worker_identity,
+                    loop_id=loop_id,
+                    worker_capabilities=("edit_files", "run_local_code"),
+                    provenance={"cycle_index": cycle_index},
+                )
+            )
+            canonical_steps.append(step)
+            invocation = _invocation_from_step(step, adapter=self.adapter, cwd=resolved_cwd)
             worker_runs.append(invocation)
             persisted_worker_runs.append(
                 self._persist_worker_run(loop_id=loop_id, cycle_index=cycle_index, prompt=prompt, result=invocation)
             )
-            control = _evaluate_worker_result(invocation, cycle_index=cycle_index, max_cycles=max_cycles)
+            control = _step_control(step) or _evaluate_worker_result(
+                invocation, cycle_index=cycle_index, max_cycles=max_cycles
+            )
             if control.status != "retry":
                 break
 
@@ -104,6 +143,7 @@ class LoopRunner:
             cycles_run=len(worker_runs),
             worker_runs=worker_runs,
             persisted_loop=persisted_loop,
+            canonical_steps=canonical_steps,
         )
 
     def _persist_worker_run(
@@ -222,6 +262,48 @@ def _build_prompt(
         f"Previous stdout: {previous_run.stdout[:800]}\n"
         "Refine the approach, keep the change minimal, and report the outcome clearly."
     )
+
+
+def _worker_identity(adapter: object) -> str:
+    backend = getattr(adapter, "backend", None)
+    mode = getattr(backend, "backend", None)
+    return f"runtime-worker:{mode or type(adapter).__name__}"
+
+
+def _invocation_from_step(
+    step: CanonicalStepResult,
+    *,
+    adapter: object,
+    cwd: Path,
+) -> CodexInvocationResult:
+    fields = CodexInvocationResult.__dataclass_fields__
+    if step.executed and step.result is not None and set(fields) <= set(step.result):
+        return CodexInvocationResult(**{name: step.result[name] for name in fields})
+    mode = getattr(getattr(adapter, "backend", None), "backend", "command")
+    return CodexInvocationResult(
+        backend="stub" if mode == "stub" else "command",
+        command=[],
+        cwd=str(cwd),
+        success=False,
+        retryable=False,
+        exit_code=-1,
+        stdout="",
+        stderr=step.reason,
+    )
+
+
+def _step_control(step: CanonicalStepResult) -> LoopControl | None:
+    """Stop on anything ARI did not cleanly dispatch; uncertain effects are never retried."""
+    if step.decision is ResumeDecision.REQUIRE_APPROVAL:
+        return LoopControl(status="awaiting_approval", reason=step.reason)
+    if not step.executed:
+        return LoopControl(status="blocked", reason=f"ARI did not dispatch the worker: {step.reason}")
+    if step.effect_uncertain:
+        return LoopControl(
+            status="escalate",
+            reason="The worker invocation raised after dispatch; its effect is uncertain and ARI will not retry it.",
+        )
+    return None
 
 
 def _evaluate_worker_result(
