@@ -25,7 +25,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ari_core.brain import DEEP_MODEL, make_tool_dispatcher, respond_to_message
+from ari_core.brain import DEEP_MODEL, make_client, make_tool_dispatcher, respond_to_message
 from ari_core.brain_usage import ModelCall
 from ari_core.state import (
     CreateOpenLoopInput,
@@ -286,7 +286,6 @@ def run_eval(
 
 
 def main() -> int:
-    import anthropic
     from ari_imessage_gateway.config import ari_home, load_local_env
 
     # The same private settings file the iMessage surface reads (ARI_HOME/ari.env).
@@ -304,7 +303,7 @@ def main() -> int:
     out_dir = HERE / "results" / datetime.now().strftime("%Y%m%d-%H%M%S")
     results = run_eval(
         cases,
-        client=anthropic.Anthropic(),
+        client=make_client(),
         configs=tuple(args.configs.split(",")),
         max_usd=args.max_usd,
         out_dir=out_dir,

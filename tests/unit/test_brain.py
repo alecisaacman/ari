@@ -226,3 +226,10 @@ def test_cold_cache_cost_bills_cached_tokens_as_writes() -> None:
     assert abs(call.cost_usd - 0.015) < 1e-9
     # cold: the 10,000 cached tokens are written at $2.50 per million instead
     assert abs(call.cold_cost_usd - 0.038) < 1e-9
+
+
+def test_default_client_cannot_hang_forever() -> None:
+    client = brain.make_client()
+
+    assert client.timeout == brain.REQUEST_TIMEOUT_SECONDS
+    assert client.max_retries == 2

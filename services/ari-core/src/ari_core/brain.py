@@ -58,6 +58,13 @@ ESCALATE_TOOL_NAME = "use_deeper_model"
 # Alec can ask for the deeper model directly: "think: ...", "research: ...".
 DEEP_REQUEST_RE = re.compile(r"^(think|think hard|deep|research)\s*[:,-]", re.IGNORECASE)
 LONG_MESSAGE_CHARS = 600
+# A request that hangs (a dropped connection, a sleeping Mac) must fail instead of
+# freezing the surface that is waiting on it. Web search turns take about 15 s.
+REQUEST_TIMEOUT_SECONDS = 90.0
+
+
+def make_client() -> anthropic.Anthropic:
+    return anthropic.Anthropic(timeout=REQUEST_TIMEOUT_SECONDS, max_retries=2)
 REFUSAL_REPLY = "I can't help with that one."
 # A persisted conversation stays append-only until it passes this many messages.
 MAX_HISTORY_MESSAGES = 60
@@ -509,7 +516,7 @@ def respond_to_message(
     get_mcp_request_args and log_invocation default to no-ops, so callers that
     don't pass them get no MCP servers and no skill audit rows.
     """
-    client = client or anthropic.Anthropic()
+    client = client or make_client()
     sent_at = (now or datetime.now(tz=UTC)).astimezone().strftime("%A %B %-d, %Y, %-I:%M %p %Z")
     user_turn = {
         "role": "user",
