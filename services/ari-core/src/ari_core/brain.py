@@ -1,10 +1,15 @@
-"""ARI's intelligence layer: a single Claude-backed brain that understands
-free text (currently arriving via iMessage), grounds its answers and actions
-in real ARI state through tool use, and never invents what it doesn't know.
+"""ARI's intelligence layer: the single Claude-backed brain behind every ACE
+surface. It understands free text (today arriving over iMessage), grounds its
+answers and actions in real ARI state through tool use, and never invents what
+it doesn't know.
 
-This replaces hand-rolled classification heuristics (regex/keyword matching)
-with actual understanding. Conversation history is the caller's
-responsibility to persist across turns — this module is stateless per call.
+Surfaces never reason on their own; they hand text here. Conversation history
+is the caller's responsibility to persist across turns: this module is
+stateless per call, and `roll_history` keeps a persisted history valid.
+
+The brain only proposes changes outside ARI's own records (`propose_action`).
+Approval is Alec's, taken deterministically by the surface, and execution goes
+through ARI's canonical execution gateway.
 """
 from __future__ import annotations
 
@@ -30,9 +35,21 @@ from ari_core.state import (
     resolve_open_loop,
 )
 
-DEFAULT_MODEL = os.environ.get("ARI_BRAIN_MODEL", "claude-sonnet-4-6")
+DEFAULT_MODEL = os.environ.get("ARI_BRAIN_MODEL", "claude-sonnet-5-5")
+# Chat replies are latency-sensitive; raise effort with ARI_BRAIN_EFFORT if
+# answers need more depth.
+DEFAULT_EFFORT = os.environ.get("ARI_BRAIN_EFFORT", "low")
+# Thinking tokens count against this, so it is far above a text reply's length.
+MAX_TOKENS = 16000
 NO_REPLY_SENTINEL = "NO_REPLY"
 MAX_TOOL_TURNS = 6
+# Server-side refusal fallback: if one model declines, another answers instead
+# of ARI going silent.
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+REFUSAL_REPLY = "I can't help with that one."
+# A persisted conversation stays append-only until it passes this many messages.
+MAX_HISTORY_MESSAGES = 60
+ROLLED_HISTORY_MESSAGES = 20
 
 # Bound by the caller (e.g. scripts/imessage-ingest.py) to a real session
 # factory, the same way dispatch_tool is bound via make_tool_dispatcher --
@@ -61,6 +78,14 @@ exclamation points, emoji, or motivational filler.
 
 You are reached over iMessage, in a thread Alec uses as his own personal notes \
 channel. Replies must read like text messages: short, plain text, no markdown.
+
+You keep two kinds of things. Alec's open loops, notes, and saved links are your own \
+records: update them directly with your tools. Anything that changes something outside \
+those records, such as writing or editing a file in Alec's workspace or running tests, \
+goes through propose_action. You cannot approve a proposal yourself. ARI shows it to \
+Alec, who approves by replying "yes" or declines with "no". After proposing, tell him \
+in one or two plain sentences exactly what will happen if he approves. Never say it is \
+done until ARI reports the result.
 
 Ground rule: never invent information about Alec's tasks, schedule, signals, or \
 state. Always use your tools to check before answering a question about what's \
@@ -104,7 +129,7 @@ real, short reply.
 """
 
 WEB_SEARCH_TOOL: dict[str, Any] = {
-    "type": "web_search_20250305",
+    "type": "web_search_20260209",
     "name": "web_search",
     "max_uses": 2,
 }
@@ -201,6 +226,37 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "propose_action",
+        "description": (
+            "Propose one change in Alec's workspace for his approval: write_file, "
+            "patch_file, or run_command (only ls, cat, pytest, or node --check/--test). "
+            "Nothing runs until Alec approves it. Paths are relative to the workspace."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string",
+                    "enum": ["write_file", "patch_file", "run_command"],
+                },
+                "path": {"type": "string", "description": "For write_file and patch_file."},
+                "content": {"type": "string", "description": "Full new content, for write_file."},
+                "find": {"type": "string", "description": "Exact text to replace, for patch_file."},
+                "replace": {"type": "string", "description": "Replacement text, for patch_file."},
+                "command": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Argument list, for run_command, e.g. [\"pytest\", \"tests\", \"-q\"].",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "One plain sentence Alec will read before approving.",
+                },
+            },
+            "required": ["action_type", "summary"],
+        },
+    },
+    {
         "name": "save_for_later",
         "description": "Save a link Alec wants to watch/read later. Does not create a task.",
         "input_schema": {
@@ -241,21 +297,32 @@ def _resolve_date(raw: Any) -> date:
     return date.today()
 
 
+ProposeAction = Callable[[dict[str, Any]], dict[str, Any]]
+
+
 def make_tool_dispatcher(
     session_factory: Callable[[], Session],
     *,
     save_for_later: Callable[[str, str | None], None],
+    propose_action: ProposeAction | None = None,
     dry_run: bool = False,
 ) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
     """Build a tool dispatcher bound to a session factory and a save-for-later sink.
 
     With dry_run=True, mutating tools (create_open_loop, resolve_open_loop,
-    save_for_later) report what they would have done without touching the
-    database or calling the save_for_later sink. Read tools still hit the
-    real database, since previewing requires seeing real state.
+    save_for_later, propose_action) report what they would have done without
+    touching the database, the save_for_later sink, or the execution ledger.
+    Read tools still hit the real database, since previewing requires seeing
+    real state. Without a propose_action sink, proposals are refused.
     """
 
     def dispatch(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        if name == "propose_action":
+            if dry_run:
+                return {"proposed": {"summary": tool_input.get("summary"), "dry_run": True}}
+            if propose_action is None:
+                return {"error": "No workspace is configured for actions."}
+            return propose_action(tool_input)
         if dry_run and name == "create_open_loop":
             return {"created": {"title": tool_input["title"], "dry_run": True}}
         if dry_run and name == "resolve_open_loop":
@@ -319,14 +386,50 @@ def make_tool_dispatcher(
     return dispatch
 
 
+def roll_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a persisted conversation that the next request can replay.
+
+    Thinking blocks are bound to the exact conversation that produced them, so
+    the history stays append-only. Once it passes MAX_HISTORY_MESSAGES it rolls:
+    it keeps the most recent turns, starting at one of Alec's own messages, and
+    strips every thinking block from them once, at that boundary.
+    """
+    if len(messages) <= MAX_HISTORY_MESSAGES:
+        return messages
+    starts = [
+        index
+        for index, message in enumerate(messages)
+        if message.get("role") == "user" and isinstance(message.get("content"), str)
+    ]
+    cutoff = len(messages) - ROLLED_HISTORY_MESSAGES
+    start = next((index for index in starts if index >= cutoff), None)
+    if start is None:
+        start = starts[-1] if starts else len(messages)
+    return [_without_thinking(message) for message in messages[start:]]
+
+
+def _without_thinking(message: dict[str, Any]) -> dict[str, Any]:
+    content = message.get("content")
+    if message.get("role") != "assistant" or not isinstance(content, list):
+        return message
+    kept = [
+        block
+        for block in content
+        if not (isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"})
+    ]
+    return {**message, "content": kept}
+
+
 def respond_to_message(
     *,
     text: str,
     history: list[dict[str, Any]],
     dispatch_tool: Callable[[str, dict[str, Any]], dict[str, Any]],
     model: str = DEFAULT_MODEL,
+    effort: str = DEFAULT_EFFORT,
     get_mcp_request_args: GetMcpRequestArgs = _no_mcp_servers,
     log_invocation: LogInvocation = _no_op_log_invocation,
+    client: Any | None = None,
 ) -> BrainResponse:
     """Send a message to the brain, executing any tool calls it makes, and
     return its final reply plus the updated conversation history.
@@ -338,7 +441,7 @@ def respond_to_message(
     or when the brain decides to call a skill, only what's offered to it
     and what gets recorded afterward.
     """
-    client = anthropic.Anthropic()
+    client = client or anthropic.Anthropic()
     messages: list[dict[str, Any]] = [*history, {"role": "user", "content": text}]
 
     # Fetched once per message, not per tool-use turn: which MCP servers are
@@ -347,34 +450,32 @@ def respond_to_message(
     mcp_servers, mcp_tools = get_mcp_request_args()
     all_tools = [*TOOLS, WEB_SEARCH_TOOL, *mcp_tools]
 
+    betas = [FALLBACK_BETA, *([MCP_BETA_HEADER] if mcp_servers else [])]
+    extra: dict[str, Any] = {"mcp_servers": mcp_servers} if mcp_servers else {}
+
     for _ in range(MAX_TOOL_TURNS):
-        if mcp_servers:
-            # Only the beta endpoint accepts mcp_servers/betas. Anthropic
-            # documents this beta as a strict superset of the stable
-            # Messages API, so non-MCP behavior (custom tools, web_search)
-            # is unchanged when it's used — confirm this empirically before
-            # trusting it in production, not just from the docs.
-            response = client.beta.messages.create(
-                model=model,
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                tools=all_tools,
-                messages=messages,
-                mcp_servers=mcp_servers,
-                betas=[MCP_BETA_HEADER],
-            )
-        else:
-            # No skills registered (true in production today): byte-for-byte
-            # the same call as before this feature existed.
-            response = client.messages.create(
-                model=model,
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                tools=all_tools,
-                messages=messages,
-            )
-        assistant_content = [block.model_dump() for block in response.content]
+        # The beta endpoint carries the refusal fallback and, when skills are
+        # registered, the MCP servers. Thinking is adaptive (the default), and
+        # its blocks are replayed unchanged within and across turns.
+        response = client.beta.messages.create(
+            model=model,
+            max_tokens=MAX_TOKENS,
+            system=SYSTEM_PROMPT,
+            tools=all_tools,
+            messages=messages,
+            output_config={"effort": effort},
+            fallbacks="default",
+            betas=betas,
+            **extra,
+        )
+        assistant_content = [block.model_dump(exclude_none=True) for block in response.content]
         messages.append({"role": "assistant", "content": assistant_content})
+
+        if response.stop_reason == "refusal":
+            return BrainResponse(reply=REFUSAL_REPLY, messages=messages)
+        if response.stop_reason == "pause_turn":
+            # A long server-side tool turn (web search) paused; resend to continue it.
+            continue
 
         # web_search and MCP tools run server-side inside this same API call
         # (Anthropic executes them and feeds results back to Claude before

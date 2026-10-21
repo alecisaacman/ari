@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.15.0",
-  "anthropic>=0.40.0",
+  "anthropic>=1.17.0",
   "cryptography>=43.0.0",
   "fastapi>=0.115.0",
   "openai>=2.32.0",
@@ -36,6 +36,7 @@ dev = [
 [project.scripts]
 ari = "ari_core.ari:main"
 ari-telegram-gateway = "ari_telegram_gateway.polling:main"
+ari-imessage = "ari_imessage_gateway.__main__:main"
 
 [tool.ruff]
 line-length = 100
@@ -59,6 +60,7 @@ pythonpath = [
   "packages/ari-career-command/src",
   "packages/ari-surface-status/src",
   "packages/ari-telegram-gateway/src",
+  "packages/ari-imessage-gateway/src",
 ]
 
 [tool.mypy]
@@ -76,6 +78,7 @@ mypy_path = [
   "packages/ari-career-command/src",
   "packages/ari-surface-status/src",
   "packages/ari-telegram-gateway/src",
+  "packages/ari-imessage-gateway/src",
 ]
 warn_unused_configs = true
 
@@ -95,5 +98,6 @@ where = [
   "packages/ari-career-command/src",
   "packages/ari-surface-status/src",
   "packages/ari-telegram-gateway/src",
+  "packages/ari-imessage-gateway/src",
 ]
 include = ["ari_*"]

@@ -22,6 +22,8 @@ from ari_state import SkillInvocation, SkillKind, SkillRegistration, SkillRegist
 from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
+from .core.pause import is_paused
+
 MCP_BETA_HEADER = "mcp-client-2025-11-20"
 
 # services/ never imports from scripts/ in this codebase (see executor.py's
@@ -107,7 +109,7 @@ def build_mcp_request_args(
     pause -- no design can, given how MCP resolves. This is a coarser
     guarantee than dispatch_tool's per-call gating, not an equivalent one.
     """
-    if PAUSED_FILE.exists():
+    if PAUSED_FILE.exists() or is_paused():
         return [], []
 
     registrations = SkillRegistrationRepository(session).list_enabled()
