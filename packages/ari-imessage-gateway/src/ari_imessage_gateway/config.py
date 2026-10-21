@@ -20,8 +20,10 @@ def load_local_env(path: Path) -> None:
         return
     for line in path.read_text(encoding="utf-8").splitlines():
         key, sep, value = line.strip().partition("=")
-        if sep and key and not key.startswith("#"):
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+        value = value.strip().strip("'\"")
+        # A blank value is a placeholder; loading it would shadow real credentials.
+        if sep and key and value and not key.startswith("#"):
+            os.environ.setdefault(key.strip(), value)
 
 
 @dataclass(frozen=True, slots=True)

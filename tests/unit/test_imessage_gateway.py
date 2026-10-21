@@ -429,3 +429,22 @@ def test_brain_requests_are_recorded_through_the_gateway(settings, session_facto
         month = brain_usage.month_spend(session)
     assert month.requests == 1
     assert abs(month.spent_usd - 0.00025) < 1e-9
+
+
+def test_local_env_skips_placeholders_and_never_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ari_imessage_gateway.config import load_local_env
+
+    env_file = tmp_path / "ari.env"
+    env_file.write_text("# comment\nARI_TEST_BLANK=\nARI_TEST_SET='value'\nARI_TEST_KEEP=file\n", encoding="utf-8")
+    monkeypatch.delenv("ARI_TEST_BLANK", raising=False)
+    monkeypatch.delenv("ARI_TEST_SET", raising=False)
+    monkeypatch.setenv("ARI_TEST_KEEP", "environment")
+
+    load_local_env(env_file)
+
+    import os
+
+    assert "ARI_TEST_BLANK" not in os.environ
+    assert os.environ["ARI_TEST_SET"] == "value"
+    assert os.environ["ARI_TEST_KEEP"] == "environment"
+    monkeypatch.delenv("ARI_TEST_SET")

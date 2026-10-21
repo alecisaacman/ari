@@ -274,7 +274,10 @@ def run_eval(
 
 def main() -> int:
     import anthropic
+    from ari_imessage_gateway.config import ari_home, load_local_env
 
+    # The same private settings file the iMessage surface reads (ARI_HOME/ari.env).
+    load_local_env(ari_home() / "ari.env")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--max-usd", type=float, default=2.0, help="Stop once spend passes this.")
     parser.add_argument("--configs", default=",".join(CONFIGS), help="routed, sonnet, or both.")
