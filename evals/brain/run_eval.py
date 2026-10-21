@@ -1,7 +1,8 @@
 """Compare ARI's routed brain (Haiku first, Sonnet on escalation) with Sonnet alone.
 
-Each case is a realistic message from Alec, answered against a seeded, temporary
-ARI state. Every tool call is a dry run, so nothing real changes. Each answer is
+Each case is a realistic message from Alec, answered against its own freshly seeded,
+temporary ARI state, so tools really run and return what they would in use, and
+nothing real changes. Workspace proposals are recorded but never executed. Each answer is
 checked against the case's expectations (which tools ran, whether the turn went to
 the deeper model, what the reply says), and its cost and latency are recorded.
 The replies are written out for Alec to read: the checks catch wrong behavior,
@@ -57,6 +58,7 @@ class CaseResult:
     models: list[str]
     deep_served: bool
     cost_usd: float
+    cold_cost_usd: float
     seconds: float
     checks: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
@@ -113,16 +115,25 @@ def run_case(
     config: str,
     *,
     client: Any,
-    session_factory: sessionmaker[Session],
+    workdir: Path,
     on_cost: Callable[[float], None],
 ) -> CaseResult:
     tools: list[dict[str, Any]] = []
     calls: list[tuple[ModelCall, bool]] = []
+    # Each answer gets its own seeded state, so tool results look exactly as they
+    # would in use and no case sees another's changes.
+    session_factory = create_session_factory(
+        create_engine(f"sqlite+pysqlite:///{workdir / f'{case['id']}-{config}.db'}")
+    )
+    seed_state(session_factory, datetime.now().date())
     dispatch = make_tool_dispatcher(
         session_factory,
         save_for_later=lambda link, note: None,
-        propose_action=lambda tool_input: {"proposal_id": "eval", "status": "awaiting Alec's approval"},
-        dry_run=True,
+        propose_action=lambda tool_input: {
+            "proposal_id": "proposal-1",
+            "summary": tool_input.get("summary"),
+            "status": "awaiting Alec's approval",
+        },
     )
 
     def recording_dispatch(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -136,7 +147,7 @@ def run_case(
     started = time.monotonic()
     result = CaseResult(
         case_id=case["id"], category=case["category"], config=config, message=case["message"],
-        reply=None, tools=tools, models=[], deep_served=False, cost_usd=0.0, seconds=0.0,
+        reply=None, tools=tools, models=[], deep_served=False, cost_usd=0.0, cold_cost_usd=0.0, seconds=0.0,
     )
     try:
         response = respond_to_message(
@@ -156,6 +167,7 @@ def run_case(
     result.models = [call.model for call, _ in calls]
     result.deep_served = bool(calls) and calls[-1][1]
     result.cost_usd = round(sum(call.cost_usd for call, _ in calls), 6)
+    result.cold_cost_usd = round(sum(call.cold_cost_usd for call, _ in calls), 6)
     result.checks = grade(case, result, routed=config == "routed")
     return result
 
@@ -201,18 +213,22 @@ def grade(case: dict[str, Any], result: CaseResult, *, routed: bool) -> list[dic
 
 def summarize(results: list[CaseResult]) -> str:
     lines = ["# ARI brain eval", ""]
-    lines.append("| Config | Passed | Cost | Avg cost/msg | Avg seconds | Deeper model used |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append(
+        "| Config | Passed | Cost | Avg cost/msg | Avg cold-cache cost/msg | Avg seconds | Deeper model used |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
     for config in CONFIGS:
         rows = [result for result in results if result.config == config]
         if not rows:
             continue
         passed = sum(result.passed for result in rows)
         cost = sum(result.cost_usd for result in rows)
+        cold = sum(result.cold_cost_usd for result in rows)
         seconds = sum(result.seconds for result in rows) / len(rows)
         deep = sum(result.deep_served for result in rows)
         lines.append(
-            f"| {config} | {passed}/{len(rows)} | ${cost:.4f} | ${cost / len(rows):.5f} | {seconds:.1f} | {deep}/{len(rows)} |"
+            f"| {config} | {passed}/{len(rows)} | ${cost:.4f} | ${cost / len(rows):.5f} | "
+            f"${cold / len(rows):.5f} | {seconds:.1f} | {deep}/{len(rows)} |"
         )
     lines += ["", "## Cases", ""]
     for result in results:
@@ -252,14 +268,11 @@ def run_eval(
 
     results: list[CaseResult] = []
     with tempfile.TemporaryDirectory(prefix="ari-brain-eval-") as workdir:
-        session_factory = create_session_factory(create_engine(f"sqlite+pysqlite:///{workdir}/ari.db"))
-        seed_state(session_factory, datetime.now().date())
         try:
-            for case in cases:
-                for config in configs:
-                    results.append(
-                        run_case(case, config, client=client, session_factory=session_factory, on_cost=on_cost)
-                    )
+            # One full pass per setup, so neither reads a cache the other just wrote.
+            for config in configs:
+                for case in cases:
+                    results.append(run_case(case, config, client=client, workdir=Path(workdir), on_cost=on_cost))
         except BudgetExceeded as error:
             print(error)
     if out_dir is not None:

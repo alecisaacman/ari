@@ -214,3 +214,15 @@ def test_rolled_history_starts_at_alec_and_drops_thinking_once() -> None:
         for block in message["content"]
     )
     assert roll_history(rolled) is rolled
+
+
+def test_cold_cache_cost_bills_cached_tokens_as_writes() -> None:
+    from ari_core.brain_usage import ModelCall
+
+    call = ModelCall("claude-sonnet-5-5", input_tokens=1_000, output_tokens=100,
+                     cache_write_tokens=0, cache_read_tokens=10_000, web_searches=1)
+
+    # warm: 1,000 x $2 + 10,000 x $0.20 + 100 x $10 per million, plus $0.01 search
+    assert abs(call.cost_usd - 0.015) < 1e-9
+    # cold: the 10,000 cached tokens are written at $2.50 per million instead
+    assert abs(call.cold_cost_usd - 0.038) < 1e-9

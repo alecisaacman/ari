@@ -83,6 +83,19 @@ class ModelCall:
         )
         return tokens / 1_000_000 + self.web_searches * WEB_SEARCH_USD
 
+    @property
+    def cold_cost_usd(self) -> float:
+        """The cost if nothing had been cached yet: every cached token billed as a cache write."""
+        cold = ModelCall(
+            model=self.model,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            cache_write_tokens=self.cache_write_tokens + self.cache_read_tokens,
+            cache_read_tokens=0,
+            web_searches=self.web_searches,
+        )
+        return cold.cost_usd
+
 
 def record_model_call(session: Session, call: ModelCall, *, channel: str, escalated: bool) -> None:
     session.add(
