@@ -1,2 +1,10 @@
 #!/usr/bin/env bash
-cd "/Users/alecisaacman/ARI (codex)/projects/ari-canonical/services/ari-api" && ../../.venv312/bin/python -m uvicorn ari_api.main:app --host 127.0.0.1 --port 8000 --reload
+set -euo pipefail
+
+TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$TOOL_DIR/../scripts/lib/ari_runtime.sh"
+REPO_ROOT="$(ari_repo_root_from_path "${BASH_SOURCE[0]}")"
+PYTHON="$(ari_resolve_python "$REPO_ROOT")"
+
+cd "$REPO_ROOT/services/ari-api"
+exec "$PYTHON" -m uvicorn ari_api.main:app --host 127.0.0.1 --port 8000 --reload

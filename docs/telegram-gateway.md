@@ -217,8 +217,13 @@ A local LaunchAgent plist can be generated later, but it is disabled by default
 and is not loaded automatically:
 
 ```bash
+scripts/telegram_gateway/install_launch_agent.sh --check
 scripts/telegram_gateway/install_launch_agent.sh
 ```
+
+The preflight resolves the source-bearing Git checkout and a usable Python 3.12
+runtime before anything is written. The installer refuses to overwrite an existing
+plist unless the operator explicitly passes `--replace` after inspecting it.
 
 The generator writes:
 
@@ -241,6 +246,13 @@ launchctl unload ~/Library/LaunchAgents/com.alecisaacman.ari.telegram-gateway.pl
 The LaunchAgent points at `scripts/telegram_gateway/start.sh` with this repo as
 the working directory. It still relies on the local `.env`, ignored runtime
 directories, and the same duplicate-process guard.
+
+Inspect all installed ARI LaunchAgents and their executable/working-directory
+targets without changing them:
+
+```bash
+scripts/launch_agents/status.sh
+```
 
 ## Smoke Test Without Telegram Access
 

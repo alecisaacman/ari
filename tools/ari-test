@@ -1,2 +1,22 @@
 #!/usr/bin/env bash
-cd "/Users/alecisaacman/ARI (codex)/projects/ari-canonical" && ./.venv312/bin/python -m pytest tests/unit -q && npm --prefix services/ari-hub run build
+set -euo pipefail
+
+TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$TOOL_DIR/../scripts/lib/ari_runtime.sh"
+REPO_ROOT="$(ari_repo_root_from_path "${BASH_SOURCE[0]}")"
+PYTHON="$(ari_resolve_python "$REPO_ROOT")"
+TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ari-test.XXXXXX")"
+trap 'rm -rf -- "$TEST_ROOT"' EXIT
+
+mkdir -p "$TEST_ROOT/ari-home" "$TEST_ROOT/execution-root" "$TEST_ROOT/surface-status"
+export ARI_HOME="$TEST_ROOT/ari-home"
+export ARI_CANONICAL_HOME="$TEST_ROOT/ari-home"
+export ARI_EXECUTION_ROOT="$TEST_ROOT/execution-root"
+export ARI_SURFACE_STATUS_DIR="$TEST_ROOT/surface-status"
+export ARI_CANONICAL_PYTHON="$PYTHON"
+export ARI_TEST_PROTECTED_STATE_PATHS="$HOME/ARI/modules/networking-crm/state/networking.db:$REPO_ROOT/data/surface/status"
+
+cd "$REPO_ROOT"
+"$PYTHON" -m pytest -q
+npm --prefix services/ari-hub test
+npm --prefix services/ari-hub run build

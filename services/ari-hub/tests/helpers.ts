@@ -11,8 +11,33 @@ import { resetModelProvider } from "../src/core/models";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CANONICAL_ARI_PROJECT_ROOT = path.resolve(TESTS_DIR, "..", "..", "..");
-const CANONICAL_ARI_VENV_PYTHON = path.join(CANONICAL_ARI_PROJECT_ROOT, ".venv", "bin", "python");
+const CANONICAL_ARI_PYTHON = resolveCanonicalPython();
 let apiServerProcess: ChildProcess | null = null;
+
+function resolveCanonicalPython(): string {
+  const candidates = [
+    process.env.ARI_CANONICAL_PYTHON,
+    path.join(CANONICAL_ARI_PROJECT_ROOT, ".venv312", "bin", "python"),
+    path.join(CANONICAL_ARI_PROJECT_ROOT, ".venv", "bin", "python")
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return path.resolve(candidate);
+    } catch {
+      // Continue to the next explicit, repository-local candidate.
+    }
+  }
+
+  throw new Error(
+    [
+      "No executable canonical ARI Python runtime was found.",
+      "Set ARI_CANONICAL_PYTHON to an executable Python 3.12 path,",
+      "or create .venv312 (preferred) or .venv in the canonical checkout."
+    ].join(" ")
+  );
+}
 
 export function setupIsolatedRuntime(name: string, mode: "manual" | "assisted" | "auto" = "manual"): string {
   stopBackgroundRuntime();
@@ -29,9 +54,11 @@ export function setupIsolatedRuntime(name: string, mode: "manual" | "assisted" |
   process.env.ARI_TRIGGER_TOKEN = "test-trigger";
   process.env.ARI_AUTH_SECRET = "test-secret";
   process.env.ARI_CANONICAL_PROJECT_ROOT = CANONICAL_ARI_PROJECT_ROOT;
+  process.env.ARI_HOME = path.join(tempRoot, "ari-home");
   process.env.ARI_CANONICAL_HOME = path.join(tempRoot, "ari-home");
   process.env.ARI_EXECUTION_ROOT = path.join(tempRoot, "execution-root");
-  process.env.ARI_CANONICAL_PYTHON = CANONICAL_ARI_VENV_PYTHON;
+  process.env.ARI_SURFACE_STATUS_DIR = path.join(tempRoot, "surface-status");
+  process.env.ARI_CANONICAL_PYTHON = CANONICAL_ARI_PYTHON;
   process.env.ARI_CANONICAL_BRIDGE_MODE = "subprocess";
   delete process.env.ARI_API_BASE_URL;
   process.env.ARI_ORCHESTRATION_MODE = mode;
@@ -53,7 +80,7 @@ export async function setupApiBackedRuntime(
   ].join(path.delimiter);
 
   apiServerProcess = spawn(
-    CANONICAL_ARI_VENV_PYTHON,
+    CANONICAL_ARI_PYTHON,
     ["-m", "uvicorn", "ari_api.main:app", "--host", "127.0.0.1", "--port", String(port), "--log-level", "warning"],
     {
       cwd: CANONICAL_ARI_PROJECT_ROOT,

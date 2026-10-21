@@ -1,2 +1,27 @@
 #!/usr/bin/env bash
-cd "/Users/alecisaacman/ARI (codex)/projects/ari-canonical" && git status && git log --oneline -n 5
+set -euo pipefail
+
+TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$TOOL_DIR/../scripts/lib/ari_runtime.sh"
+REPO_ROOT="$(ari_repo_root_from_path "${BASH_SOURCE[0]}")"
+
+echo "ARI source checkout: $REPO_ROOT"
+echo "Branch: $(git -C "$REPO_ROOT" branch --show-current)"
+echo "HEAD: $(git -C "$REPO_ROOT" rev-parse HEAD)"
+echo
+git -C "$REPO_ROOT" status --short --branch
+echo
+git -C "$REPO_ROOT" log --oneline -n 5
+echo
+
+if PYTHON="$(ari_resolve_python "$REPO_ROOT" 2>/dev/null)"; then
+  echo "Python runtime: $PYTHON"
+  "$PYTHON" --version
+else
+  echo "Python runtime: MISSING"
+  echo "Set ARI_CANONICAL_PYTHON or create $REPO_ROOT/.venv312."
+fi
+
+echo
+echo "Installed ARI LaunchAgents:"
+"$REPO_ROOT/scripts/launch_agents/status.sh" || true

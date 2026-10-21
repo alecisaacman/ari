@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$TOOL_DIR/../scripts/lib/ari_runtime.sh"
+REPO_ROOT="$(ari_repo_root_from_path "${BASH_SOURCE[0]}")"
+cd "$REPO_ROOT"
+
 clear
 
 if command -v figlet >/dev/null 2>&1 && command -v lolcat >/dev/null 2>&1; then
@@ -15,7 +20,7 @@ echo "  $(date '+%A, %B %d, %Y %H:%M:%S')"
 
 echo
 echo "Location:"
-echo "  $(pwd)"
+echo "  $REPO_ROOT"
 
 echo
 echo "Git:"

@@ -500,7 +500,8 @@ def test_operator_override_allows_self_development_but_keeps_runtime_paths_prote
             continue
         with pytest.raises(ValueError, match="may not modify"):
             root.resolve_write_path(protected)
-    assert fs_authority.protected_write_reason(project, venv_target) is not None
+    authority_root = project if venv_target.is_relative_to(project) else Path(sys.prefix).resolve()
+    assert fs_authority.protected_write_reason(authority_root, venv_target) is not None
 
 
 @pytest.mark.parametrize(

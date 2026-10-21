@@ -2,7 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$SCRIPT_DIR/../lib/ari_runtime.sh"
+REPO_ROOT="$(ari_repo_root_from_path "${BASH_SOURCE[0]}")"
+PYTHON="$(ari_resolve_python "$REPO_ROOT" 2>/dev/null || true)"
 PID_FILE="$REPO_ROOT/data/telegram/run/gateway.pid"
 LOG_FILE="$REPO_ROOT/data/telegram/logs/gateway.log"
 STATE_FILE="${ARI_TELEGRAM_POLLING_STATE_FILE:-$REPO_ROOT/data/telegram/state/ari_command_polling_state.json}"
@@ -38,7 +40,10 @@ fi
 echo
 echo "Polling state:"
 if [[ -f "$STATE_FILE" ]]; then
-  "$REPO_ROOT/.venv312/bin/python" - "$STATE_FILE" <<'PY'
+  if [[ -z "$PYTHON" ]]; then
+    echo "Cannot read polling state: no ARI Python 3.12 runtime is available."
+  else
+    "$PYTHON" - "$STATE_FILE" <<'PY'
 from __future__ import annotations
 
 import json
@@ -56,9 +61,15 @@ else:
     print(f"last_processed_update_id: {state.get('last_processed_update_id', '')}")
     print(f"updated_at: {state.get('updated_at', '')}")
 PY
+  fi
 else
   echo "No polling state file found at $STATE_FILE"
 fi
+
+echo
+echo "LaunchAgent definition:"
+ARI_LAUNCH_AGENT_DIR="${ARI_LAUNCH_AGENT_DIR:-$HOME/Library/LaunchAgents}" \
+  "$REPO_ROOT/scripts/launch_agents/status.sh" || true
 
 echo
 echo "Latest log lines:"

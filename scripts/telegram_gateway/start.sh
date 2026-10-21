@@ -2,9 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PYTHON="$REPO_ROOT/.venv312/bin/python"
-GATEWAY="$REPO_ROOT/.venv312/bin/ari-telegram-gateway"
+source "$SCRIPT_DIR/../lib/ari_runtime.sh"
+REPO_ROOT="$(ari_repo_root_from_path "${BASH_SOURCE[0]}")"
+PYTHON="$(ari_resolve_python "$REPO_ROOT")"
 LOG_DIR="$REPO_ROOT/data/telegram/logs"
 RUN_DIR="$REPO_ROOT/data/telegram/run"
 LOG_FILE="$LOG_DIR/gateway.log"
@@ -24,35 +24,18 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 existing_gateway_pid="$(
-  pgrep -f "$REPO_ROOT/.venv312/bin/ari-telegram-gateway" 2>/dev/null | head -n 1 || true
+  pgrep -f "ari_telegram_gateway.polling" 2>/dev/null | head -n 1 || true
 )"
-if [[ -z "$existing_gateway_pid" ]]; then
-  existing_gateway_pid="$(
-    pgrep -f "ari_telegram_gateway.polling" 2>/dev/null | head -n 1 || true
-  )"
-fi
 if [[ "$existing_gateway_pid" =~ ^[0-9]+$ ]]; then
   echo "ARI Telegram Gateway already appears to be running with PID $existing_gateway_pid."
   echo "Refusing to start a duplicate process."
   exit 0
 fi
 
-if [[ ! -x "$PYTHON" ]]; then
-  echo "Missing Python runtime: $PYTHON"
-  echo "Create or refresh .venv312 before starting the gateway."
-  exit 1
-fi
-
 echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] refreshing editable install" >> "$LOG_FILE"
 if ! "$PYTHON" -m pip install -q -e "$REPO_ROOT" --no-build-isolation >> "$LOG_FILE" 2>&1; then
   echo "Editable install failed. See $LOG_FILE."
-  echo "Manual command: ./.venv312/bin/pip install -e . --no-build-isolation"
-  exit 1
-fi
-
-if [[ ! -x "$GATEWAY" ]]; then
-  echo "Missing gateway executable after editable install: $GATEWAY"
-  echo "Try: ./.venv312/bin/pip install -e . --no-build-isolation"
+  echo "Manual command: \"$PYTHON\" -m pip install -e \"$REPO_ROOT\" --no-build-isolation"
   exit 1
 fi
 
@@ -62,7 +45,7 @@ if [[ ! -f "$REPO_ROOT/.env" ]]; then
 fi
 
 echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] starting ARI Telegram Gateway" >> "$LOG_FILE"
-nohup "$GATEWAY" >> "$LOG_FILE" 2>&1 &
+nohup "$PYTHON" -m ari_telegram_gateway.polling >> "$LOG_FILE" 2>&1 &
 pid="$!"
 echo "$pid" > "$PID_FILE"
 sleep 1
