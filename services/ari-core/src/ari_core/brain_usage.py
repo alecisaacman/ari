@@ -21,7 +21,8 @@ from sqlalchemy.orm import Session
 
 from .core import paths as core_paths
 
-DEFAULT_MONTHLY_BUDGET_USD = 5.0
+# Measured: about $9 a month at 20 messages a day (evals/brain, 2026-10-21).
+DEFAULT_MONTHLY_BUDGET_USD = 10.0
 WEB_SEARCH_USD = 0.01
 HAIKU_LONG_PROMPT_TOKENS = 100_000
 
@@ -161,7 +162,7 @@ def _budget_file() -> Path:
 
 
 def monthly_budget_usd() -> float:
-    """Alec's override from "ARI budget N", else ARI_BRAIN_MONTHLY_BUDGET_USD, else $5."""
+    """Alec's override from "ARI budget N", else ARI_BRAIN_MONTHLY_BUDGET_USD, else $10."""
     try:
         return float(json.loads(_budget_file().read_text(encoding="utf-8"))["monthly_usd"])
     except (OSError, ValueError, KeyError, TypeError):

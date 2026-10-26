@@ -394,11 +394,11 @@ def test_spend_command_reports_this_month_without_calling_a_model(settings, sess
     gateway.poll_once()
 
     assert brain.texts == []
-    assert messages.sent[-1][1] == "$1.00 of $5.00 this month, over 1 model requests (1 on the deeper model)."
+    assert messages.sent[-1][1] == "$1.00 of $10.00 this month, over 1 model requests (1 on the deeper model)."
 
 
 def test_exhausted_budget_stops_model_calls_until_alec_raises_it(settings, session_factory) -> None:
-    spend(session_factory, "claude-sonnet-5-5", 500_000)  # $5.00
+    spend(session_factory, "claude-sonnet-5-5", 1_000_000)  # $10.00
     brain = FakeBrain(reply="Here you go.")
     messages = FakeMessages()
     gateway = make_gateway(settings, session_factory, brain=brain, messages=messages)
@@ -409,9 +409,9 @@ def test_exhausted_budget_stops_model_calls_until_alec_raises_it(settings, sessi
 
     assert brain.texts == []
     assert "budget" in messages.sent[-1][1]
-    write_dump(settings, (1, "old"), (2, "what's on today?"), (3, "ARI budget 10"), (4, "what's on today, then?"))
+    write_dump(settings, (1, "old"), (2, "what's on today?"), (3, "ARI budget 15"), (4, "what's on today, then?"))
     gateway.poll_once()
-    assert brain_usage.monthly_budget_usd() == 10.0
+    assert brain_usage.monthly_budget_usd() == 15.0
     assert brain.texts == ["what's on today, then?"]
 
 

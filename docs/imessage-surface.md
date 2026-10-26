@@ -24,7 +24,7 @@ reasons on its own, and neither does any other surface.
 - **Stop it.** "ARI stop" pauses everything, including execution. "ARI resume"
   resumes. Messages sent while paused are not acted on.
 - **Watch the cost.** "ARI spend" reports this month's model spend against the
-  budget. "ARI budget 10" sets the monthly budget to $10.
+  budget. "ARI budget 15" sets the monthly budget to $15.
 
 ## Which model answers, and what it costs
 
@@ -44,7 +44,7 @@ a message for the brain does.
   and conversation so far cost a tenth of the input rate on repeat.
 - **Every request is costed** from the usage the API reports and recorded in
   `brain_usage`. Before calling a model, the gateway checks the month's total
-  against the budget ($5 by default, `ARI_BRAIN_MONTHLY_BUDGET_USD`, or "ARI
+  against the budget ($10 by default, `ARI_BRAIN_MONTHLY_BUDGET_USD`, or "ARI
   budget N"). Over budget, ARI replies without calling a model. The message that
   crosses the line is the last one billed.
 - The two models get different tools, and each model's thinking is bound to the
@@ -52,12 +52,21 @@ a message for the brain does.
   `prefix_mismatch_behavior: "drop_block"`: after a model switch, the other
   model's reasoning is dropped instead of failing the request.
 
-Estimated, not measured: about $1 to $4 a month at 20 messages a day, depending
-on how often messages need Sonnet. `evals/brain/run_eval.py` measures it. It
-runs 20 realistic messages through the routed brain and through Sonnet alone,
-against seeded state with every action as a dry run, and reports pass rates, cost,
-latency, and each reply. It calls the real API, and `--max-usd` caps what it can
-spend.
+Measured on 2026-10-21 with `evals/brain/run_eval.py` (20 realistic messages,
+each through the routed brain and through Sonnet alone; both passed 20/20). The
+ranges run from a warm cache to a cold one:
+
+| Message | Routed | Sonnet alone |
+|---|---|---|
+| Routine (state, capture, resolve) | $0.0005-0.0008 | $0.026-0.046 |
+| Deeper, no web search | $0.031-0.054 | $0.030-0.054 |
+| Deeper, with web search | $0.045-0.092 | $0.052-0.106 |
+
+With 75% routine, 15% deeper, and 10% search messages, that is about $3 to $5 a
+month at 10 messages a day and about $9 at 20, against about $25 for Sonnet
+alone. Turns that need Sonnet are a quarter of messages and nearly all of the
+cost; web search is the most expensive. The eval calls the real API, and
+`--max-usd` caps what it can spend.
 
 ## How it works
 
