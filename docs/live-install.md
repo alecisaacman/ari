@@ -45,3 +45,9 @@ reminders only to the GET DONE list and adds events to the ARI calendar unless t
 otherwise. Both sync through iCloud, so a timed reminder goes off on the iPhone even
 while the Mac sleeps. The connection is off until `ari-live connect-apple` succeeds,
 which keeps tests and development checkouts away from the real lists.
+
+## The desktop pet
+
+`ari-live install` also builds ARI's desktop pet into `~/Applications/ARI Pet.app` when
+its source changes, and `ari-live setup` starts it at login. See
+[desktop-pet.md](desktop-pet.md).

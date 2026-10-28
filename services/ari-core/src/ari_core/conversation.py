@@ -39,6 +39,7 @@ from ari_core.brain_usage import (
 from ari_core.core import paths as core_paths
 from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
+from ari_core.pet_status import note_credits
 from ari_core.self_review import Write as ReviewWriter
 from ari_core.self_review import run_review
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
@@ -204,8 +205,12 @@ class Conversation:
         except anthropic.BadRequestError as error:
             if "credit balance" not in str(error).lower():
                 raise
+            if not self.dry_run:
+                note_credits(out=True)
             # Retrying can't help until Alec tops up, so say so instead of going silent.
             return self._said(history, text, OUT_OF_CREDITS)
+        if not self.dry_run:
+            note_credits(out=False)
         return Turn(reply=response.reply, messages=response.messages)
 
     def _review(self, asked: str) -> str:

@@ -829,3 +829,43 @@ def test_ari_review_on_demand(settings, session_factory) -> None:
     gateway.poll_once()
 
     assert messages.sent[-1][1] == "night review now"
+
+
+def test_the_poller_keeps_the_desktop_pets_status_current(settings, session_factory, ledger_dir) -> None:
+    import json
+
+    path = ledger_dir / "pet-status.json"
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, pet_status_path=path)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old message"), (2, "what's on my plate"))
+
+    gateway.poll_once()
+
+    status = json.loads(path.read_text())
+    assert status["thinking"] is False
+    assert status["paused"] is False
+    assert status["outOfCredits"] is False
+    assert status["latest"] == messages.sent[-1][1]
+    assert "of $" in status["spend"]
+
+
+def test_the_pet_knows_when_ari_is_out_of_credits(settings, session_factory, ledger_dir) -> None:
+    import json
+
+    import anthropic
+    import httpx
+
+    def broke(**kwargs):
+        request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        response = httpx.Response(400, request=request)
+        raise anthropic.BadRequestError("Your credit balance is too low", response=response, body=None)
+
+    path = ledger_dir / "pet-status.json"
+    gateway = make_gateway(settings, session_factory, brain=broke, pet_status_path=path)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old message"), (2, "hello"))
+
+    gateway.poll_once()
+
+    assert json.loads(path.read_text())["outOfCredits"] is True

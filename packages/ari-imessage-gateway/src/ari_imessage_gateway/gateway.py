@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from ari_core.action_desk import ActionDesk
@@ -29,6 +30,7 @@ from ari_core.conversation import Conversation, Respond
 from ari_core.core.pause import get_pause_state
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orchestration
+from ari_core.pet_status import build_pet_status, write_pet_status
 from ari_core.reminders import due_reminders, mark_sent
 from ari_core.self_review import Write as ReviewWriter
 from ari_core.self_review import run_review
@@ -93,6 +95,7 @@ class ImessageGateway:
         signal_engine: bool = True,
         apple: AppleDesk | None = None,
         review_writer: ReviewWriter | None = None,
+        pet_status_path: Path | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
@@ -105,6 +108,8 @@ class ImessageGateway:
         self.apple = apple
         # Morning and night reviews call a model; without a writer they are off.
         self.review_writer = review_writer
+        # Where the desktop pet reads ARI's status; None leaves it alone (tests).
+        self.pet_status_path = pet_status_path
         self.conversation = Conversation(
             channel=CHANNEL,
             session_factory=session_factory,
@@ -139,6 +144,8 @@ class ImessageGateway:
                 self._save(rows[-1].rowid if rows else 0, [])
                 return PollReport(status="seeded", detail="Started from the latest message.")
             cursor, history = state.cursor, list(state.messages)
+            if any(row.rowid > cursor for row in rows):
+                self._update_pet(thinking=True)
             for row in (row for row in rows if row.rowid > cursor):
                 try:
                     history = self._handle(row, history, report)
@@ -154,7 +161,22 @@ class ImessageGateway:
             history = self._send_reminders(history, report)
             history = self._send_reviews(history, report)
             self._save(cursor, history)
+            self._update_pet(thinking=False)
         return report
+
+    def _update_pet(self, *, thinking: bool) -> None:
+        """Keep the desktop pet's status file current. A failure here never stops messaging."""
+        if self.dry_run or self.pet_status_path is None:
+            return
+        try:
+            waiting = len(self.action_desk.pending()) if self.action_desk else 0
+            with self.session_factory() as session:
+                status = build_pet_status(
+                    session, now=self.now(), thinking=thinking, waiting_for_approval=waiting
+                )
+            write_pet_status(status, self.pet_status_path)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _maybe_orchestrate(self, report: PollReport, *, force: bool = False) -> None:
         """Run ARI's signal engine on schedule, so ARI notices things without being asked."""

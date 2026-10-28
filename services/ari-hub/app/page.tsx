@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Freshness, LiveHello, LiveRefresh } from "@/src/components/hub/live";
-import { AriPet } from "@/src/components/hub/pet";
 import { Inside } from "@/src/components/hub/inside";
 import { Today } from "@/src/components/hub/today";
 import { TouchIdButton } from "@/src/components/hub/touch-id";
@@ -66,15 +65,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   return (
     <main className="hub">
       <header className="hub-top">
-        <div className="hub-hello-row">
-          {brain.panel ? (
-            <AriPet
-              paused={brain.panel.paused.paused}
-              needsYou={brain.panel.waitingForApproval.length + brain.panel.alerts.filter((alert) => alert.status === "pending").length}
-            />
-          ) : null}
-          <LiveHello name="Alec" />
-        </div>
+        <LiveHello name="Alec" />
         <nav className="hub-tabs" aria-label="Hub">
           <Link href="/" className={tab === "today" ? "is-on" : ""} aria-current={tab === "today" ? "page" : undefined}>
             Today

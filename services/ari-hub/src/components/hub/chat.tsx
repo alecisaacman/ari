@@ -4,8 +4,6 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { ExchangeLine } from "@/src/core/ari-spine/brain-bridge";
 
-import { THINKING_EVENT } from "./pet";
-
 // Talk to ARI from the hub, laid out like Messages: you on the right, ARI on the left.
 // The message goes to ARI's one brain, the same one iMessage reaches.
 export function HubChat({ initial }: { initial: ExchangeLine[] }) {
@@ -18,10 +16,6 @@ export function HubChat({ initial }: { initial: ExchangeLine[] }) {
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [lines, sending]);
-
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent(THINKING_EVENT, { detail: sending }));
-  }, [sending]);
 
   async function send(event: FormEvent) {
     event.preventDefault();
