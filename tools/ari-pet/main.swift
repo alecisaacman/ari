@@ -328,170 +328,294 @@ struct Owl: View {
 
 // MARK: - The golden retriever
 
+// Drawn on a 100 x 110 canvas, sitting and facing out, with shading and fur strokes.
+struct DogPose {
+    let mood: Mood
+    let drag: DragPose
+    let t: Double
+
+    var dull: Bool { mood == .offline || mood == .outOfCredits }
+    var sad: Bool { mood == .outOfCredits }
+    var breathe: Double { 1 + 0.018 * sin(t * (mood == .asleep ? 1.0 : 1.9)) }
+    var eyesClosed: Bool {
+        mood == .asleep || mood == .offline || (t.truncatingRemainder(dividingBy: 4.8) > 4.64 && drag == .none)
+    }
+    var tongue: Bool { (mood == .thinking || mood == .alert || drag == .left || drag == .right) && !sad }
+    var pant: Double { tongue ? max(0, sin(t * 9)) * 1.6 : 0 }
+    var wag: Double {
+        switch mood {
+        case .alert: return sin(t * 16) * 24
+        case .thinking: return sin(t * 11) * 20
+        case .idle: return sin(t * 5) * 12
+        default: return -38
+        }
+    }
+    var lean: Double {
+        switch drag {
+        case .left: return -9
+        case .right: return 9
+        default: return 0
+        }
+    }
+    var headTilt: Double {
+        switch drag {
+        case .left: return -8
+        case .right: return 8
+        default: return mood == .thinking ? 11 + sin(t * 2) * 3 : (sad ? -4 : 0)
+        }
+    }
+    // Ears trail the motion, flap when lifted, fly up when dragged down, droop when sad.
+    var ear: Double {
+        switch drag {
+        case .left: return 24
+        case .right: return -24
+        case .up: return sin(t * 22) * 18
+        default: return sad ? -5 : (mood == .alert ? 6 : 0)
+        }
+    }
+    var earsUp: Bool { drag == .down }
+    var paddle: Double { drag == .up ? sin(t * 20) * 4 : 0 }
+    var hop: Double { mood == .alert && sin(t * 3) > 0.78 ? -3 : (drag == .down ? 2 : 0) }
+    var look: CGSize {
+        switch drag {
+        case .left: return CGSize(width: -1.1, height: 0)
+        case .right: return CGSize(width: 1.1, height: 0)
+        case .up: return CGSize(width: 0, height: -1.0)
+        case .down: return CGSize(width: 0, height: 0.8)
+        default: return mood == .thinking ? CGSize(width: 0.9, height: -0.9) : .zero
+        }
+    }
+}
+
 struct Retriever: View {
     @ObservedObject var model: PetModel
 
     var body: some View {
         TimelineView(.animation) { context in
-            dog(at: context.date.timeIntervalSinceReferenceDate)
-        }
-    }
-
-    @ViewBuilder
-    func dog(at t: Double) -> some View {
-        let mood = model.mood
-        let drag = model.drag
-        let dull = mood == .offline || mood == .outOfCredits
-        let coat = dull ? Color(hex: 0xb9a079) : Color(hex: 0xe0a446)
-        let shade = dull ? Color(hex: 0x9c8462) : Color(hex: 0xc4852c)
-        let cream = dull ? Color(hex: 0xe6dccb) : Color(hex: 0xf6dfae)
-        let dark = Color(hex: 0x2a1d14)
-
-        let breathe = 1 + 0.02 * sin(t * (mood == .asleep ? 1.0 : 1.9))
-        let blinking = t.truncatingRemainder(dividingBy: 4.8) > 4.63
-        let eyesClosed = mood == .asleep || mood == .offline || (blinking && drag == .none)
-        let sad = mood == .outOfCredits
-        let tongue = (mood == .thinking || mood == .alert || drag == .left || drag == .right) && !sad
-        let wagSpeed: Double = {
-            switch mood {
-            case .alert: return 16
-            case .thinking: return 11
-            case .idle: return 5
-            default: return 0
-            }
-        }()
-        let wag = wagSpeed == 0 ? -30 : sin(t * wagSpeed) * 26
-        let tilt: Double = {
-            switch drag {
-            case .left: return -14
-            case .right: return 14
-            default: return mood == .thinking ? 10 + sin(t * 2) * 3 : 0
-            }
-        }()
-        // Ears trail the motion: they fly up when dragged down, droop when sad.
-        let ear: Double = {
-            switch drag {
-            case .left: return 28
-            case .right: return -28
-            case .up: return sin(t * 22) * 22
-            case .down: return 0
-            default: return sad ? -6 : (mood == .alert ? 8 : 0)
-            }
-        }()
-        let earsUp = drag == .down
-        let paddle = drag == .up ? sin(t * 20) * 3 : 0
-        let hop: Double = mood == .alert && sin(t * 3) > 0.75 ? -3 : 0
-        let pupil: CGSize = {
-            switch drag {
-            case .left: return CGSize(width: -1.6, height: 0)
-            case .right: return CGSize(width: 1.6, height: 0)
-            case .up: return CGSize(width: 0, height: -1.6)
-            case .down: return CGSize(width: 0, height: 1.4)
-            default: return .zero
-            }
-        }()
-
-        ZStack {
-            Ellipse().fill(Color.black.opacity(0.10)).frame(width: 46, height: 6).offset(y: 40)
-
+            let pose = DogPose(mood: model.mood, drag: model.drag, t: context.date.timeIntervalSinceReferenceDate)
             ZStack {
-                // Tail, wagging behind the body
-                Capsule().fill(coat).frame(width: 8, height: 26)
-                    .rotationEffect(.degrees(40 + wag), anchor: .bottom).offset(x: 20, y: 12)
-                // Sitting body and chest
-                Ellipse().fill(coat).frame(width: 46, height: 40).offset(y: 18)
-                Ellipse().fill(cream).frame(width: 22, height: 26).offset(y: 16)
-                // Front paws
-                HStack(spacing: 6) {
-                    Capsule().fill(coat).frame(width: 10, height: 15).offset(y: paddle)
-                    Capsule().fill(coat).frame(width: 10, height: 15).offset(y: -paddle)
-                }.offset(y: 31)
-                HStack(spacing: 8) {
-                    Capsule().fill(cream).frame(width: 9, height: 4)
-                    Capsule().fill(cream).frame(width: 9, height: 4)
-                }.offset(y: 37)
-
-                // Head
-                ZStack {
-                    // Floppy ears
-                    Ellipse().fill(shade).frame(width: 13, height: 24)
-                        .rotationEffect(.degrees(earsUp ? 155 : 18 + ear), anchor: .top).offset(x: earsUp ? -11 : -15, y: earsUp ? 2 : 4)
-                    Ellipse().fill(shade).frame(width: 13, height: 24)
-                        .rotationEffect(.degrees(earsUp ? -155 : -18 + ear), anchor: .top).offset(x: earsUp ? 11 : 15, y: earsUp ? 2 : 4)
-                    Ellipse().fill(coat).frame(width: 34, height: 31)
-                    // Muzzle
-                    Ellipse().fill(cream).frame(width: 18, height: 13).offset(y: 8)
-                    Ellipse().fill(dark).frame(width: 7, height: 5).offset(y: 4)
-                    MouthShape().stroke(dark, style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
-                        .frame(width: 9, height: 4).rotationEffect(.degrees(sad ? 180 : 0)).offset(y: sad ? 11 : 10)
-                    if tongue {
-                        Capsule().fill(Color(hex: 0xe8737a)).frame(width: 6, height: 7 + max(0, sin(t * 9)) * 1.5)
-                            .offset(y: 14.5)
-                    }
-                    // Eyes, with brows that tip up when sad
-                    HStack(spacing: 9) {
-                        dogEye(closed: eyesClosed, pupil: pupil, dark: dark)
-                        dogEye(closed: eyesClosed, pupil: pupil, dark: dark)
-                    }.offset(y: -3)
-                    if sad {
-                        HStack(spacing: 11) {
-                            Capsule().fill(shade).frame(width: 6, height: 1.6).rotationEffect(.degrees(-20))
-                            Capsule().fill(shade).frame(width: 6, height: 1.6).rotationEffect(.degrees(20))
-                        }.offset(y: -9)
-                    }
+                Canvas { canvas, size in drawRetriever(canvas, size: size, pose: pose) }
+                    .saturation(pose.dull ? 0.3 : 1)
+                    .opacity(pose.mood == .offline ? 0.75 : 1)
+                if pose.mood == .alert {
+                    Circle().fill(Color(hex: 0xe5484d)).frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Color.white, lineWidth: 1.5)).offset(x: 24, y: -36)
                 }
-                .offset(y: -14)
-                .rotationEffect(.degrees(tilt * 0.6), anchor: .bottom)
+                if pose.mood == .asleep || pose.mood == .offline {
+                    let phase = pose.t.truncatingRemainder(dividingBy: 3) / 3
+                    Text("z").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundColor(.secondary)
+                        .opacity(sin(phase * .pi)).offset(x: 24, y: -36 - phase * 8)
+                }
+                if pose.mood == .outOfCredits {
+                    EmptyBowl().offset(x: 32, y: 38)
+                }
+                if pose.mood == .thinking {
+                    HStack(spacing: 3) {
+                        ForEach(0..<3) { index in
+                            Circle().fill(Color.secondary).frame(width: 4, height: 4)
+                                .opacity(0.35 + 0.65 * max(0, sin(pose.t * 5 - Double(index) * 0.7)))
+                        }
+                    }.offset(x: 30, y: -38)
+                }
             }
-            .scaleEffect(x: 2 - breathe, y: breathe * (drag == .down ? 1.06 : 1), anchor: .bottom)
-            .rotationEffect(.degrees(drag == .left || drag == .right ? tilt * 0.5 : 0), anchor: .bottom)
-            .offset(y: hop)
-
-            if mood == .alert {
-                Circle().fill(Color(hex: 0xe5484d)).frame(width: 9, height: 9)
-                    .overlay(Circle().stroke(Color.white, lineWidth: 1.5)).offset(x: 24, y: -32)
-            }
-            if mood == .asleep || mood == .offline {
-                let phase = t.truncatingRemainder(dividingBy: 3) / 3
-                Text("z").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundColor(.secondary)
-                    .opacity(sin(phase * .pi)).offset(x: 24, y: -32 - phase * 8)
-            }
-            if mood == .outOfCredits {
-                EmptyBowl().offset(x: 30, y: 36)
-            }
-            if mood == .thinking {
-                HStack(spacing: 3) {
-                    ForEach(0..<3) { index in
-                        Circle().fill(Color.secondary).frame(width: 4, height: 4)
-                            .opacity(0.35 + 0.65 * max(0, sin(t * 5 - Double(index) * 0.7)))
-                    }
-                }.offset(x: 28, y: -34)
-            }
+            .frame(width: 84, height: 92)
         }
-        .frame(width: 84, height: 92)
-    }
-
-    func dogEye(closed: Bool, pupil: CGSize, dark: Color) -> some View {
-        ZStack {
-            if closed {
-                Capsule().fill(dark).frame(width: 6, height: 1.6)
-            } else {
-                Circle().fill(dark).frame(width: 6.5, height: 6.5).offset(pupil)
-                Circle().fill(Color.white).frame(width: 2, height: 2).offset(x: pupil.width + 1.2, y: pupil.height - 1.2)
-            }
-        }
-        .frame(width: 8, height: 8)
     }
 }
 
-struct MouthShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addQuadCurve(to: CGPoint(x: rect.midX, y: rect.minY), control: CGPoint(x: rect.width * 0.25, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY), control: CGPoint(x: rect.width * 0.75, y: rect.maxY))
-        return path
+private func ellipse(_ cx: CGFloat, _ cy: CGFloat, _ rx: CGFloat, _ ry: CGFloat) -> Path {
+    Path(ellipseIn: CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2))
+}
+
+private func pivot(_ context: inout GraphicsContext, _ degrees: Double, _ x: CGFloat, _ y: CGFloat) {
+    context.translateBy(x: x, y: y)
+    context.rotate(by: .degrees(degrees))
+    context.translateBy(x: -x, y: -y)
+}
+
+private func mirrored(_ path: Path) -> Path {
+    path.applying(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 100, ty: 0))
+}
+
+private func shade(_ top: UInt32, _ bottom: UInt32, _ y0: CGFloat, _ y1: CGFloat) -> GraphicsContext.Shading {
+    .linearGradient(Gradient(colors: [Color(hex: top), Color(hex: bottom)]), startPoint: CGPoint(x: 50, y: y0), endPoint: CGPoint(x: 50, y: y1))
+}
+
+func drawRetriever(_ base: GraphicsContext, size: CGSize, pose: DogPose) {
+    var c = base
+    let scale = min(size.width / 100, size.height / 110)
+    c.translateBy(x: (size.width - 100 * scale) / 2, y: size.height - 110 * scale + pose.hop)
+    c.scaleBy(x: scale, y: scale)
+
+    let gold = UInt32(0xd8963f), goldLight = UInt32(0xebb663), goldDeep = UInt32(0xa9682a)
+    let cream = UInt32(0xf3d79f), creamDeep = UInt32(0xe2bb78)
+    let furLine = Color(hex: 0x9a6326).opacity(0.45)
+    let ink = Color(hex: 0x1a120c)
+
+    c.fill(ellipse(50, 106, 27, 3.6), with: .color(.black.opacity(0.10)))
+    pivot(&c, pose.lean, 50, 104)
+    c.translateBy(x: 50, y: 104)
+    c.scaleBy(x: 2 - pose.breathe, y: pose.breathe)
+    c.translateBy(x: -50, y: -104)
+
+    // Tail: a feathered plume behind the body, wagging from its base.
+    var tail = c
+    pivot(&tail, pose.wag, 70, 93)
+    var plume = Path()
+    plume.move(to: CGPoint(x: 67, y: 96))
+    plume.addCurve(to: CGPoint(x: 93, y: 62), control1: CGPoint(x: 84, y: 94), control2: CGPoint(x: 95, y: 78))
+    plume.addCurve(to: CGPoint(x: 83, y: 64), control1: CGPoint(x: 90, y: 60), control2: CGPoint(x: 85, y: 61))
+    plume.addQuadCurve(to: CGPoint(x: 80, y: 72), control: CGPoint(x: 84, y: 69))
+    plume.addQuadCurve(to: CGPoint(x: 76, y: 78), control: CGPoint(x: 79, y: 77))
+    plume.addQuadCurve(to: CGPoint(x: 71, y: 85), control: CGPoint(x: 75, y: 84))
+    plume.addCurve(to: CGPoint(x: 66, y: 90), control1: CGPoint(x: 70, y: 88), control2: CGPoint(x: 68, y: 89))
+    plume.closeSubpath()
+    tail.fill(plume, with: shade(goldLight, goldDeep, 60, 96))
+    var plumeFur = Path()
+    plumeFur.move(to: CGPoint(x: 80, y: 84)); plumeFur.addQuadCurve(to: CGPoint(x: 88, y: 70), control: CGPoint(x: 86, y: 79))
+    tail.stroke(plumeFur, with: .color(furLine), lineWidth: 0.8)
+
+    // Haunches, then the body.
+    c.fill(ellipse(26, 93, 12, 11), with: shade(gold, goldDeep, 82, 104))
+    c.fill(ellipse(74, 93, 12, 11), with: shade(gold, goldDeep, 82, 104))
+    var body = Path()
+    body.move(to: CGPoint(x: 36, y: 50))
+    body.addCurve(to: CGPoint(x: 22, y: 96), control1: CGPoint(x: 26, y: 58), control2: CGPoint(x: 20, y: 80))
+    body.addCurve(to: CGPoint(x: 50, y: 104), control1: CGPoint(x: 24, y: 104), control2: CGPoint(x: 40, y: 104))
+    body.addCurve(to: CGPoint(x: 78, y: 96), control1: CGPoint(x: 60, y: 104), control2: CGPoint(x: 76, y: 104))
+    body.addCurve(to: CGPoint(x: 64, y: 50), control1: CGPoint(x: 80, y: 80), control2: CGPoint(x: 74, y: 58))
+    body.closeSubpath()
+    c.fill(body, with: shade(goldLight, gold, 50, 104))
+
+    // The cream chest ruff, scalloped at its point.
+    var ruff = Path()
+    ruff.move(to: CGPoint(x: 37, y: 52))
+    ruff.addCurve(to: CGPoint(x: 63, y: 52), control1: CGPoint(x: 44, y: 47), control2: CGPoint(x: 56, y: 47))
+    ruff.addCurve(to: CGPoint(x: 59, y: 74), control1: CGPoint(x: 65, y: 60), control2: CGPoint(x: 63, y: 68))
+    ruff.addQuadCurve(to: CGPoint(x: 55, y: 80), control: CGPoint(x: 58, y: 79))
+    ruff.addQuadCurve(to: CGPoint(x: 50, y: 87), control: CGPoint(x: 53, y: 86))
+    ruff.addQuadCurve(to: CGPoint(x: 45, y: 80), control: CGPoint(x: 47, y: 86))
+    ruff.addQuadCurve(to: CGPoint(x: 41, y: 74), control: CGPoint(x: 42, y: 79))
+    ruff.addCurve(to: CGPoint(x: 37, y: 52), control1: CGPoint(x: 37, y: 68), control2: CGPoint(x: 35, y: 60))
+    ruff.closeSubpath()
+    c.fill(ruff, with: shade(cream, creamDeep, 50, 87))
+    for (x, y, dx) in [(44.0, 62.0, -2.0), (56.0, 62.0, 2.0), (47.0, 72.0, -1.5), (53.0, 72.0, 1.5), (50.0, 67.0, 0.0)] {
+        var strand = Path()
+        strand.move(to: CGPoint(x: x, y: y)); strand.addQuadCurve(to: CGPoint(x: x + dx, y: y + 6), control: CGPoint(x: x + dx * 1.5, y: y + 3))
+        c.stroke(strand, with: .color(Color(hex: 0xc99a55).opacity(0.5)), lineWidth: 0.7)
     }
+
+    // Front legs and paws; they paddle when lifted.
+    for (x, offset) in [(42.0, pose.paddle), (58.0, -pose.paddle)] {
+        let leg = Path(roundedRect: CGRect(x: x - 4.5, y: 74 + offset, width: 9, height: 26), cornerRadius: 4.5)
+        c.fill(leg, with: shade(gold, goldDeep, 74, 100))
+        c.fill(ellipse(x, 100.5 + offset, 6.2, 3.4), with: .color(Color(hex: goldLight)))
+        for toe in [-2.2, 0.0, 2.2] {
+            var line = Path()
+            line.move(to: CGPoint(x: x + toe, y: 99 + offset)); line.addLine(to: CGPoint(x: x + toe, y: 102 + offset))
+            c.stroke(line, with: .color(furLine), lineWidth: 0.6)
+        }
+    }
+
+    // The head, tilting at the neck.
+    var head = c
+    pivot(&head, pose.headTilt, 50, 50)
+
+    // Ears hang from the top of the skull, feathered at the tips.
+    var ear = Path()
+    ear.move(to: CGPoint(x: 37, y: 23))
+    ear.addCurve(to: CGPoint(x: 27, y: 45), control1: CGPoint(x: 29, y: 25), control2: CGPoint(x: 24, y: 37))
+    ear.addQuadCurve(to: CGPoint(x: 31, y: 48.5), control: CGPoint(x: 27, y: 49))
+    ear.addQuadCurve(to: CGPoint(x: 35, y: 46), control: CGPoint(x: 33.5, y: 48.5))
+    ear.addCurve(to: CGPoint(x: 41, y: 29), control1: CGPoint(x: 38, y: 40), control2: CGPoint(x: 41, y: 34))
+    ear.closeSubpath()
+    for (path, attachX, sign) in [(ear, CGFloat(37), 1.0), (mirrored(ear), CGFloat(63), -1.0)] {
+        var earContext = head
+        pivot(&earContext, pose.earsUp ? 165 * sign : pose.ear * sign, attachX, 24)
+        earContext.fill(path, with: shade(gold, goldDeep, 22, 58))
+        var strand = Path()
+        let x = attachX - 6 * sign
+        strand.move(to: CGPoint(x: x, y: 32)); strand.addQuadCurve(to: CGPoint(x: x - 1.5 * sign, y: 44), control: CGPoint(x: x - 2.5 * sign, y: 38))
+        earContext.stroke(strand, with: .color(furLine), lineWidth: 0.7)
+    }
+
+    // Skull and cheeks.
+    var skull = Path()
+    skull.move(to: CGPoint(x: 50, y: 15))
+    skull.addCurve(to: CGPoint(x: 67, y: 30), control1: CGPoint(x: 61, y: 15), control2: CGPoint(x: 67, y: 22))
+    skull.addCurve(to: CGPoint(x: 60, y: 47), control1: CGPoint(x: 67, y: 38), control2: CGPoint(x: 64, y: 45))
+    skull.addCurve(to: CGPoint(x: 40, y: 47), control1: CGPoint(x: 55, y: 50), control2: CGPoint(x: 45, y: 50))
+    skull.addCurve(to: CGPoint(x: 33, y: 30), control1: CGPoint(x: 36, y: 45), control2: CGPoint(x: 33, y: 38))
+    skull.addCurve(to: CGPoint(x: 50, y: 15), control1: CGPoint(x: 33, y: 22), control2: CGPoint(x: 39, y: 15))
+    skull.closeSubpath()
+    head.fill(skull, with: .radialGradient(Gradient(colors: [Color(hex: goldLight), Color(hex: gold), Color(hex: goldDeep)]),
+                                           center: CGPoint(x: 50, y: 27), startRadius: 2, endRadius: 22))
+
+    // The muzzle, lighter, tapering to the nose.
+    var muzzle = Path()
+    muzzle.move(to: CGPoint(x: 42, y: 35))
+    muzzle.addCurve(to: CGPoint(x: 58, y: 35), control1: CGPoint(x: 46, y: 32), control2: CGPoint(x: 54, y: 32))
+    muzzle.addCurve(to: CGPoint(x: 57, y: 48), control1: CGPoint(x: 61, y: 39), control2: CGPoint(x: 60, y: 46))
+    muzzle.addCurve(to: CGPoint(x: 43, y: 48), control1: CGPoint(x: 54, y: 51), control2: CGPoint(x: 46, y: 51))
+    muzzle.addCurve(to: CGPoint(x: 42, y: 35), control1: CGPoint(x: 40, y: 46), control2: CGPoint(x: 39, y: 39))
+    muzzle.closeSubpath()
+    head.fill(muzzle, with: shade(cream, creamDeep, 32, 50))
+
+    // Brows: soft ridges, angled up in the middle when sad.
+    let browLift: CGFloat = pose.sad ? 1.6 : 0
+    for (x0, x1, lift0, lift1) in [(38.5, 46.5, 0.0, browLift), (53.5, 61.5, browLift, 0.0)] {
+        var brow = Path()
+        brow.move(to: CGPoint(x: x0, y: 26.5 - lift0)); brow.addQuadCurve(to: CGPoint(x: x1, y: 26.5 - lift1), control: CGPoint(x: (x0 + x1) / 2, y: 24.6 - (lift0 + lift1) / 2))
+        head.stroke(brow, with: .color(Color(hex: goldDeep).opacity(0.75)), lineWidth: 1.1)
+    }
+
+    // Almond eyes, dark brown, with a catchlight; closed eyes are a soft curve.
+    for x in [42.5, 57.5] {
+        if pose.eyesClosed {
+            var lid = Path()
+            lid.move(to: CGPoint(x: x - 3.2, y: 30.6)); lid.addQuadCurve(to: CGPoint(x: x + 3.2, y: 30.6), control: CGPoint(x: x, y: 32.6))
+            head.stroke(lid, with: .color(ink), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+        } else {
+            let cx = x + pose.look.width, cy = 30.6 + pose.look.height
+            head.fill(ellipse(x, 30.6, 3.6, 2.8), with: .color(Color(hex: 0x6b4423)))
+            head.fill(ellipse(cx, cy, 2.5, 2.4), with: .color(Color(hex: 0x24160d)))
+            head.fill(ellipse(cx + 0.9, cy - 0.9, 0.75, 0.75), with: .color(.white.opacity(0.95)))
+            if pose.sad {
+                head.fill(Path(CGRect(x: x - 4, y: 27.2, width: 8, height: 2.6)), with: .color(Color(hex: gold)))
+            }
+        }
+    }
+
+    // Nose: glossy black, with nostrils.
+    var nose = Path()
+    nose.move(to: CGPoint(x: 45.6, y: 38.6))
+    nose.addCurve(to: CGPoint(x: 54.4, y: 38.6), control1: CGPoint(x: 47, y: 37), control2: CGPoint(x: 53, y: 37))
+    nose.addCurve(to: CGPoint(x: 50, y: 43.4), control1: CGPoint(x: 55.6, y: 40.6), control2: CGPoint(x: 52.4, y: 43.4))
+    nose.addCurve(to: CGPoint(x: 45.6, y: 38.6), control1: CGPoint(x: 47.6, y: 43.4), control2: CGPoint(x: 44.4, y: 40.6))
+    nose.closeSubpath()
+    head.fill(nose, with: .color(ink))
+    head.fill(ellipse(48.6, 38.9, 1.5, 0.7), with: .color(.white.opacity(0.35)))
+    head.fill(ellipse(48.0, 40.6, 0.8, 0.55), with: .color(.black))
+    head.fill(ellipse(52.0, 40.6, 0.8, 0.55), with: .color(.black))
+
+    // Mouth: a soft smile, a frown when sad, and a panting tongue when happy.
+    var mouth = Path()
+    mouth.move(to: CGPoint(x: 50, y: 43.4)); mouth.addLine(to: CGPoint(x: 50, y: 45.4))
+    let corner: CGFloat = pose.sad ? 48.8 : 46.4
+    mouth.move(to: CGPoint(x: 45, y: corner)); mouth.addQuadCurve(to: CGPoint(x: 50, y: 45.4), control: CGPoint(x: 47.6, y: pose.sad ? 45.2 : 47.6))
+    mouth.addQuadCurve(to: CGPoint(x: 55, y: corner), control: CGPoint(x: 52.4, y: pose.sad ? 45.2 : 47.6))
+    if pose.tongue {
+        var tongue = Path()
+        tongue.move(to: CGPoint(x: 47.4, y: 46.4))
+        tongue.addLine(to: CGPoint(x: 52.6, y: 46.4))
+        tongue.addCurve(to: CGPoint(x: 50, y: 52.6 + pose.pant), control1: CGPoint(x: 53.2, y: 50 + pose.pant), control2: CGPoint(x: 52, y: 52.6 + pose.pant))
+        tongue.addCurve(to: CGPoint(x: 47.4, y: 46.4), control1: CGPoint(x: 48, y: 52.6 + pose.pant), control2: CGPoint(x: 46.8, y: 50 + pose.pant))
+        head.fill(tongue, with: shade(0xec8b8f, 0xd9666d, 46, 53))
+        var crease = Path()
+        crease.move(to: CGPoint(x: 50, y: 47.4)); crease.addLine(to: CGPoint(x: 50, y: 50.4 + pose.pant))
+        head.stroke(crease, with: .color(Color(hex: 0xc4555c)), lineWidth: 0.5)
+    }
+    head.stroke(mouth, with: .color(ink), style: StrokeStyle(lineWidth: 0.9, lineCap: .round))
 }
 
 struct EmptyBowl: View {
