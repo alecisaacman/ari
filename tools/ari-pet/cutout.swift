@@ -1,7 +1,7 @@
 // cutout: lift the subject out of a photo onto a transparent background, using Apple's
 // Vision subject lifting (the same feature as Copy Subject in Photos), trim it, and
-// save it as a PNG scaled by SCALE (default 0.4). Every pose uses the same scale, so the
-// dog stays the same size whether it's sitting or lying down.
+// save it as a PNG at the original resolution (or scaled by SCALE). Every pose uses the
+// same scale, so the dog stays the same size whether it's sitting or lying down.
 //
 //   swift tools/ari-pet/cutout.swift IN.png OUT.png [SCALE]
 import AppKit
@@ -38,8 +38,10 @@ guard let result = request.results?.first, !result.allInstances.isEmpty else {
 let buffer = try result.generateMaskedImage(ofInstances: result.allInstances, from: handler, croppedToInstancesExtent: true)
 var lifted = CIImage(cvPixelBuffer: buffer)
 
-let scale = arguments.count == 4 ? Double(arguments[3]) ?? 0.4 : 0.4
-lifted = lifted.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
+let scale = arguments.count == 4 ? Double(arguments[3]) ?? 1 : 1
+if scale != 1 {
+    lifted = lifted.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
+}
 guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
       let png = context.pngRepresentation(of: lifted, format: .RGBA8, colorSpace: colorSpace) else { exit(1) }
 try png.write(to: output)
