@@ -28,7 +28,7 @@ login. `ARI Pet --snapshot DIR` draws every pose to PNGs for checking the art.
 Claude's pet reads Claude's own local session files (`~/.claude/projects`), not ARI's
 records. It works (tongue out, wagging, thinking dots) while Claude is mid-task,
 perks up with a red dot when Claude has finished and is waiting, says Claude's last
-reply in a bubble, sits sadly by an empty bowl when Claude hits a usage limit, and
+reply in a bubble, lies down with sad eyes when Claude hits a usage limit, and
 sleeps when the Claude app is closed or it's late. It is `~/Applications/Claude
 Pet.app`, started at login the same way.
 

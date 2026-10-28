@@ -341,6 +341,9 @@ let photoPoses: [String: NSImage] = {
     return poses
 }()
 
+// All poses were cut at one scale, so one factor sizes them all: the sitting dog is 100 points tall.
+let photoScale: CGFloat = 100 / max(photoPoses["sit"]?.size.height ?? 100, 1)
+
 struct PhotoRetriever: View {
     @ObservedObject var model: PetModel
 
@@ -388,7 +391,7 @@ struct PhotoRetriever: View {
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
+                        .frame(width: image.size.width * photoScale, height: image.size.height * photoScale)
                         .scaleEffect(x: (current.flipped ? -1 : 1) * (2 - breathe), y: breathe, anchor: .bottom)
                         .rotationEffect(.degrees(sway), anchor: drag == .up ? .top : .bottom)
                         .offset(y: hop)
@@ -406,9 +409,6 @@ struct PhotoRetriever: View {
                     let phase = t.truncatingRemainder(dividingBy: 3) / 3
                     Text("z").font(.system(size: 10, weight: .bold, design: .rounded)).foregroundColor(.secondary)
                         .opacity(sin(phase * .pi)).offset(x: 34, y: -30 - phase * 8)
-                }
-                if mood == .outOfCredits {
-                    EmptyBowl().offset(x: 44, y: 40)
                 }
                 if mood == .thinking {
                     HStack(spacing: 3) {
@@ -907,7 +907,12 @@ let appURL = character == .owl
     ? URL(fileURLWithPath: NSHomeDirectory() + "/Applications/ARI Hub.app")
     : URL(fileURLWithPath: "/Applications/Claude.app")
 let appName = character == .owl ? "ARI Hub" : "Claude"
-let petBox = character == .retriever && photoPoses["sit"] != nil ? CGSize(width: 118, height: 104) : CGSize(width: 84, height: 92)
+let petBox: CGSize = {
+    guard character == .retriever, photoPoses["sit"] != nil else { return CGSize(width: 84, height: 92) }
+    let widest = photoPoses.values.map { $0.size.width }.max() ?? 0
+    let tallest = photoPoses.values.map { $0.size.height }.max() ?? 0
+    return CGSize(width: max(110, widest * photoScale), height: max(104, tallest * photoScale))
+}()
 let petName = character == .owl ? "ARI Pet" : "Claude Pet"
 
 // `ARI Pet --snapshot DIR` draws every mood and drag pose to PNGs, for checking the art.

@@ -14,5 +14,5 @@ for pose in sit panting alert asleep sad lifted leap startled; do
     echo "missing: $pose"
     continue
   fi
-  "$work/cutout" "$found" "$to/$pose.png"
+  "$work/cutout" "$found" "$to/$pose.png" 0.4
 done
