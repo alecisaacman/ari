@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from ari_core.action_desk import ActionDesk
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain_usage import month_spend
+from ari_core.builds import list_builds
 from ari_core.core.pause import get_pause_state
 from ari_core.memory import get_conversation_state
 from ari_core.modules.memory.db import list_ari_memories
@@ -82,6 +83,7 @@ def build_panel(
         ],
         "reminders": [reminder.describe() for reminder in pending_reminders(session)],
         **apple_view,
+        "builds": [build.describe() for build in list_builds(session)],
         "alerts": _recent_alerts(session, since=current - RECENT_ALERTS),
         "memories": [
             {"id": row["id"], "kind": row["type"], "title": row["title"], "content": row["content"]}

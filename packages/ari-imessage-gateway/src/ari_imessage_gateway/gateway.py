@@ -30,6 +30,8 @@ from ari_core.core.pause import get_pause_state
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orchestration
 from ari_core.reminders import due_reminders, mark_sent
+from ari_core.self_review import Write as ReviewWriter
+from ari_core.self_review import run_review
 from ari_memory.tables import AlertRow
 from ari_state import AlertChannel, AlertEscalationLevel, AlertStatus
 from sqlalchemy import select
@@ -62,6 +64,7 @@ class PollReport:
     alerts_sent: int = 0
     signals_raised: int = 0
     reminders_sent: int = 0
+    reviews_sent: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +75,7 @@ class PollReport:
             "alertsSent": self.alerts_sent,
             "signalsRaised": self.signals_raised,
             "remindersSent": self.reminders_sent,
+            "reviewsSent": self.reviews_sent,
         }
 
 
@@ -88,6 +92,7 @@ class ImessageGateway:
         dry_run: bool = False,
         signal_engine: bool = True,
         apple: AppleDesk | None = None,
+        review_writer: ReviewWriter | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
@@ -97,6 +102,9 @@ class ImessageGateway:
         self.now = now
         self.dry_run = dry_run
         self.signal_engine = signal_engine
+        self.apple = apple
+        # Morning and night reviews call a model; without a writer they are off.
+        self.review_writer = review_writer
         self.conversation = Conversation(
             channel=CHANNEL,
             session_factory=session_factory,
@@ -106,6 +114,7 @@ class ImessageGateway:
             now=now,
             dry_run=dry_run,
             apple=apple,
+            review_writer=review_writer,
         )
 
     def poll_once(self) -> PollReport:
@@ -143,6 +152,7 @@ class ImessageGateway:
             self._maybe_orchestrate(report, force=report.handled > 0)
             history = self._send_alerts(history, report)
             history = self._send_reminders(history, report)
+            history = self._send_reviews(history, report)
             self._save(cursor, history)
         return report
 
@@ -214,6 +224,30 @@ class ImessageGateway:
                     history = [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
             if not self.dry_run:
                 session.commit()
+        return history
+
+    def _send_reviews(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
+        """Send the morning or night review once a day, at the time Alec set or when ARI next runs."""
+        if self.review_writer is None or self.dry_run or get_pause_state()["paused"]:
+            return history
+        local = self.now().astimezone()
+        for kind, at in self.settings.review_times.items():
+            if at is None or not _review_due(kind, at, local):
+                continue
+            marker = self.settings.state_dir / f"last-review-{kind}"
+            try:
+                if marker.read_text().strip() == local.date().isoformat():
+                    continue
+            except OSError:
+                pass
+            marker.write_text(local.date().isoformat())  # once a day, even if writing fails
+            with self.session_factory() as session:
+                review = run_review(session, kind=kind, now=self.now(), apple=self.apple, write=self.review_writer)
+            if review is None or not self._send(self.settings.reply_to or "", review.message, report):
+                continue
+            report.reviews_sent += 1
+            if history:
+                history = [*history, {"role": "assistant", "content": [{"type": "text", "text": review.message}]}]
         return history
 
     def _send_reminders(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
@@ -372,3 +406,12 @@ def _clock(moment: datetime) -> str:
 def _utc(value: datetime) -> datetime:
     # SQLite returns naive datetimes; ARI stores UTC.
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+# A review that was missed while the Mac slept still goes out, until it would be stale.
+REVIEW_DEADLINES = {"morning": (12, 0), "night": (23, 59)}
+
+
+def _review_due(kind: str, at: tuple[int, int], local: datetime) -> bool:
+    now = (local.hour, local.minute)
+    return at <= now <= REVIEW_DEADLINES.get(kind, (23, 59))

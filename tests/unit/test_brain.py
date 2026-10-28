@@ -323,3 +323,16 @@ def test_a_live_sqlite_store_gains_new_optional_columns(tmp_path) -> None:
     with sqlite3.connect(db) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(reminders)")}
     assert "apple_id" in columns
+
+
+def test_alec_approves_or_holds_what_ari_proposes_to_build(tmp_path) -> None:
+    _, dispatch = _dispatcher(tmp_path)
+
+    build = dispatch("propose_build", {"title": "Email triage", "why": "Asked twice.", "brief": "Read Gmail."})["build"]
+    again = dispatch("propose_build", {"title": "email triage", "why": "Again.", "brief": "Read Gmail."})
+    assert again["already_on_list"] is True and again["build"]["id"] == build["id"]
+    assert dispatch("decide_build", {"build_id": build["id"], "decision": "hold"})["build"]["status"] == "held"
+    assert dispatch("decide_build", {"build_id": build["id"], "decision": "approve"})["build"]["status"] == "approved"
+    assert [item["status"] for item in dispatch("get_build_list", {})["builds"]] == ["approved"]
+    dispatch("decide_build", {"build_id": build["id"], "decision": "decline"})
+    assert dispatch("get_build_list", {})["builds"] == []

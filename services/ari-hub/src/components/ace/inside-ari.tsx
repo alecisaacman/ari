@@ -145,6 +145,17 @@ export function InsideAri({ panel, error }: { panel: BrainPanel | null; error: s
           </ul>
         </Panel>
 
+        <Panel title="ARI's build list" source="what ARI wants to build next; say yes or hold to ARI" empty={!(panel.builds ?? []).length}>
+          <ul>
+            {(panel.builds ?? []).map((build) => (
+              <li key={build.id}>
+                <strong>{build.title}</strong> ({build.status})<br />
+                {build.why}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+
         <Panel title="Waiting for your approval" source="execution gateway" empty={!panel.waitingForApproval.length}>
           <ul>
             {panel.waitingForApproval.map((item) => (

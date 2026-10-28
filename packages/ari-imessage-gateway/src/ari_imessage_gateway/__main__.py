@@ -14,6 +14,7 @@ from ari_core.action_desk import ActionDesk
 from ari_core.apple import AppleDesk
 from ari_core.core.env import ari_home, load_local_env
 from ari_core.core.pause import get_pause_state
+from ari_core.self_review import write_with_model
 from ari_memory import DatabaseSettings, create_engine, create_session_factory
 
 from .config import ImessageSettings
@@ -77,6 +78,7 @@ def _gateway(settings: ImessageSettings, *, dry_run: bool) -> ImessageGateway:
         action_desk=desk,
         dry_run=dry_run,
         apple=AppleDesk.connected(),
+        review_writer=write_with_model,
     )
 
 

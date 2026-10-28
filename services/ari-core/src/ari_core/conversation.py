@@ -39,6 +39,8 @@ from ari_core.brain_usage import (
 from ari_core.core import paths as core_paths
 from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
+from ari_core.self_review import Write as ReviewWriter
+from ari_core.self_review import run_review
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
 
 # Circuit breaker: a burst of model requests this large is a loop, not Alec typing.
@@ -51,6 +53,7 @@ RESUME_RE = re.compile(r"^ari,?\s+(resume|start|go)$")
 APPROVE_RE = re.compile(r"^(yes|y|yep|yeah|approve|approved|do it|go ahead)(?:\s+(\d+))?$")
 SPEND_RE = re.compile(r"^ari,?\s+(spend|spending|cost|costs|usage)\??$")
 BUDGET_RE = re.compile(r"^ari,?\s+budget\s+\$?(\d+(?:\.\d+)?)$")
+REVIEW_RE = re.compile(r"^ari,?\s+(review|morning review|night review)$")
 DECLINE_RE = re.compile(r"^(no|n|nope|cancel|decline|don't|dont)(?:\s+(\d+))?$")
 
 OUT_OF_CREDITS = (
@@ -98,9 +101,11 @@ class Conversation:
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         dry_run: bool = False,
         apple: AppleDesk | None = None,
+        review_writer: ReviewWriter | None = None,
     ) -> None:
         self.channel = channel
         self.apple = apple
+        self.review_writer = review_writer
         self.session_factory = session_factory
         self.action_desk = action_desk
         self.save_for_later = save_for_later
@@ -148,6 +153,9 @@ class Conversation:
             return self._said(history, text, f"Monthly budget set to ${float(budget.group(1)):.2f}.")
         if get_pause_state()["paused"]:
             return Turn(reply=None, messages=history)
+        review = REVIEW_RE.match(command)
+        if review:
+            return self._said(history, text, self._review(review.group(1)))
 
         approval = APPROVE_RE.match(command) or DECLINE_RE.match(command)
         pending = self.action_desk.pending() if self.action_desk else []
@@ -199,6 +207,14 @@ class Conversation:
             # Retrying can't help until Alec tops up, so say so instead of going silent.
             return self._said(history, text, OUT_OF_CREDITS)
         return Turn(reply=response.reply, messages=response.messages)
+
+    def _review(self, asked: str) -> str:
+        if self.review_writer is None or self.dry_run:
+            return "Reviews aren't set up on this surface."
+        kind = "night" if asked == "night review" or (asked == "review" and self.now().astimezone().hour >= 15) else "morning"
+        with self.session_factory() as session:
+            review = run_review(session, kind=kind, now=self.now(), apple=self.apple, write=self.review_writer)
+        return review.message if review else "I couldn't write a review right now: the budget is used up or the model didn't answer."
 
     def _said(self, history: list[dict[str, Any]], text: str, reply: str) -> Turn:
         # Appended, never edited, so the brain's earlier thinking stays valid.

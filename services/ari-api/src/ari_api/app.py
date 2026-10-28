@@ -135,6 +135,7 @@ from ari_core.modules.tasks.db import (
     list_ari_tasks,
     search_ari_tasks,
 )
+from ari_core.self_review import Write as ReviewWriter
 from ari_memory import (
     DatabaseSettings,
     create_engine,
@@ -196,7 +197,9 @@ from ari_api.schemas import (
 MEMORY_TYPES_QUERY = Query(default_factory=list)
 
 
-def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
+def create_app(
+    session_factory: sessionmaker[Session] | None = None, *, review_writer: ReviewWriter | None = None
+) -> FastAPI:
     resolved_session_factory = session_factory or _build_session_factory()
     app = FastAPI(title="ARI API", version="0.1.0")
 
@@ -1248,7 +1251,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return get_execution_snapshot(limit=limit)
 
-    register_brain_routes(app, resolved_session_factory)
+    register_brain_routes(app, resolved_session_factory, review_writer=review_writer)
 
     return app
 

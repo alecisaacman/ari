@@ -779,3 +779,53 @@ def test_reminder_in_apple_reminders_is_not_texted_again(settings, session_facto
     assert messages.sent == []
     with session_factory() as session:
         assert pending_reminders(session) == []
+
+
+def test_morning_and_night_reviews_go_out_once_each_on_time(settings, session_factory) -> None:
+    written: list[str] = []
+
+    def write(kind, facts):
+        written.append(kind)
+        return {"message": f"{kind} review", "build": None}, None
+
+    local = datetime(2026, 10, 28, 7, 30).astimezone()
+    clock = {"now": local}
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: clock["now"], review_writer=write)
+    seed(gateway, settings)
+
+    gateway.poll_once()
+    assert written == []  # before 8
+    clock["now"] = local.replace(hour=11, minute=40)  # the Mac slept through 8
+    assert gateway.poll_once().reviews_sent == 1
+    assert gateway.poll_once().reviews_sent == 0
+    clock["now"] = local.replace(hour=21, minute=5)
+    assert gateway.poll_once().reviews_sent == 1
+    assert written == ["morning", "night"]
+    assert [text for _, text in messages.sent] == ["morning review", "night review"]
+
+
+def test_a_morning_review_missed_until_afternoon_is_skipped(settings, session_factory) -> None:
+    def write(kind, facts):
+        raise AssertionError("stale review")
+
+    afternoon = datetime(2026, 10, 28, 13, 0).astimezone()
+    gateway = make_gateway(settings, session_factory, now=lambda: afternoon, review_writer=write)
+    seed(gateway, settings)
+
+    assert gateway.poll_once().reviews_sent == 0
+
+
+def test_ari_review_on_demand(settings, session_factory) -> None:
+    def write(kind, facts):
+        return {"message": f"{kind} review now", "build": None}, None
+
+    evening = datetime(2026, 10, 28, 18, 0).astimezone()
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: evening, review_writer=write)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old message"), (2, "ARI review"))
+
+    gateway.poll_once()
+
+    assert messages.sent[-1][1] == "night review now"

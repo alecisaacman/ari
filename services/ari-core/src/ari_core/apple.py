@@ -78,6 +78,10 @@ class AppleDesk:
     def get_done(self) -> list[dict[str, Any]]:
         return self.run("reminders", {"list": self.reminders_list})["reminders"]
 
+    def completed(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
+        """GET DONE items checked off between start and end."""
+        return self.run("completed", {"list": self.reminders_list, "start": _iso(start), "end": _iso(end)})["reminders"]
+
     def add_reminder(
         self, title: str, *, due: datetime | None = None, notes: str | None = None
     ) -> dict[str, Any]:

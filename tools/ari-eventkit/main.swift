@@ -72,6 +72,18 @@ case "reminders":
     done.wait()
     emit(["reminders": found.map(describe)])
 
+case "completed":
+    access(.reminder)
+    let list = reminderList(input["list"] as? String ?? "")
+    guard let start = date(input["start"] as? String), let end = date(input["end"] as? String) else { fail("Give a start and an end.") }
+    let done = DispatchSemaphore(value: 0)
+    var found: [EKReminder] = []
+    store.fetchReminders(matching: store.predicateForCompletedReminders(withCompletionDateStarting: start, ending: end, calendars: [list])) {
+        found = $0 ?? []; done.signal()
+    }
+    done.wait()
+    emit(["reminders": found.map(describe)])
+
 case "add-reminder":
     access(.reminder)
     let reminder = EKReminder(eventStore: store)

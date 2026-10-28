@@ -16,6 +16,7 @@ from ari_core.brain import respond_to_message
 from ari_core.conversation import Conversation, Respond
 from ari_core.core import paths as core_paths
 from ari_core.panel import HUB_CHANNEL, build_panel, recent_exchange
+from ari_core.self_review import Write as ReviewWriter
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -40,6 +41,7 @@ def register_brain_routes(
     respond: Respond = respond_to_message,
     spine_db_path: Callable[[], Path] = lambda: core_paths.DB_PATH,
     apple: Callable[[], AppleDesk | None] = AppleDesk.connected,
+    review_writer: ReviewWriter | None = None,
 ) -> None:
     @app.get("/brain/panel")
     def get_brain_panel() -> dict[str, Any]:
@@ -59,6 +61,7 @@ def register_brain_routes(
             action_desk=action_desk(),
             respond=respond,
             apple=apple(),
+            review_writer=review_writer,
         )
         turn = conversation.say(text)
         with session_factory() as session:

@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain_usage import ModelCall
+from ari_core.builds import decide_build, list_builds, propose_build
 from ari_core.core import paths as core_paths
 from ari_core.history import get_latest_run_details
 from ari_core.modules.memory.db import remember_ari_memory, search_ari_memories
@@ -149,6 +150,10 @@ sent; "morning" means 9 AM unless he has said otherwise). It goes on his GET DON
 in Apple Reminders, which alerts his iPhone at that time (ARI texts it instead if \
 Reminders isn't connected). Confirm the exact day and time back to him. list_reminders \
 and cancel_reminder handle "what reminders do I have" and "cancel that".
+- ARI keeps a build list: things ARI wants to build for itself. Its morning and night \
+reviews may propose one. When Alec answers a proposal ("yes", "build it", "hold off", \
+"not now", "no"), record it with decide_build. When he asks for something ARI can't do, \
+say so plainly and offer to add it with propose_build. ARI never starts a build itself.
 - GET DONE is Alec's to-do list in Apple Reminders, on his phone. "Add X to my list" or \
 "put X on GET DONE" goes there with add_to_get_done; get_done_list shows what's on it \
 and complete_get_done checks something off. ARI only ever writes to GET DONE.
@@ -358,6 +363,36 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"reminder_id": {"type": "string"}},
             "required": ["reminder_id"],
+        },
+    },
+    {
+        "name": "get_build_list",
+        "description": "Builds ARI has proposed for itself that aren't done or declined, with their status.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "decide_build",
+        "description": "Record Alec's answer to a proposed build.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "build_id": {"type": "string"},
+                "decision": {"type": "string", "enum": ["approve", "hold", "decline", "done"]},
+            },
+            "required": ["build_id", "decision"],
+        },
+    },
+    {
+        "name": "propose_build",
+        "description": "Put something ARI should be able to do on its build list, for Alec to approve.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "why": {"type": "string", "description": "One sentence: what Alec needed that ARI couldn't do."},
+                "brief": {"type": "string", "description": "What to build and what done looks like."},
+            },
+            "required": ["title", "why", "brief"],
         },
     },
     {
@@ -590,6 +625,7 @@ def make_tool_dispatcher(
             "remember", "save_note", "set_daily_state", "set_weekly_plan",
             "update_open_loop", "set_reminder", "cancel_reminder",
             "add_to_get_done", "complete_get_done", "add_calendar_event",
+            "decide_build", "propose_build",
         }:
             return {"recorded": {"tool": name, "dry_run": True}}
 
@@ -743,6 +779,28 @@ def make_tool_dispatcher(
                     return {"error": "No pending reminder with that id."}
                 return {"cancelled": cancelled.describe()}
 
+            if name == "get_build_list":
+                return {"builds": [build.describe() for build in list_builds(session)]}
+
+            if name == "decide_build":
+                decided = decide_build(
+                    session, UUID(tool_input["build_id"]), str(tool_input["decision"]), now=datetime.now(tz=UTC)
+                )
+                if decided is None:
+                    return {"error": "No build with that id, or that isn't a decision."}
+                return {"build": decided.describe()}
+
+            if name == "propose_build":
+                proposed, is_new = propose_build(
+                    session,
+                    title=str(tool_input["title"]),
+                    why=str(tool_input["why"]),
+                    brief=str(tool_input["brief"]),
+                    now=datetime.now(tz=UTC),
+                    source="ari.brain",
+                )
+                return {"build": proposed.describe(), "already_on_list": not is_new}
+
             if name == "save_for_later":
                 save_for_later(tool_input["link"], tool_input.get("note"))
                 return {"saved": tool_input["link"]}
@@ -769,6 +827,9 @@ FAST_TOOL_NAMES = {
     "set_reminder",
     "list_reminders",
     "cancel_reminder",
+    "get_build_list",
+    "decide_build",
+    "propose_build",
     "get_done_list",
     "add_to_get_done",
     "complete_get_done",

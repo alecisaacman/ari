@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
@@ -22,6 +22,10 @@ class ImessageSettings:
     state_dir: Path
     stale_after: timedelta = timedelta(minutes=2)
     quiet_hours: tuple[int, int] | None = (22, 7)
+    # When ARI sends its morning and night reviews, local time; None turns one off.
+    review_times: dict[str, tuple[int, int] | None] = field(
+        default_factory=lambda: {"morning": (8, 0), "night": (21, 0)}
+    )
 
     @classmethod
     def from_env(cls) -> ImessageSettings:
@@ -38,7 +42,19 @@ class ImessageSettings:
             dump_path=dump_path,
             state_dir=state_dir,
             quiet_hours=_quiet_hours(os.environ.get("ARI_QUIET_HOURS", "22-7")),
+            review_times={
+                "morning": _clock_time(os.environ.get("ARI_REVIEW_MORNING", "08:00")),
+                "night": _clock_time(os.environ.get("ARI_REVIEW_NIGHT", "21:00")),
+            },
         )
+
+
+def _clock_time(raw: str) -> tuple[int, int] | None:
+    """`08:00` is 8 AM local time; `off` turns that review off."""
+    if raw.strip().lower() in {"", "off", "none"}:
+        return None
+    hour, _, minute = raw.strip().partition(":")
+    return int(hour), int(minute or 0)
 
 
 def _quiet_hours(raw: str) -> tuple[int, int] | None:

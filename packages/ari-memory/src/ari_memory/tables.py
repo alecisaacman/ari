@@ -273,3 +273,21 @@ class ReminderRow(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The matching reminder in Apple Reminders, when ARI put it there.
     apple_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class BuildProposalRow(Base):
+    """Something ARI proposed building for itself, and what Alec decided."""
+
+    __tablename__ = "build_proposals"
+    __table_args__ = (Index("ix_build_proposals_status", "status"),)
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    title: Mapped[str] = mapped_column(String(255))
+    why: Mapped[str] = mapped_column(Text)
+    brief: Mapped[str] = mapped_column(Text)
+    skill_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # proposed, approved, held, declined, or done
+    status: Mapped[str] = mapped_column(String(32), default="proposed")
+    source: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

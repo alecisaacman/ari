@@ -17,6 +17,7 @@ from .conversation import Conversation
 from .core.env import load_local_env
 from .core.paths import DB_PATH
 from .panel import HUB_CHANNEL, build_panel, recent_exchange
+from .self_review import write_with_model
 
 
 def _session_factory():  # type: ignore[no-untyped-def]
@@ -47,6 +48,7 @@ def handle_api_brain_message(args, db_path: Path = DB_PATH) -> int:  # type: ign
         session_factory=session_factory,
         action_desk=_action_desk(),
         apple=AppleDesk.connected(),
+        review_writer=write_with_model,
     ).say(args.text)
     with session_factory() as session:
         payload = {"reply": turn.reply, "conversation": recent_exchange(session, channel=HUB_CHANNEL)}
