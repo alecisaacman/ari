@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ARI's live install: the running ARI updates only when a finished, tested release is ready.
 
-The live ARI never runs from a development checkout. Each release is an exported copy of
+The live ARI never runs from a development checkout. Each release is a clone checked out at
 one commit, with its own Python environment and hub build, under
 ARI_HOME/runtime/releases/. ARI_HOME/runtime/current points at the live one; the
 iMessage poller, ARI's API, and the hub all run from there. Installing a release builds
@@ -87,12 +87,12 @@ def install_release(repo: Path, commit: str, *, run_tests: bool) -> int:
     subject = _run(["git", "-C", str(repo), "log", "-1", "--format=%s", sha]).strip()
     name = f"{time.strftime('%Y%m%d-%H%M%S')}-{sha[:7]}"
     release = RELEASES / name
-    release.mkdir(parents=True)
+    RELEASES.mkdir(parents=True, exist_ok=True)
     print(f"Building release {name}: {subject}")
     try:
-        # Only committed work goes live: the release is an export of one commit.
-        archive = subprocess.run(["git", "-C", str(repo), "archive", sha], check=True, capture_output=True).stdout
-        subprocess.run(["tar", "-x", "-C", str(release)], input=archive, check=True)
+        # Only committed work goes live: the release is a clone checked out at one commit.
+        _step("Source", ["git", "clone", "--quiet", "--no-checkout", str(repo), str(release)])
+        _step("Checkout", ["git", "-C", str(release), "checkout", "--quiet", "--detach", sha])
         uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
         _step("Python environment", [uv, "venv", "--quiet", "--python", "3.12", str(release / ".venv")])
         _step(
@@ -101,11 +101,7 @@ def install_release(repo: Path, commit: str, *, run_tests: bool) -> int:
         )
         tests = "skipped"
         if run_tests:
-            env = {
-                **os.environ,
-                "ARI_LIVE_SOURCE_ROOT": str(release),
-                "ARI_TEST_PROTECTED_STATE_PATHS": str(ENV_FILE),
-            }
+            env = {**os.environ, "ARI_TEST_PROTECTED_STATE_PATHS": str(ENV_FILE)}
             _step(
                 "Tests",
                 [str(release / ".venv" / "bin" / "python"), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-x"],

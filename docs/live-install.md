@@ -1,7 +1,7 @@
 # Live Install
 
 The ARI that answers my messages never runs from a development checkout. It runs from
-a release: an export of one commit, with its own Python environment and hub build.
+a release: a clone checked out at one commit, with its own Python environment and hub build.
 Work in progress can't reach it; an update goes live only when it's finished and its
 tests pass.
 
@@ -17,7 +17,7 @@ tests pass.
 
 | Command | What it does |
 |---|---|
-| `ari-live install` | Exports the commit, builds its environment and the hub, runs the tests, and only then switches `current`. A failed build leaves the live ARI unchanged. |
+| `ari-live install` | Checks out the commit, builds its environment and the hub, runs the tests, and only then switches `current`. A failed build leaves the live ARI unchanged. |
 | `ari-live rollback` | Switches `current` back to the previous release. |
 | `ari-live status` | Shows the live release and whether the poller, API, and hub are running. |
 | `ari-live setup` | Points ARI's launchd jobs at `current`. Run once, and again if the jobs change. |
