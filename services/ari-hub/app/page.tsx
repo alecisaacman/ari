@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { greeting } from "@/src/components/hub/format";
+import { Freshness, LiveHello, LiveRefresh } from "@/src/components/hub/live";
+import { AriPet } from "@/src/components/hub/pet";
 import { Inside } from "@/src/components/hub/inside";
 import { Today } from "@/src/components/hub/today";
 import { TouchIdButton } from "@/src/components/hub/touch-id";
@@ -61,14 +62,18 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const creator = session.role === "creator";
   const tab = (await searchParams).tab === "ari" ? "ari" : "today";
   const brain = await loadBrainPanel();
-  const now = new Date();
 
   return (
     <main className="hub">
       <header className="hub-top">
-        <div className="hub-hello">
-          <p className="hub-date">{now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</p>
-          <h1>{greeting(now)}, Alec</h1>
+        <div className="hub-hello-row">
+          {brain.panel ? (
+            <AriPet
+              paused={brain.panel.paused.paused}
+              needsYou={brain.panel.waitingForApproval.length + brain.panel.alerts.filter((alert) => alert.status === "pending").length}
+            />
+          ) : null}
+          <LiveHello name="Alec" />
         </div>
         <nav className="hub-tabs" aria-label="Hub">
           <Link href="/" className={tab === "today" ? "is-on" : ""} aria-current={tab === "today" ? "page" : undefined}>
@@ -82,9 +87,11 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           <span className={`hub-status ${brain.panel.paused.paused ? "is-paused" : ""}`}>
             <span aria-hidden="true" />
             {brain.panel.paused.paused ? "Paused" : "Running"}
+            <Freshness generatedAt={brain.panel.generatedAt} />
           </span>
         ) : null}
       </header>
+      <LiveRefresh />
 
       {!brain.panel ? (
         <section className="hub-card hub-down">

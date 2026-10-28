@@ -120,7 +120,7 @@ body:has(.login-shell) {
   font-weight: 500;
 }
 
-.hub-status > span {
+.hub-status > span:first-child {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -128,7 +128,7 @@ body:has(.login-shell) {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--hub-good) 20%, transparent);
 }
 
-.hub-status.is-paused > span {
+.hub-status.is-paused > span:first-child {
   background: var(--hub-warn);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--hub-warn) 20%, transparent);
 }
@@ -676,7 +676,7 @@ body:has(.login-shell) {
     gap: 14px;
   }
 
-  .hub-hello {
+  .hub-hello-row {
     grid-area: hello;
   }
 
@@ -715,4 +715,328 @@ body:has(.login-shell) {
 /* Newest at the bottom, scrolled into view first. */
 .hub-mini-thread {
   flex-direction: column-reverse;
+}
+
+/* Live */
+
+.hub-clock {
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--hub-line);
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-fresh {
+  color: var(--hub-faint);
+  font-size: 12px;
+}
+
+/* ARI's owl */
+
+.hub-hello-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hub-pet {
+  --pet-fill: #3e5c76;
+  --pet-wing: #2f4a61;
+  --pet-belly: #e9dfcf;
+  --pet-mark: #c9b99f;
+  --pet-eye: #ffffff;
+  --pet-pupil: #16202a;
+  --pet-beak: #e8a33d;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: var(--hub-surface);
+  box-shadow: var(--hub-shadow);
+  cursor: pointer;
+  flex: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .hub-pet {
+    --pet-fill: #5d7f9c;
+    --pet-wing: #4a6880;
+    --pet-belly: #efe6d6;
+    --pet-pupil: #0d1218;
+  }
+}
+
+.hub-pet:focus-visible {
+  outline: 2px solid var(--hub-accent);
+  outline-offset: 2px;
+}
+
+.hub-pet svg {
+  overflow: visible;
+}
+
+.pet-shadow {
+  fill: rgba(0, 0, 0, 0.08);
+}
+
+.pet-fill,
+.pet-tuft {
+  fill: var(--pet-fill);
+}
+
+.pet-wing {
+  fill: var(--pet-wing);
+}
+
+.pet-belly {
+  fill: var(--pet-belly);
+}
+
+.pet-chevron {
+  fill: none;
+  stroke: var(--pet-mark);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pet-eye {
+  fill: var(--pet-eye);
+}
+
+.pet-pupil {
+  fill: var(--pet-pupil);
+}
+
+.pet-glint {
+  fill: #fff;
+}
+
+.pet-lids rect {
+  fill: var(--pet-fill);
+}
+
+.pet-beak,
+.pet-foot {
+  fill: var(--pet-beak);
+}
+
+.pet-zzz text {
+  fill: var(--hub-muted);
+  font: 700 8px var(--hub-font);
+  opacity: 0;
+}
+
+.pet-badge {
+  fill: var(--hub-hot);
+  opacity: 0;
+}
+
+.pet-body,
+.pet-look,
+.pet-lids,
+.pet-wing {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.pet-body {
+  transform-origin: 50% 100%;
+  animation: pet-breathe 4s ease-in-out infinite;
+}
+
+.pet-lids {
+  transform-origin: 50% 0%;
+  transform: scaleY(0);
+  animation: pet-blink 5.5s infinite;
+}
+
+/* Thinking: eyes up and to the side, head tilting. */
+.hub-pet-thinking .pet-look {
+  transform: translate(1.6px, -2px);
+  transition: transform 0.3s ease;
+}
+
+.hub-pet-thinking .pet-body {
+  animation: pet-ponder 1.6s ease-in-out infinite;
+}
+
+/* Something needs Alec: perked up, wings ready, a red dot. */
+.hub-pet-alert .pet-body {
+  animation: pet-perk 2.4s ease-in-out infinite;
+}
+
+.hub-pet-alert .pet-wing-l {
+  animation: pet-flap-l 2.4s ease-in-out infinite;
+}
+
+.hub-pet-alert .pet-wing-r {
+  animation: pet-flap-r 2.4s ease-in-out infinite;
+}
+
+.hub-pet-alert .pet-badge {
+  opacity: 1;
+}
+
+/* Asleep: eyes closed, slow breathing, z's. */
+.hub-pet-asleep .pet-lids {
+  animation: none;
+  transform: scaleY(1);
+}
+
+.hub-pet-asleep .pet-body {
+  animation: pet-breathe 6s ease-in-out infinite;
+}
+
+.hub-pet-asleep .pet-zzz text {
+  animation: pet-zzz 3s ease-in-out infinite;
+}
+
+.hub-pet-asleep .pet-zzz text:nth-child(2) {
+  animation-delay: 1.5s;
+}
+
+.hub-pet:active .pet-body {
+  animation: pet-hop 0.35s ease-out;
+}
+
+.hub-pet-says {
+  position: absolute;
+  left: 4px;
+  top: calc(100% + 8px);
+  z-index: 5;
+  width: max-content;
+  max-width: 240px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border-top-left-radius: 4px;
+  background: var(--hub-ari);
+  color: var(--hub-ari-text);
+  font: 500 13px/1.35 var(--hub-font);
+  text-align: left;
+  box-shadow: var(--hub-shadow);
+  animation: pet-say 0.2s ease-out;
+}
+
+@keyframes pet-breathe {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(1.015, 0.985);
+  }
+}
+
+@keyframes pet-blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(0);
+  }
+  96% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes pet-ponder {
+  0%,
+  100% {
+    transform: rotate(-5deg);
+  }
+  50% {
+    transform: rotate(5deg);
+  }
+}
+
+@keyframes pet-perk {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  12% {
+    transform: translateY(-3px);
+  }
+  24% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes pet-flap-l {
+  0%,
+  30%,
+  100% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(18deg);
+  }
+}
+
+@keyframes pet-flap-r {
+  0%,
+  30%,
+  100% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(-18deg);
+  }
+}
+
+@keyframes pet-zzz {
+  0% {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes pet-hop {
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes pet-say {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-pet *,
+  .hub-pet {
+    animation: none !important;
+  }
+}
+
+@media (max-width: 860px) {
+  .hub-pet {
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+  }
+
+  .hub-pet svg {
+    width: 46px;
+    height: 46px;
+  }
+}
+
+.hub-status .hub-fresh {
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--hub-line);
 }
