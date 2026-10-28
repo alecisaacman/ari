@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ari_core.action_desk import ActionDesk
+from ari_core.apple import AppleDesk
 from ari_core.brain import respond_to_message
 from ari_core.conversation import Conversation, Respond
 from ari_core.core import paths as core_paths
@@ -38,11 +39,14 @@ def register_brain_routes(
     action_desk: Callable[[], ActionDesk | None] = default_action_desk,
     respond: Respond = respond_to_message,
     spine_db_path: Callable[[], Path] = lambda: core_paths.DB_PATH,
+    apple: Callable[[], AppleDesk | None] = AppleDesk.connected,
 ) -> None:
     @app.get("/brain/panel")
     def get_brain_panel() -> dict[str, Any]:
         with session_factory() as session:
-            return build_panel(session, spine_db_path=spine_db_path(), action_desk=action_desk())
+            return build_panel(
+                session, spine_db_path=spine_db_path(), action_desk=action_desk(), apple=apple()
+            )
 
     @app.post("/brain/messages")
     def post_brain_message(payload: BrainMessageRequest) -> dict[str, Any]:
@@ -50,7 +54,11 @@ def register_brain_routes(
         if not text:
             raise HTTPException(status_code=400, detail="text is required.")
         conversation = Conversation(
-            channel=HUB_CHANNEL, session_factory=session_factory, action_desk=action_desk(), respond=respond
+            channel=HUB_CHANNEL,
+            session_factory=session_factory,
+            action_desk=action_desk(),
+            respond=respond,
+            apple=apple(),
         )
         turn = conversation.say(text)
         with session_factory() as session:

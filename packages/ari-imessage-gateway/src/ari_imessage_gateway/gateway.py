@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ari_core.action_desk import ActionDesk
+from ari_core.apple import AppleDesk
 from ari_core.brain import respond_to_message, roll_history
 from ari_core.conversation import Conversation, Respond
 from ari_core.core.pause import get_pause_state
@@ -86,6 +87,7 @@ class ImessageGateway:
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         dry_run: bool = False,
         signal_engine: bool = True,
+        apple: AppleDesk | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
@@ -103,6 +105,7 @@ class ImessageGateway:
             respond=respond,
             now=now,
             dry_run=dry_run,
+            apple=apple,
         )
 
     def poll_once(self) -> PollReport:
@@ -220,6 +223,10 @@ class ImessageGateway:
         now = self.now()
         with self.session_factory() as session:
             for reminder in due_reminders(session, now=now):
+                if reminder.apple_id:
+                    # Apple Reminders delivered this one on his phone; a text would repeat it.
+                    mark_sent(session, reminder.id, sent_at=now)
+                    continue
                 body = f"Reminder: {reminder.text}"
                 if now - reminder.remind_at > LATE_AFTER:
                     body += f" (This was due at {_clock(reminder.remind_at)}; I wasn't running then.)"

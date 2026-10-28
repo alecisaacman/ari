@@ -9,6 +9,7 @@ and tests it first, then switches `current`; the previous release stays for roll
 
   ari-live install [--commit REF] [--skip-tests]   build, test, and switch to a release
   ari-live rollback                                 switch back to the previous release
+  ari-live connect-apple                           connect ARI to Reminders (GET DONE) and Calendar
   ari-live status                                   what's live, and what's running
   ari-live setup                                    point ARI's launchd jobs at `current`
   ari-live hub open | stop                          start the hub on demand and open it
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import json
 import os
 import secrets
@@ -46,6 +48,7 @@ API_LABEL = f"{PREFIX}.api"
 HUB_LABEL = f"{PREFIX}.hub"
 POLL_LABEL = f"{PREFIX}.imessage-poll"
 LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
+EVENTKIT = ARI_HOME / "bin" / "ari-eventkit"
 DEV_REPO = Path(__file__).resolve().parents[1]
 
 
@@ -57,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--repo", type=Path, default=DEV_REPO)
     install.add_argument("--skip-tests", action="store_true")
     commands.add_parser("rollback")
+    commands.add_parser("connect-apple", help="Connect ARI to Apple Reminders (GET DONE) and Calendar.")
     commands.add_parser("status")
     commands.add_parser("setup")
     hub = commands.add_parser("hub")
@@ -66,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "install":
         return install_release(args.repo, args.commit, run_tests=not args.skip_tests)
+    if args.command == "connect-apple":
+        return connect_apple()
     if args.command == "rollback":
         return rollback()
     if args.command == "status":
@@ -116,6 +122,8 @@ def install_release(repo: Path, commit: str, *, run_tests: bool) -> int:
             path_env = {**os.environ, "PATH": f"{Path(node).parent}:{os.environ.get('PATH', '')}"}
             _step("Hub packages", [npm, "ci", "--no-audit", "--no-fund", "--silent"], cwd=hub, env=path_env)
             _step("Hub build", [node, str(hub / "node_modules" / "next" / "dist" / "bin" / "next"), "build"], cwd=hub, env=path_env)
+        if (release / "tools" / "ari-eventkit").is_dir():
+            _build_eventkit(release / "tools" / "ari-eventkit")
         (release / "RELEASE.json").write_text(
             json.dumps(
                 {
@@ -245,6 +253,50 @@ def setup() -> int:
     return 0
 
 
+def _build_eventkit(source: Path) -> None:
+    """Build ARI's Reminders and Calendar helper into one place outside the releases.
+
+    macOS ties Reminders and Calendar access to the helper's exact build, so it is
+    rebuilt only when its source changes; otherwise every update would ask again.
+    """
+    files = [source / "main.swift", source / "Info.plist"]
+    digest = hashlib.sha256(b"".join(path.read_bytes() for path in files)).hexdigest()
+    stamp = EVENTKIT.with_suffix(".sha256")
+    if EVENTKIT.exists() and stamp.exists() and stamp.read_text().strip() == digest:
+        return
+    EVENTKIT.parent.mkdir(parents=True, exist_ok=True)
+    building = EVENTKIT.with_suffix(".building")
+    _step(
+        "Reminders and Calendar helper",
+        ["swiftc", "-O", str(files[0]), "-o", str(building),
+         "-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", str(files[1])],
+    )
+    _step("Sign helper", ["codesign", "--force", "-s", "-", "--identifier", "com.alecisaacman.ari.eventkit", str(building)])
+    building.replace(EVENTKIT)
+    stamp.write_text(digest + "\n")
+    print("  The helper changed: run `ari-live connect-apple` to allow Reminders and Calendar again.")
+
+
+def connect_apple() -> int:
+    """Ask macOS for Reminders and Calendar access, then switch ARI's connection on."""
+    if not EVENTKIT.exists():
+        print("Install a release first: ari-live install")
+        return 1
+    for command, payload in (("reminders", {"list": "GET DONE"}), ("events", {"start": "2026-01-01T00:00:00Z", "end": "2026-01-02T00:00:00Z"})):
+        result = subprocess.run([str(EVENTKIT), command], input=json.dumps(payload), capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Not connected: {result.stdout.strip() or result.stderr.strip()}")
+            print("Allow ARI in System Settings > Privacy & Security > Reminders and Calendars, then run this again.")
+            return 1
+    existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
+    if "ARI_APPLE_CONNECTED=1" not in existing.splitlines():
+        lines = [line for line in existing.splitlines() if not line.startswith("ARI_APPLE_CONNECTED=")]
+        ENV_FILE.write_text("\n".join([*lines, "ARI_APPLE_CONNECTED=1"]) + "\n", encoding="utf-8")
+        ENV_FILE.chmod(0o600)
+    print("ARI is connected to Reminders (GET DONE) and Calendar.")
+    return 0
+
+
 def _ensure_hub_secrets() -> None:
     """The hub's login password and session secret, kept in Alec's private env file."""
     existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
@@ -284,7 +336,12 @@ def hub_open() -> int:
     if not _listening(HUB_PORT):
         print(f"The hub didn't start; see {LOGS / 'serve-hub.log'}")
         return 1
-    webbrowser.open(f"http://localhost:{HUB_PORT}")
+    url = f"http://localhost:{HUB_PORT}"
+    # Chrome's app mode gives the hub its own window, with no tabs or address bar.
+    if Path("/Applications/Google Chrome.app").exists():
+        subprocess.run(["open", "-na", "Google Chrome", "--args", f"--app={url}"], check=False)
+    else:
+        webbrowser.open(url)
     return 0
 
 

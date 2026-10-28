@@ -35,6 +35,11 @@ export function InsideAri({ panel, error }: { panel: BrainPanel | null; error: s
   }
 
   const { today, week } = panel;
+  const apple = panel.apple ?? { connected: false, error: null };
+  const getDone = panel.getDone ?? [];
+  const calendarToday = panel.calendarToday ?? [];
+  const appleSource = (what: string) =>
+    !apple.connected ? `${what}, not connected` : apple.error ? `${what}: ${apple.error}` : what;
   const conversation = [...panel.conversations.imessage.map((line) => ({ ...line, via: "iMessage" }))];
 
   return (
@@ -107,11 +112,34 @@ export function InsideAri({ panel, error }: { panel: BrainPanel | null; error: s
           </ul>
         </Panel>
 
-        <Panel title="Reminders" source="reminders ARI will text" empty={!panel.reminders.length}>
+        <Panel title="Calendar today" source={appleSource("Apple Calendar")} empty={!calendarToday.length}>
+          <ul>
+            {calendarToday.map((event) => (
+              <li key={event.id}>
+                {event.all_day ? "All day" : new Date(event.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}:{" "}
+                <strong>{event.title}</strong> ({event.calendar})
+              </li>
+            ))}
+          </ul>
+        </Panel>
+
+        <Panel title="GET DONE" source={appleSource("Apple Reminders")} empty={!getDone.length}>
+          <ul>
+            {getDone.map((item) => (
+              <li key={item.id}>
+                {item.title}
+                {item.due ? ` (due ${when(item.due)})` : ""}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+
+        <Panel title="Reminders" source="timed reminders ARI set" empty={!panel.reminders.length}>
           <ul>
             {panel.reminders.map((reminder) => (
               <li key={reminder.id}>
                 {reminder.remind_at}: {reminder.text}
+                {reminder.delivered_by ? ` (via ${reminder.delivered_by})` : ""}
               </li>
             ))}
           </ul>

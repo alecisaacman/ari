@@ -271,3 +271,5 @@ class ReminderRow(Base):
     source: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The matching reminder in Apple Reminders, when ARI put it there.
+    apple_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

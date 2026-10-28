@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ari_core.action_desk import ActionDesk
+from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain_usage import month_spend
 from ari_core.core.pause import get_pause_state
 from ari_core.memory import get_conversation_state
@@ -31,15 +32,30 @@ RECENT_MESSAGES = 12
 RECENT_ALERTS = timedelta(days=2)
 
 
+def _apple_view(apple: AppleDesk | None, current: datetime) -> dict[str, Any]:
+    """GET DONE and today's calendar, as Apple has them. The panel still loads if Apple can't answer."""
+    if apple is None:
+        return {"apple": {"connected": False, "error": None}, "getDone": [], "calendarToday": []}
+    start = datetime.combine(current.astimezone().date(), datetime.min.time()).astimezone()
+    try:
+        get_done = apple.get_done()
+        events = apple.events(start, start + timedelta(days=1))
+    except AppleError as error:
+        return {"apple": {"connected": True, "error": str(error)}, "getDone": [], "calendarToday": []}
+    return {"apple": {"connected": True, "error": None}, "getDone": get_done, "calendarToday": events}
+
+
 def build_panel(
     session: Session,
     *,
     spine_db_path: Path,
     action_desk: ActionDesk | None,
     now: datetime | None = None,
+    apple: AppleDesk | None = None,
 ) -> dict[str, Any]:
     current = now or datetime.now(tz=UTC)
     today = current.astimezone().date()
+    apple_view = _apple_view(apple, current)
     daily = get_daily_state(session, day=today)
     weekly = get_weekly_state(session, state_date=today)
     return {
@@ -65,6 +81,7 @@ def build_panel(
             if row["status"] == "open"
         ],
         "reminders": [reminder.describe() for reminder in pending_reminders(session)],
+        **apple_view,
         "alerts": _recent_alerts(session, since=current - RECENT_ALERTS),
         "memories": [
             {"id": row["id"], "kind": row["type"], "title": row["title"], "content": row["content"]}

@@ -17,7 +17,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -27,6 +27,7 @@ from ari_memory import OpenLoopRepository
 from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
 from sqlalchemy.orm import Session
 
+from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain_usage import ModelCall
 from ari_core.core import paths as core_paths
 from ari_core.history import get_latest_run_details
@@ -141,9 +142,16 @@ add to a loop you already know about, use update_open_loop.
 unless he asks for them to be tracked as tasks too.
 - "Remind me at 3 to call Sam" or "remind me tomorrow morning about X" is a reminder: \
 call set_reminder with the local date-time (work it out from when his message was \
-sent; "morning" means 9 AM unless he has said otherwise). ARI texts him at that time. \
-Confirm the exact day and time back to him. list_reminders and cancel_reminder handle \
-"what reminders do I have" and "cancel that".
+sent; "morning" means 9 AM unless he has said otherwise). It goes on his GET DONE list \
+in Apple Reminders, which alerts his iPhone at that time (ARI texts it instead if \
+Reminders isn't connected). Confirm the exact day and time back to him. list_reminders \
+and cancel_reminder handle "what reminders do I have" and "cancel that".
+- GET DONE is Alec's to-do list in Apple Reminders, on his phone. "Add X to my list" or \
+"put X on GET DONE" goes there with add_to_get_done; get_done_list shows what's on it \
+and complete_get_done checks something off. ARI only ever writes to GET DONE.
+- His calendars are Apple Calendar. Check get_calendar before answering anything about \
+his schedule. add_calendar_event puts an event on a calendar (the ARI calendar unless \
+he names another); confirm the title, day, and time back to him.
 - If Alec says he applied to, submitted an application to, or sent his resume to a \
 company, file it with create_open_loop using kind="job_application" and the company \
 name in the company field — not kind="task". Filing it this way automatically \
@@ -324,7 +332,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "set_reminder",
-        "description": "Have ARI text Alec at a specific time.",
+        "description": "Remind Alec at a specific time, on his GET DONE list in Apple Reminders (or by text).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -347,6 +355,60 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"reminder_id": {"type": "string"}},
             "required": ["reminder_id"],
+        },
+    },
+    {
+        "name": "get_done_list",
+        "description": "What's still to do on Alec's GET DONE list in Apple Reminders.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "add_to_get_done",
+        "description": "Add an item to Alec's GET DONE list in Apple Reminders, which syncs to his iPhone.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "notes": {"type": "string"},
+                "due": {"type": "string", "description": "Optional local date-time, ISO 8601; it alerts him then."},
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "name": "complete_get_done",
+        "description": "Check off an item on GET DONE, by its id from get_done_list.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"reminder_id": {"type": "string"}},
+            "required": ["reminder_id"],
+        },
+    },
+    {
+        "name": "get_calendar",
+        "description": "Events on all of Alec's Apple calendars, starting on a date.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start_date": {"type": "string", "description": "YYYY-MM-DD; today if omitted."},
+                "days": {"type": "integer", "description": "How many days to cover, 1 to 31. Default 1."},
+            },
+        },
+    },
+    {
+        "name": "add_calendar_event",
+        "description": "Put an event on one of Alec's Apple calendars.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "start": {"type": "string", "description": "Local date-time, ISO 8601."},
+                "end": {"type": "string", "description": "Local date-time, ISO 8601; an hour after start if omitted."},
+                "calendar": {"type": "string", "description": "Calendar name; the ARI calendar if omitted."},
+                "location": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["title", "start"],
         },
     },
     {
@@ -487,6 +549,7 @@ def make_tool_dispatcher(
     propose_action: ProposeAction | None = None,
     spine_db_path: Path | None = None,
     dry_run: bool = False,
+    apple: AppleDesk | None = None,
 ) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
     """Build a tool dispatcher bound to a session factory and a save-for-later sink.
 
@@ -495,6 +558,9 @@ def make_tool_dispatcher(
     touching the database, the save_for_later sink, or the execution ledger.
     Read tools still hit the real database, since previewing requires seeing
     real state. Without a propose_action sink, proposals are refused.
+
+    GET DONE and calendar tools go through `apple`; without it they say Apple
+    Reminders and Calendar aren't connected.
 
     Open loops, daily and weekly state, and signals live in the session's
     database. Memory, notes, and hub tasks live in ARI's canonical spine
@@ -520,6 +586,7 @@ def make_tool_dispatcher(
         if dry_run and name in {
             "remember", "save_note", "set_daily_state", "set_weekly_plan",
             "update_open_loop", "set_reminder", "cancel_reminder",
+            "add_to_get_done", "complete_get_done", "add_calendar_event",
         }:
             return {"recorded": {"tool": name, "dry_run": True}}
 
@@ -528,6 +595,15 @@ def make_tool_dispatcher(
                 str(tool_input["kind"]), str(tool_input["title"]), str(tool_input["content"]), db_path=spine()
             )
             return {"remembered": {"id": row["id"], "kind": row["type"], "title": row["title"]}}
+        if name in APPLE_TOOL_NAMES:
+            if apple is None:
+                return {"error": "Apple Reminders and Calendar aren't connected to ARI."}
+            try:
+                return _apple_tool(apple, name, tool_input)
+            except AppleError as error:
+                return {"error": str(error)}
+            except ValueError as error:
+                return {"error": f"I couldn't read that date: {error}"}
         if name == "recall":
             return {"found": recall(str(tool_input.get("query") or ""), spine())}
         if name == "save_note":
@@ -649,6 +725,7 @@ def make_tool_dispatcher(
                         remind_at=parse_when(str(tool_input["at"])),
                         now=datetime.now(tz=UTC),
                         loop_id=UUID(tool_input["loop_id"]) if tool_input.get("loop_id") else None,
+                        apple=apple,
                     )
                 except ValueError as error:
                     return {"error": str(error)}
@@ -658,7 +735,7 @@ def make_tool_dispatcher(
                 return {"reminders": [reminder.describe() for reminder in pending_reminders(session)]}
 
             if name == "cancel_reminder":
-                cancelled = cancel_reminder(session, UUID(tool_input["reminder_id"]))
+                cancelled = cancel_reminder(session, UUID(tool_input["reminder_id"]), apple=apple)
                 if cancelled is None:
                     return {"error": "No pending reminder with that id."}
                 return {"cancelled": cancelled.describe()}
@@ -689,8 +766,47 @@ FAST_TOOL_NAMES = {
     "set_reminder",
     "list_reminders",
     "cancel_reminder",
+    "get_done_list",
+    "add_to_get_done",
+    "complete_get_done",
+    "get_calendar",
+    "add_calendar_event",
 }
 FAST_TOOLS: list[dict[str, Any]] = [tool for tool in TOOLS if tool["name"] in FAST_TOOL_NAMES] + [ESCALATE_TOOL]
+
+
+APPLE_TOOL_NAMES = {"get_done_list", "add_to_get_done", "complete_get_done", "get_calendar", "add_calendar_event"}
+CALENDAR_MAX_DAYS = 31
+
+
+def _apple_tool(apple: AppleDesk, name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    if name == "get_done_list":
+        return {"get_done": apple.get_done()}
+    if name == "add_to_get_done":
+        due = tool_input.get("due")
+        return {
+            "added": apple.add_reminder(
+                str(tool_input["title"]), due=parse_when(str(due)) if due else None, notes=tool_input.get("notes")
+            )
+        }
+    if name == "complete_get_done":
+        return {"completed": apple.complete_reminder(str(tool_input["reminder_id"]))}
+    if name == "get_calendar":
+        first = _resolve_date(tool_input.get("start_date"))
+        days = max(1, min(int(tool_input.get("days") or 1), CALENDAR_MAX_DAYS))
+        start = datetime.combine(first, datetime.min.time()).astimezone()
+        return {"events": apple.events(start, start + timedelta(days=days))}
+    end = tool_input.get("end")
+    return {
+        "added": apple.add_event(
+            str(tool_input["title"]),
+            start=parse_when(str(tool_input["start"])),
+            end=parse_when(str(end)) if end else None,
+            calendar=tool_input.get("calendar"),
+            notes=tool_input.get("notes"),
+            location=tool_input.get("location"),
+        )
+    }
 
 
 RECALL_LIMIT = 8

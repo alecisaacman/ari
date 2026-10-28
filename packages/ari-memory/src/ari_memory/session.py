@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sqlalchemy import Engine, make_url
+from sqlalchemy import Engine, MetaData, inspect, make_url, text
 from sqlalchemy import create_engine as sqlalchemy_create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -29,3 +29,24 @@ def _initialize_sqlite_file(engine: Engine) -> None:
     from ari_memory.tables import Base
 
     Base.metadata.create_all(engine)
+    _add_missing_nullable_columns(engine, Base.metadata)
+
+
+def _add_missing_nullable_columns(engine: Engine, metadata: MetaData) -> None:
+    """Give an existing SQLite table the nullable columns added to it since it was made.
+
+    create_all only makes missing tables. SQLite can add a nullable column in place,
+    so a new optional field reaches a live store without rebuilding it.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as connection:
+        for table in metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            present = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in present or not column.nullable:
+                    continue
+                kind = column.type.compile(dialect=engine.dialect)
+                connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {kind}'))

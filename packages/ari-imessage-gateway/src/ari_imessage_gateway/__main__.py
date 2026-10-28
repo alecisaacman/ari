@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from ari_core.action_desk import ActionDesk
+from ari_core.apple import AppleDesk
 from ari_core.core.env import ari_home, load_local_env
 from ari_core.core.pause import get_pause_state
 from ari_memory import DatabaseSettings, create_engine, create_session_factory
@@ -71,7 +72,11 @@ def _gateway(settings: ImessageSettings, *, dry_run: bool) -> ImessageGateway:
     except ValueError:
         desk = None  # no permitted workspace: the brain can't propose actions
     return ImessageGateway(
-        settings=settings, session_factory=session_factory, action_desk=desk, dry_run=dry_run
+        settings=settings,
+        session_factory=session_factory,
+        action_desk=desk,
+        dry_run=dry_run,
+        apple=AppleDesk.connected(),
     )
 
 

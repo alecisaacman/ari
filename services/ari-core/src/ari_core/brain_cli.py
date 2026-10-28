@@ -12,6 +12,7 @@ from pathlib import Path
 from ari_memory import DatabaseSettings, create_engine, create_session_factory
 
 from .action_desk import ActionDesk
+from .apple import AppleDesk
 from .conversation import Conversation
 from .core.env import load_local_env
 from .core.paths import DB_PATH
@@ -30,8 +31,9 @@ def _action_desk() -> ActionDesk | None:
 
 
 def handle_api_brain_panel(args, db_path: Path = DB_PATH) -> int:  # type: ignore[no-untyped-def]
+    load_local_env()
     with _session_factory()() as session:
-        panel = build_panel(session, spine_db_path=db_path, action_desk=_action_desk())
+        panel = build_panel(session, spine_db_path=db_path, action_desk=_action_desk(), apple=AppleDesk.connected())
     print(json.dumps(panel) if getattr(args, "as_json", False) else json.dumps(panel, indent=2))
     return 0
 
@@ -40,9 +42,12 @@ def handle_api_brain_message(args, db_path: Path = DB_PATH) -> int:  # type: ign
     del db_path
     load_local_env()
     session_factory = _session_factory()
-    turn = Conversation(channel=HUB_CHANNEL, session_factory=session_factory, action_desk=_action_desk()).say(
-        args.text
-    )
+    turn = Conversation(
+        channel=HUB_CHANNEL,
+        session_factory=session_factory,
+        action_desk=_action_desk(),
+        apple=AppleDesk.connected(),
+    ).say(args.text)
     with session_factory() as session:
         payload = {"reply": turn.reply, "conversation": recent_exchange(session, channel=HUB_CHANNEL)}
     print(json.dumps(payload) if getattr(args, "as_json", False) else (turn.reply or ""))

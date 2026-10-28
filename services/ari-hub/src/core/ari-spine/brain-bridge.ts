@@ -25,7 +25,17 @@ export type BrainPanel = {
     lastTouchedAt: string | null;
   }>;
   hubTasks: Array<{ id: number; title: string; notes: string }>;
-  reminders: Array<{ id: string; text: string; remind_at: string; status: string; loop_id: string | null }>;
+  reminders: Array<{
+    id: string;
+    text: string;
+    remind_at: string;
+    status: string;
+    loop_id: string | null;
+    delivered_by?: string;
+  }>;
+  apple?: { connected: boolean; error: string | null };
+  getDone?: Array<{ id: string; title: string; due?: string; notes?: string }>;
+  calendarToday?: Array<{ id: string; title: string; calendar: string; start: string; end: string; all_day: boolean; location?: string }>;
   alerts: Array<{
     id: string;
     day: string;

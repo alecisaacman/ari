@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.alecisaacman.ari.eventkit</string>
+	<key>CFBundleName</key>
+	<string>ARI</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>ARI adds and reads reminders on your GET DONE list.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>ARI reads your calendar and adds events you ask for.</string>
+</dict>
+</plist>

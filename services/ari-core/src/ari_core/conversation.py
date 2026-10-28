@@ -27,6 +27,7 @@ import anthropic
 from sqlalchemy.orm import Session, sessionmaker
 
 from ari_core.action_desk import ActionDesk, PendingProposal, describe_result
+from ari_core.apple import AppleDesk
 from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message, roll_history
 from ari_core.brain_usage import (
     ModelCall,
@@ -96,8 +97,10 @@ class Conversation:
         respond: Respond = respond_to_message,
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         dry_run: bool = False,
+        apple: AppleDesk | None = None,
     ) -> None:
         self.channel = channel
+        self.apple = apple
         self.session_factory = session_factory
         self.action_desk = action_desk
         self.save_for_later = save_for_later
@@ -177,6 +180,7 @@ class Conversation:
             save_for_later=self.save_for_later,
             propose_action=self._propose if self.action_desk else None,
             dry_run=self.dry_run,
+            apple=self.apple,
         )
         try:
             response = self.respond(

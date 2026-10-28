@@ -761,3 +761,21 @@ def test_reminders_wait_while_ari_is_paused(settings, session_factory) -> None:
 
     assert gateway.poll_once().reminders_sent == 0
     assert messages.sent == []
+
+
+def test_reminder_in_apple_reminders_is_not_texted_again(settings, session_factory) -> None:
+    from ari_core.apple import AppleDesk
+    from ari_core.reminders import pending_reminders, set_reminder
+
+    now = datetime(2026, 10, 28, 15, 0, tzinfo=UTC)
+    apple = AppleDesk(run=lambda command, payload: {"reminder": {"id": "apple-1", "title": payload["title"]}})
+    with session_factory() as session:
+        set_reminder(session, text="Call Sam.", remind_at=now + timedelta(minutes=1), now=now, apple=apple)
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now + timedelta(minutes=2))
+    seed(gateway, settings)
+
+    assert gateway.poll_once().reminders_sent == 0
+    assert messages.sent == []
+    with session_factory() as session:
+        assert pending_reminders(session) == []

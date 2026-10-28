@@ -308,3 +308,18 @@ def test_reminders_are_set_listed_and_cancelled(tmp_path) -> None:
     assert dispatch("list_reminders", {})["reminders"] == []
     past = (datetime.now() - timedelta(hours=1)).isoformat()
     assert "error" in dispatch("set_reminder", {"text": "Too late", "at": past})
+
+
+def test_a_live_sqlite_store_gains_new_optional_columns(tmp_path) -> None:
+    import sqlite3
+
+    from ari_memory import create_engine
+
+    db = tmp_path / "ari.db"
+    create_engine(f"sqlite+pysqlite:///{db}")
+    with sqlite3.connect(db) as connection:
+        connection.execute("ALTER TABLE reminders DROP COLUMN apple_id")
+    create_engine(f"sqlite+pysqlite:///{db}")
+    with sqlite3.connect(db) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(reminders)")}
+    assert "apple_id" in columns
