@@ -82,21 +82,25 @@ def _poll(settings: ImessageSettings, *, dry_run: bool, loop: int | None) -> int
 
 def _doctor(settings: ImessageSettings) -> int:
     checks: list[tuple[str, bool, str]] = []
-    checks.append(("self-thread configured", bool(settings.reply_to), "set ARI_IMESSAGE_TO"))
+    checks.append(
+        ("self-thread configured", bool(settings.reply_to), "set" if settings.reply_to else "set ARI_IMESSAGE_TO")
+    )
     try:
         read_dump(settings.dump_path, stale_after=settings.stale_after)
         checks.append(("dump job writing", True, str(settings.dump_path)))
     except DumpUnavailable as error:
         checks.append(("dump job writing", False, f"{error} Load the dump job and give /usr/bin/sqlite3 Full Disk Access."))
     credentials = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
-    checks.append(("brain credentials", credentials, "set ANTHROPIC_API_KEY, or run `ant auth login`"))
+    checks.append(
+        ("brain credentials", credentials, "found" if credentials else "set ANTHROPIC_API_KEY in ARI_HOME/ari.env")
+    )
     try:
         ActionDesk()
         checks.append(("workspace for actions", True, os.environ.get("ARI_EXECUTION_ROOT", "")))
     except ValueError as error:
         checks.append(("workspace for actions", False, f"optional: {error}"))
     paused = get_pause_state()["paused"]
-    checks.append(("not paused", not paused, "text \"ARI resume\" or run `ari resume`"))
+    checks.append(("not paused", not paused, "text \"ARI resume\" or run `ari resume`" if paused else "running"))
     checks.append(("state store", True, DatabaseSettings().database_url))
     for name, ok, detail in checks:
         print(f"{'ok  ' if ok else 'MISS'} {name}: {detail}")
