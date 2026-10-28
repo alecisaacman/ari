@@ -29,7 +29,13 @@ from typing import Any
 
 from ari_core.action_desk import ActionDesk, PendingProposal, describe_result
 from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message, roll_history
-from ari_core.brain_usage import ModelCall, month_spend, record_model_call, set_monthly_budget_usd
+from ari_core.brain_usage import (
+    ModelCall,
+    month_spend,
+    record_model_call,
+    requests_since,
+    set_monthly_budget_usd,
+)
 from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
@@ -46,6 +52,10 @@ CHANNEL = "imessage"
 SURFACE = "imessage"
 ECHO_WINDOW = 12
 ALERT_LOOKBACK = timedelta(hours=24)
+# Circuit breaker: a burst of model requests this large is a loop, not Alec typing.
+# Each message takes one to four requests, so this allows a fast exchange.
+LOOP_WINDOW = timedelta(minutes=10)
+LOOP_MAX_REQUESTS = 30
 NOTIFY_LEVELS = {
     AlertEscalationLevel.ELEVATED.value,
     AlertEscalationLevel.INTERRUPTIVE.value,
@@ -133,7 +143,7 @@ class ImessageGateway:
 
     def _handle(self, row: DumpRow, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
         text = row.text
-        if row.is_tapback or not text or text in _recent_replies(history):
+        if row.is_tapback or not text or _normalize(text) in _recent_replies(history):
             # Reactions are not messages, and in a self-thread ARI's own replies
             # come back looking like Alec's; they are recognized by their text.
             return history
@@ -170,6 +180,19 @@ class ImessageGateway:
 
         with self.session_factory() as session:
             spend = month_spend(session)
+            recent_requests = requests_since(session, self.now() - LOOP_WINDOW)
+        if recent_requests >= LOOP_MAX_REQUESTS:
+            # Whatever the cause, a runaway exchange stops here instead of burning tokens.
+            if not self.dry_run:
+                pause(f"ARI paused itself: {recent_requests} model requests in 10 minutes looks like a loop.")
+            return self._reply(
+                reply_to,
+                history,
+                text,
+                f"I paused myself: {recent_requests} model requests in the last 10 minutes looks like a loop. "
+                "Text \"ARI resume\" when you want me back.",
+                report,
+            )
         if spend.exhausted:
             return self._reply(
                 reply_to,
@@ -345,10 +368,17 @@ def _recent_replies(history: list[dict[str, Any]]) -> set[str]:
             if isinstance(block, dict) and block.get("type") == "text"
         ]
         # A reply is sent as all of a turn's text blocks joined, so match both.
-        texts.extend([text.strip() for text in blocks] + ["".join(blocks).strip()])
+        texts.extend([_normalize(text) for text in blocks] + [_normalize("".join(blocks))])
         if len(texts) >= ECHO_WINDOW:
             break
     return {text for text in texts if text}
+
+
+def _normalize(text: str) -> str:
+    """Compare messages as Messages may store them: whitespace runs and quote styles differ."""
+    for curly, straight in (("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'), ("\u201d", '"')):
+        text = text.replace(curly, straight)
+    return " ".join(text.split())
 
 
 def _utc(value: datetime) -> datetime:

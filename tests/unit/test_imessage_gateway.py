@@ -466,3 +466,72 @@ def test_a_failed_send_is_reported_not_swallowed(settings, session_factory) -> N
 
     assert report.status == "send_failed"
     assert "-1743" in report.detail
+
+
+def attributed_body(text: str) -> bytes:
+    """An attributedBody blob laid out the way Messages stores one (typedstream)."""
+    raw = text.encode("utf-8")
+    if len(raw) < 0x80:
+        length = bytes([len(raw)])
+    else:
+        length = b"\x81" + len(raw).to_bytes(2, "little")
+    return (
+        b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84\x12NSAttributedString\x00\x84\x84"
+        b"\x08NSObject\x00\x85\x92\x84\x84\x84\x08NSString\x01\x95\x84\x01+"
+        + length
+        + raw
+        + b"\x86\x84\x02iI\x01\x10\x92\x84\x84\x84\x0cNSDictionary\x00"
+    )
+
+
+def test_text_is_read_by_its_stored_length_not_guessed() -> None:
+    from ari_imessage_gateway.dump import extract_text
+
+    # 106 bytes long: the length byte is "j", which a guess used to keep.
+    reply = "Nothing on your plate right now. No open loops, and no daily state recorded for today, Tuesday Oct 27."
+    assert extract_text(None, attributed_body(reply)) == reply
+    long_reply = "x" * 188
+    assert extract_text(None, attributed_body(long_reply)) == long_reply
+    assert extract_text(None, attributed_body("What’s on my plate \U0001F37D")) == "What’s on my plate \U0001F37D"
+
+
+def test_attachment_only_message_has_no_text() -> None:
+    from ari_imessage_gateway.dump import extract_text
+
+    assert extract_text(None, attributed_body("￼")) is None
+    assert extract_text(None, b"\x04\x0bstreamtyped garbage kIMBaseWritingDirectionAttributeName") is None
+
+
+def test_reply_echoed_back_in_binary_form_is_not_answered(settings, session_factory) -> None:
+    # Tonight's loop: ARI's reply came back with no text column, only attributedBody.
+    brain = FakeBrain(reply="Nothing on your plate right now. No open loops, and no daily state for today.")
+    gateway = make_gateway(settings, session_factory, brain=brain)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "What’s on my plate"))
+    gateway.poll_once()
+    echo = attributed_body("Nothing on your plate right now.  No open loops, and no daily state for today.")
+    lines = settings.dump_path.read_text().splitlines()
+    lines.append(f"3||{echo.hex()}|0|{SELF}|0")
+    lines.append(f"4||{attributed_body(chr(0xFFFC)).hex()}|0|{SELF}|0")
+    settings.dump_path.write_text("\n".join(lines) + "\n")
+
+    assert gateway.poll_once().handled == 0
+    assert brain.texts == ["What’s on my plate"]
+
+
+def test_circuit_breaker_pauses_ari_instead_of_looping(settings, session_factory) -> None:
+    from ari_imessage_gateway.gateway import LOOP_MAX_REQUESTS
+
+    for _ in range(LOOP_MAX_REQUESTS):
+        spend(session_factory, "claude-haiku-5-5", 10)
+    brain = FakeBrain()
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=brain, messages=messages)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "something that would loop"))
+
+    gateway.poll_once()
+
+    assert brain.texts == []
+    assert pause_module.get_pause_state()["paused"] is True
+    assert "paused myself" in messages.sent[-1][1]

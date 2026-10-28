@@ -157,6 +157,15 @@ def month_spend(session: Session, *, now: datetime | None = None) -> MonthSpend:
     )
 
 
+def requests_since(session: Session, since: datetime) -> int:
+    """Model requests recorded since `since` (UTC), for loop detection."""
+    bind = session.get_bind()
+    bound = since.astimezone(UTC)
+    if bind.dialect.name == "sqlite":
+        bound = bound.replace(tzinfo=None)
+    return int(session.scalar(select(func.count(BrainUsageRow.id)).where(BrainUsageRow.occurred_at >= bound)) or 0)
+
+
 def _budget_file() -> Path:
     return core_paths.ARI_ROOT / "state" / "brain-budget.json"
 

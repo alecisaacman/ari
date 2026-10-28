@@ -7,36 +7,12 @@ messages of the self-thread to a plain file; this module only reads that file.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 FIELD_SEPARATOR = "|"
-PRINTABLE_RUN_RE = re.compile(r"[\x20-\x7e]{4,}")
-LEADING_JUNK_RE = re.compile(r"^[^A-Za-z0-9]+")
 OBJECT_REPLACEMENT_CHAR = "￼"
-
-# Framework noise that shows up as printable runs inside an attributedBody
-# NSKeyedArchiver blob; not part of the message text.
-ATTRIBUTED_BODY_NOISE = frozenset(
-    {
-        "streamtyped",
-        "NSAttributedString",
-        "NSObject",
-        "NSString",
-        "NSMutableString",
-        "NSMutableAttributedString",
-        "NSDictionary",
-        "NSMutableDictionary",
-        "NSArray",
-        "NSNumber",
-        "NSValue",
-        "__kIMMessagePartAttributeName",
-        "__kIMDataDetectedAttributeName",
-        "__kIMLinkAttributeName",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,11 +63,35 @@ def extract_text(text: str | None, attributed_body: bytes | None) -> str | None:
 
 
 def _from_attributed_body(blob: bytes) -> str | None:
-    # attributedBody is an NSKeyedArchiver blob, used for links, mentions, and on
-    # recent macOS often for plain text. The longest printable run that is not
-    # framework noise is, in practice, the message body.
-    decoded = blob.decode("latin-1")
-    candidates = [run for run in PRINTABLE_RUN_RE.findall(decoded) if run not in ATTRIBUTED_BODY_NOISE]
-    if not candidates:
+    """Read the message string out of an attributedBody typedstream blob.
+
+    The string follows the NSString class reference and a "+" marker, prefixed by
+    its byte length: one byte below 0x80, or 0x81 then a 16-bit little-endian
+    length, or 0x82 then a 32-bit one. Reading by that length matters: a guess
+    that keeps the length byte turns "Nothing ..." (length 106) into "jNothing
+    ...", which no longer matches ARI's own reply and gets answered. Anything
+    that doesn't parse is treated as having no text.
+    """
+    marker = blob.find(b"NSString")
+    if marker < 0:
         return None
-    return LEADING_JUNK_RE.sub("", max(candidates, key=len)).strip() or None
+    plus = blob.find(b"+", marker + len(b"NSString"), marker + len(b"NSString") + 8)
+    if plus < 0 or plus + 1 >= len(blob):
+        return None
+    position = plus + 1
+    prefix = blob[position]
+    if prefix < 0x80:
+        length, position = prefix, position + 1
+    elif prefix == 0x81:
+        length, position = int.from_bytes(blob[position + 1 : position + 3], "little"), position + 3
+    elif prefix == 0x82:
+        length, position = int.from_bytes(blob[position + 1 : position + 5], "little"), position + 5
+    else:
+        return None
+    raw = blob[position : position + length]
+    if len(raw) != length:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
