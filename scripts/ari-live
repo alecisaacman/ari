@@ -234,7 +234,13 @@ def setup() -> int:
             continue
         subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], check=False, capture_output=True)
         path.write_bytes(payload)
-        subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], check=True)
+        # launchd finishes an unload asynchronously; loading too soon fails with error 5.
+        for _ in range(20):
+            if subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], capture_output=True).returncode == 0:
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(f"launchd wouldn't load {path}")
         print(f"Installed {label}")
     return 0
 
