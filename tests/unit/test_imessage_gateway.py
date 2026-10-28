@@ -75,6 +75,8 @@ def isolated_pause(monkeypatch: pytest.MonkeyPatch, ledger_dir: Path) -> None:
 def settings(ledger_dir: Path) -> ImessageSettings:
     state_dir = ledger_dir / "imessage"
     state_dir.mkdir()
+    # The signal engine stays off unless a test turns it on.
+    (state_dir / "last-orchestration").write_text("2999-01-01T00:00:00+00:00")
     return ImessageSettings(
         self_identifiers=(SELF,),
         reply_to=SELF,
@@ -595,3 +597,80 @@ def test_own_messages_are_never_answered_even_with_an_empty_conversation(setting
     write_dump(settings, (1, "old"), (2, "ARI stop"), (3, messages.sent[-1][1]))
 
     assert gateway.poll_once().handled == 0
+
+
+def test_signal_engine_runs_on_schedule_and_asks_for_a_check_in(settings, session_factory) -> None:
+    (settings.state_dir / "last-orchestration").unlink()
+    now = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now)
+    seed(gateway, settings)
+
+    report = gateway.poll_once()
+
+    assert report.signals_raised >= 1
+    assert messages.sent == [
+        (SELF, "You haven't checked in today. What are your priorities, and what would make today a win?")
+    ]
+    # Within the half hour it doesn't run again, and the alert is never repeated.
+    assert gateway.poll_once().signals_raised == 0
+    assert len(messages.sent) == 1
+
+
+def test_signal_engine_waits_while_ari_is_paused(settings, session_factory) -> None:
+    (settings.state_dir / "last-orchestration").unlink()
+    pause_module.pause("test")
+    gateway = make_gateway(settings, session_factory)
+    seed(gateway, settings)
+
+    assert gateway.poll_once().signals_raised == 0
+    assert not (settings.state_dir / "last-orchestration").exists()
+
+
+def test_alert_about_a_day_that_is_over_is_not_sent(settings, session_factory) -> None:
+    now = datetime(2026, 10, 28, 15, 0, tzinfo=UTC)
+    with session_factory() as session:
+        session.add(
+            AlertRow(
+                id=uuid4(),
+                state_date=(now - timedelta(days=1)).astimezone().date(),
+                fingerprint="yesterday",
+                status="pending",
+                channel="phone",
+                escalation_level="elevated",
+                title="No daily check-in recorded",
+                message="",
+                reason="",
+                source_signal_ids=[],
+                created_at=now - timedelta(hours=8),
+            )
+        )
+        session.commit()
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now)
+    seed(gateway, settings)
+
+    assert gateway.poll_once().alerts_sent == 0
+    assert messages.sent == []
+
+
+def test_out_of_credits_is_explained_once_per_message_not_retried(settings, session_factory) -> None:
+    import anthropic
+
+    calls: list[str] = []
+
+    def broke(*, text, **_: Any) -> BrainResponse:
+        calls.append(text)
+        error = anthropic.BadRequestError.__new__(anthropic.BadRequestError)
+        Exception.__init__(error, "Your credit balance is too low to access the Anthropic API.")
+        raise error
+
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=broke, messages=messages)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "what's on my plate"))
+
+    assert gateway.poll_once().status == "ok"
+    assert gateway.poll_once().handled == 0  # not retried
+    assert calls == ["what's on my plate"]
+    assert "credits have run out" in messages.sent[-1][1]

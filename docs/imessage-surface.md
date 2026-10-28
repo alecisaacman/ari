@@ -11,6 +11,14 @@ reasons on its own, and neither does any other surface.
   when that changes the answer.
 - **Capture.** Tasks, commitments, job applications (which start company
   research), and links to save for later go straight into ARI's records.
+- **Remember.** Lasting facts about Alec, his people, and his work go into ARI's
+  canonical memory (`remember`), longer material into notes (`save_note`), and
+  the brain checks them (`recall`) before answering about a person or something
+  said before. Recall matches word by word and ranks by how many words match.
+- **Check in.** "Today I want to finish X, stress is a 6" is recorded as the day's
+  priorities, win condition, and stress (`set_daily_state`), and the week's plan
+  likewise (`set_weekly_plan`). Open loops include tasks created from the hub, so
+  there is one view of what is on Alec's plate.
 - **Act, with approval.** For anything outside ARI's own records (writing or
   patching a file in the workspace, or running tests), the brain proposes one
   action. ARI asks Alec. "yes" approves it, "no" cancels it, and "yes 2" picks
@@ -18,6 +26,14 @@ reasons on its own, and neither does any other surface.
   model. The approved action runs once through the canonical execution gateway
   ([Runtime Execution Convergence](execution/runtime-convergence.md)), and ARI
   reports what happened.
+- **Be noticed.** While ARI is running and not paused, the poller runs ARI's
+  signal engine every 30 minutes. It is deterministic and costs nothing. It looks
+  for open loops piling up, high-priority loops going stale, the week drifting
+  from its outcomes, elevated stress, and no check-in for the day. Its alerts are
+  sent as below; for the text, the gateway phrases them for a person (the
+  engine's own wording stays in ARI's records), and only alerts about the current
+  day are sent. Unattended runs may auto-execute only reads (`read_file`, `ls`,
+  `cat`) in the workspace; anything else needs approval and does not run.
 - **Hear from ARI.** Elevated, interruptive, and urgent alerts from the last day
   are texted once, with the reason ARI raised them. Quiet hours (default 22:00
   to 07:00) hold back everything but urgent alerts.
@@ -132,6 +148,11 @@ ARI cannot do these steps itself. They grant permissions or hold secrets.
 
 To preview without sending or saving anything, run `ari-imessage poll --dry-run`.
 It does call the model.
+
+If Anthropic credits run out or the API key is rejected, ARI answers each message
+with a plain explanation, written by its code with no model call, and does not
+retry. A reply more than three minutes late is preceded by a notice of when the
+message was sent and when ARI was last running.
 
 ## Limits
 

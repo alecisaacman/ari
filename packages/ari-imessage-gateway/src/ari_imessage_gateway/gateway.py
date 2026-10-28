@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import anthropic
 from ari_core.action_desk import ActionDesk, PendingProposal, describe_result
 from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message, roll_history
 from ari_core.brain_usage import (
@@ -39,9 +40,10 @@ from ari_core.brain_usage import (
 )
 from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
+from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orchestration
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
 from ari_memory.tables import AlertRow
-from ari_state import AlertEscalationLevel, AlertStatus
+from ari_state import AlertChannel, AlertEscalationLevel, AlertStatus
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -59,6 +61,8 @@ LOOP_WINDOW = timedelta(minutes=10)
 # A message answered this long after it was sent gets an honest explanation first.
 LATE_AFTER = timedelta(minutes=3)
 SENT_LOG_SIZE = 50
+# ARI's signal engine is deterministic and free; it runs this often while ARI is awake.
+ORCHESTRATE_EVERY = timedelta(minutes=30)
 LOOP_MAX_REQUESTS = 30
 NOTIFY_LEVELS = {
     AlertEscalationLevel.ELEVATED.value,
@@ -83,6 +87,7 @@ class PollReport:
     handled: int = 0
     replies: list[str] = field(default_factory=list)
     alerts_sent: int = 0
+    signals_raised: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +96,7 @@ class PollReport:
             "handled": self.handled,
             "replies": self.replies,
             "alertsSent": self.alerts_sent,
+            "signalsRaised": self.signals_raised,
         }
 
 
@@ -145,9 +151,37 @@ class ImessageGateway:
                     return report
                 cursor = row.rowid
                 self._save(cursor, history)
+            self._maybe_orchestrate(report)
             history = self._send_alerts(history, report)
             self._save(cursor, history)
         return report
+
+    def _maybe_orchestrate(self, report: PollReport) -> None:
+        """Run ARI's signal engine on schedule, so ARI notices things without being asked."""
+        if self.dry_run or get_pause_state()["paused"]:
+            return
+        marker = self.settings.state_dir / "last-orchestration"
+        now = self.now()
+        try:
+            last = datetime.fromisoformat(marker.read_text().strip())
+        except (OSError, ValueError):
+            last = None
+        if last is not None and now - last < ORCHESTRATE_EVERY:
+            return
+        marker.write_text(now.isoformat())
+        try:
+            with self.session_factory() as session:
+                result = run_signal_orchestration(
+                    session,
+                    RunSignalOrchestrationInput(
+                        state_date=now.astimezone().date(),
+                        detected_at=now,
+                        alert_channel=AlertChannel.PHONE,
+                    ),
+                )
+            report.signals_raised = len(result.signals)
+        except Exception as error:  # noqa: BLE001 - a failed run is reported, never fatal to messaging
+            report.detail = f"Signal engine failed: {type(error).__name__}: {error}"
 
     def _handle(self, row: DumpRow, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
         text = row.text
@@ -218,14 +252,22 @@ class ImessageGateway:
             propose_action=self._propose if self.action_desk else None,
             dry_run=self.dry_run,
         )
-        response = self.respond(
-            text=text,
+        try:
+            response = self.respond(
+                text=text,
             history=history,
             dispatch_tool=dispatch,
             get_mcp_request_args=self._mcp_request_args,
-            log_invocation=self._log_invocation,
-            record_call=self._record_call,
-        )
+                log_invocation=self._log_invocation,
+                record_call=self._record_call,
+            )
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+            return self._reply(reply_to, history, text, KEY_REJECTED, report)
+        except anthropic.BadRequestError as error:
+            if "credit balance" not in str(error).lower():
+                raise
+            # Retrying can't help until Alec tops up, so say so instead of going silent.
+            return self._reply(reply_to, history, text, OUT_OF_CREDITS, report)
         if response.reply:
             self._send(reply_to, response.reply, report)
         return response.messages
@@ -267,9 +309,12 @@ class ImessageGateway:
             for alert in sorted(rows, key=lambda row: _utc(row.created_at)):
                 if now - _utc(alert.created_at) > ALERT_LOOKBACK:
                     continue
+                if alert.state_date is not None and alert.state_date != now.astimezone().date():
+                    # An alert about a day that is over is not worth interrupting Alec for.
+                    continue
                 if alert.escalation_level != AlertEscalationLevel.URGENT.value and self._quiet(now):
                     continue
-                body = f"{alert.title}. {alert.reason or alert.message}".strip()
+                body = _phone_text(alert)
                 if self._send(self.settings.reply_to or "", body, report) and not self.dry_run:
                     alert.sent_at = now
                     alert.status = AlertStatus.SENT.value
@@ -434,6 +479,26 @@ def _normalize(text: str) -> str:
     for curly, straight in (("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'), ("\u201d", '"')):
         text = text.replace(curly, straight)
     return " ".join(text.split())
+
+
+OUT_OF_CREDITS = (
+    "I can't think right now: your Anthropic API credits have run out. Top up at "
+    "console.anthropic.com, then text me again. Nothing you sent was lost."
+)
+KEY_REJECTED = (
+    "I can't think right now: Anthropic rejected my API key. Check ANTHROPIC_API_KEY in "
+    "~/ARI/ari.env, then text me again."
+)
+
+# How ARI says an alert in a text. The engine's wording stays in ARI's records for
+# explanation; a reply like "why?" lets the brain read it.
+PHONE_TEXT = {
+    "No daily check-in recorded": "You haven't checked in today. What are your priorities, and what would make today a win?",
+}
+
+
+def _phone_text(alert: AlertRow) -> str:
+    return PHONE_TEXT.get(alert.title) or f"{alert.title}. {alert.message or alert.reason}".strip()
 
 
 def _clock(moment: datetime) -> str:

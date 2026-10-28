@@ -27,6 +27,7 @@ from typing import Any
 
 from ari_core.brain import DEEP_MODEL, make_client, make_tool_dispatcher, respond_to_message
 from ari_core.brain_usage import ModelCall
+from ari_core.modules.memory.db import remember_ari_memory
 from ari_core.state import (
     CreateOpenLoopInput,
     DailyStateUpdate,
@@ -126,8 +127,16 @@ def run_case(
         create_engine(f"sqlite+pysqlite:///{workdir / f'{case['id']}-{config}.db'}")
     )
     seed_state(session_factory, datetime.now().date())
+    # Memory and notes too: a temporary spine, never ARI's live one.
+    spine = workdir / f"{case['id']}-{config}-spine.db"
+    remember_ari_memory(
+        "person", "Sam (internship contact)",
+        "Met at the econ career fair. Works on Ramp's analyst team and said they hire in January.",
+        db_path=spine,
+    )
     dispatch = make_tool_dispatcher(
         session_factory,
+        spine_db_path=spine,
         save_for_later=lambda link, note: None,
         propose_action=lambda tool_input: {
             "proposal_id": "proposal-1",

@@ -18,6 +18,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -26,15 +27,23 @@ from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
 from sqlalchemy.orm import Session
 
 from ari_core.brain_usage import ModelCall
+from ari_core.core import paths as core_paths
 from ari_core.history import get_latest_run_details
+from ari_core.modules.memory.db import remember_ari_memory, search_ari_memories
+from ari_core.modules.notes.db import save_ari_note, search_ari_notes
+from ari_core.modules.tasks.db import list_ari_tasks
 from ari_core.skills import MCP_BETA_HEADER, extract_resolved_skill_invocations
 from ari_core.state import (
     CreateOpenLoopInput,
+    DailyStateUpdate,
+    WeeklyPlanningUpdate,
     create_open_loop,
     get_daily_state,
     get_weekly_state,
     list_open_loops,
     resolve_open_loop,
+    update_daily_state,
+    update_weekly_plan,
 )
 
 # Haiku answers first; it hands a message to the deeper model when it needs
@@ -145,6 +154,19 @@ you'd say or do. If you search, ground your reply in what you actually found; ci
 plainly (e.g. "found X — source: ...") rather than presenting it as something you \
 already knew.
 
+Your memory lives in ARI, not in this conversation:
+- When Alec tells you something worth keeping beyond today (a person and how he \
+knows them, a preference, a goal, a fact about his work or life), call remember with \
+a short title and the fact in his words. Don't remember small talk or anything that \
+is already an open loop.
+- Before answering a question about a person, a past conversation, or something he \
+told you before, call recall first. If recall finds nothing, say so.
+- Longer reference material he wants kept (meeting notes, an idea, a draft) goes in \
+save_note.
+- When he tells you his priorities, what would make today a win, his stress (1 to 10), \
+or his plan for the week, record it with set_daily_state or set_weekly_plan. ARI's \
+signal engine reads these to decide when to check in with him.
+
 Reply with exactly "NO_REPLY" only for save_for_later cases. Everything else gets a \
 real, short reply.
 """
@@ -152,7 +174,8 @@ real, short reply.
 FAST_SYSTEM_ADDENDUM = f"""
 
 You are ARI's fast model. You handle Alec's records yourself: reading his open \
-loops and state, and capturing, resolving, or saving things. Call {ESCALATE_TOOL_NAME} \
+loops and state, capturing, resolving, or saving things, and remembering and \
+recalling what he tells you. Call {ESCALATE_TOOL_NAME} \
 instead of answering when a message needs: looking anything up on the web, research, \
 drafting or writing, planning, analysis or comparisons, explaining why, any change to \
 files or running tests, or when you are not confident you can answer it well. You \
@@ -270,6 +293,62 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "remember",
+        "description": "Keep a lasting fact about Alec, his people, or his work in ARI's memory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["person", "preference", "goal", "fact", "context"]},
+                "title": {"type": "string", "description": "Short, specific, e.g. 'Sam (internship contact)'."},
+                "content": {"type": "string", "description": "The fact, in Alec's words where possible."},
+            },
+            "required": ["kind", "title", "content"],
+        },
+    },
+    {
+        "name": "recall",
+        "description": "Search ARI's memory and notes for what Alec has told you before.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Names or keywords."}},
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "save_note",
+        "description": "Save longer reference material Alec wants kept: meeting notes, an idea, a draft.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"title": {"type": "string"}, "body": {"type": "string"}},
+            "required": ["title", "body"],
+        },
+    },
+    {
+        "name": "set_daily_state",
+        "description": "Record today's priorities, win condition, stress (1-10), or next action. Omitted fields keep their values.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "priorities": {"type": "array", "items": {"type": "string"}},
+                "win_condition": {"type": "string"},
+                "stress": {"type": "integer", "minimum": 1, "maximum": 10},
+                "next_action": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "set_weekly_plan",
+        "description": "Record this week's outcomes, what can't drift, and blockers. Omitted fields keep their values.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "outcomes": {"type": "array", "items": {"type": "string"}},
+                "cannot_drift": {"type": "array", "items": {"type": "string"}},
+                "blockers": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+    {
         "name": "propose_action",
         "description": (
             "Propose one change in Alec's workspace for his approval: write_file, "
@@ -349,6 +428,7 @@ def make_tool_dispatcher(
     *,
     save_for_later: Callable[[str, str | None], None],
     propose_action: ProposeAction | None = None,
+    spine_db_path: Path | None = None,
     dry_run: bool = False,
 ) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
     """Build a tool dispatcher bound to a session factory and a save-for-later sink.
@@ -358,7 +438,14 @@ def make_tool_dispatcher(
     touching the database, the save_for_later sink, or the execution ledger.
     Read tools still hit the real database, since previewing requires seeing
     real state. Without a propose_action sink, proposals are refused.
+
+    Open loops, daily and weekly state, and signals live in the session's
+    database. Memory, notes, and hub tasks live in ARI's canonical spine
+    database (`spine_db_path`, by default ARI's own).
     """
+
+    def spine() -> Path:
+        return spine_db_path or core_paths.DB_PATH
 
     def dispatch(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         if name == "propose_action":
@@ -373,11 +460,31 @@ def make_tool_dispatcher(
             return {"resolved": {"loop_id": tool_input["loop_id"], "dry_run": True}}
         if dry_run and name == "save_for_later":
             return {"saved": tool_input["link"], "dry_run": True}
+        if dry_run and name in {"remember", "save_note", "set_daily_state", "set_weekly_plan"}:
+            return {"recorded": {"tool": name, "dry_run": True}}
+
+        if name == "remember":
+            row = remember_ari_memory(
+                str(tool_input["kind"]), str(tool_input["title"]), str(tool_input["content"]), db_path=spine()
+            )
+            return {"remembered": {"id": row["id"], "kind": row["type"], "title": row["title"]}}
+        if name == "recall":
+            return {"found": recall(str(tool_input.get("query") or ""), spine())}
+        if name == "save_note":
+            row = save_ari_note(str(tool_input["title"]), str(tool_input["body"]), db_path=spine())
+            return {"saved_note": {"id": row["id"], "title": row["title"]}}
 
         with session_factory() as session:
             if name == "get_open_loops":
                 loops = list_open_loops(session)
-                return {"open_loops": [_serialize_loop(loop) for loop in loops]}
+                # Tasks created from the hub live in the canonical spine; show them too,
+                # so there is one view of what is on Alec's plate.
+                hub_tasks = [
+                    {"id": row["id"], "title": row["title"], "notes": row["notes"], "source": "hub"}
+                    for row in list_ari_tasks(limit=50, db_path=spine())
+                    if row["status"] == "open"
+                ]
+                return {"open_loops": [_serialize_loop(loop) for loop in loops], "hub_tasks": hub_tasks}
 
             if name == "get_daily_state":
                 day = _resolve_date(tool_input.get("date"))
@@ -388,6 +495,35 @@ def make_tool_dispatcher(
                 day = _resolve_date(tool_input.get("date"))
                 state = get_weekly_state(session, state_date=day)
                 return {"weekly_state": state.model_dump(mode="json") if state else None}
+
+            if name == "set_daily_state":
+                result = update_daily_state(
+                    session,
+                    day=datetime.now().date(),
+                    update=DailyStateUpdate(
+                        priorities=tool_input.get("priorities"),
+                        win_condition=tool_input.get("win_condition"),
+                        stress=tool_input.get("stress"),
+                        next_action=tool_input.get("next_action"),
+                    ),
+                    checked_at=datetime.now(tz=UTC),
+                    source="ari.brain",
+                )
+                return {"daily_state": result.state.model_dump(mode="json")}
+
+            if name == "set_weekly_plan":
+                result = update_weekly_plan(
+                    session,
+                    state_date=datetime.now().date(),
+                    update=WeeklyPlanningUpdate(
+                        outcomes=tool_input.get("outcomes"),
+                        cannot_drift=tool_input.get("cannot_drift"),
+                        blockers=tool_input.get("blockers"),
+                    ),
+                    reviewed_at=datetime.now(tz=UTC),
+                    source="ari.brain",
+                )
+                return {"weekly_state": result.state.model_dump(mode="json")}
 
             if name == "get_recent_signals_and_alerts":
                 day = _resolve_date(tool_input.get("date"))
@@ -438,8 +574,43 @@ FAST_TOOL_NAMES = {
     "create_open_loop",
     "resolve_open_loop",
     "save_for_later",
+    "remember",
+    "recall",
+    "save_note",
+    "set_daily_state",
+    "set_weekly_plan",
 }
 FAST_TOOLS: list[dict[str, Any]] = [tool for tool in TOOLS if tool["name"] in FAST_TOOL_NAMES] + [ESCALATE_TOOL]
+
+
+RECALL_LIMIT = 8
+
+
+def recall(query: str, db_path: Path) -> list[dict[str, Any]]:
+    """Search memory and notes word by word, ranked by how many words each result matches.
+
+    The stores match one phrase at a time, so "Sam internship" alone would miss a memory
+    titled "Sam" whose content mentions the internship.
+    """
+    words = [word for word in re.findall(r"[\w'-]+", query.lower()) if len(word) >= 3][:6] or [query.strip()]
+    scored: dict[tuple[str, int], dict[str, Any]] = {}
+    for word in words:
+        for row in search_ari_memories(word, limit=20, db_path=db_path):
+            hit = scored.setdefault(
+                ("memory", row["id"]),
+                {"source": "memory", "kind": row["type"], "title": row["title"], "content": row["content"][:400],
+                 "updated_at": row["updated_at"], "matches": 0},
+            )
+            hit["matches"] += 1
+        for row in search_ari_notes(word, limit=20, db_path=db_path):
+            hit = scored.setdefault(
+                ("note", row["id"]),
+                {"source": "note", "title": row["title"], "content": row["body"][:400],
+                 "updated_at": row["updated_at"], "matches": 0},
+            )
+            hit["matches"] += 1
+    ranked = sorted(scored.values(), key=lambda hit: (hit["matches"], hit["updated_at"]), reverse=True)
+    return ranked[:RECALL_LIMIT]
 
 
 def roll_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

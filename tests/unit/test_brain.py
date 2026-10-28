@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from ari_core import brain
@@ -233,3 +234,26 @@ def test_default_client_cannot_hang_forever() -> None:
 
     assert client.timeout == brain.REQUEST_TIMEOUT_SECONDS
     assert client.max_retries == 2
+
+
+def test_brain_keeps_and_finds_memory_notes_and_daily_state(tmp_path) -> None:
+    from ari_core.state import get_daily_state
+    from ari_memory import create_engine, create_session_factory
+
+    session_factory = create_session_factory(create_engine(f"sqlite+pysqlite:///{tmp_path / 'ari.db'}"))
+    spine = tmp_path / "spine.db"
+    dispatch = brain.make_tool_dispatcher(session_factory, save_for_later=lambda link, note: None, spine_db_path=spine)
+
+    dispatch("remember", {"kind": "person", "title": "Sam (internship contact)", "content": "Met at the econ career fair; works at Ramp."})
+    dispatch("save_note", {"title": "Ramp call notes", "body": "Sam said the analyst team hires in January."})
+    found = dispatch("recall", {"query": "What do I know about Sam at Ramp?"})["found"]
+    assert [hit["title"] for hit in found][:2] == ["Sam (internship contact)", "Ramp call notes"] or {
+        hit["title"] for hit in found
+    } >= {"Sam (internship contact)", "Ramp call notes"}
+    assert dispatch("recall", {"query": "zebra"})["found"] == []
+
+    dispatch("set_daily_state", {"priorities": ["Outline section 3"], "win_condition": "Outline done", "stress": 4})
+    with session_factory() as session:
+        state = get_daily_state(session, day=datetime.now().date())
+    assert state is not None and state.priorities == ["Outline section 3"] and state.stress == 4
+    assert "hub_tasks" in dispatch("get_open_loops", {})

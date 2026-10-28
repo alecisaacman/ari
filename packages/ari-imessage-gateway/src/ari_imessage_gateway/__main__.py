@@ -73,7 +73,7 @@ def _poll(settings: ImessageSettings, *, dry_run: bool, loop: int | None) -> int
     gateway = _gateway(settings, dry_run=dry_run)
     while True:
         report = gateway.poll_once()
-        if report.status != "ok" or report.handled or report.alerts_sent:
+        if report.status != "ok" or report.handled or report.alerts_sent or report.signals_raised or report.detail:
             print(json.dumps(report.to_dict()), flush=True)
         if loop is None:
             return 0 if report.status in {"ok", "seeded", "busy"} else 1
