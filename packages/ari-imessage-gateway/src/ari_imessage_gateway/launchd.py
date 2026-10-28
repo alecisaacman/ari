@@ -21,6 +21,7 @@ from .config import ImessageSettings
 DUMP_INTERVAL_SECONDS = 10
 POLL_INTERVAL_SECONDS = 10
 DUMP_ROW_LIMIT = 500
+OWNER_ONLY_UMASK = 0o077
 
 
 def dump_query(identifiers: tuple[str, ...]) -> str:
@@ -59,6 +60,8 @@ def render_plists(
         ],
         "StartInterval": DUMP_INTERVAL_SECONDS,
         "RunAtLoad": True,
+        # The snapshot holds Alec's messages: owner-only, not launchd's default 022.
+        "Umask": OWNER_ONLY_UMASK,
         "StandardOutPath": str(logs / "imessage-dump.log"),
         "StandardErrorPath": str(logs / "imessage-dump.log"),
     }
@@ -68,6 +71,7 @@ def render_plists(
         "WorkingDirectory": str(source_root),
         "StartInterval": POLL_INTERVAL_SECONDS,
         "RunAtLoad": True,
+        "Umask": OWNER_ONLY_UMASK,
         "EnvironmentVariables": {"ARI_HOME": str(settings.state_dir.parent)},
         "StandardOutPath": str(logs / "imessage-poll.log"),
         "StandardErrorPath": str(logs / "imessage-poll.log"),

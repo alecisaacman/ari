@@ -277,7 +277,12 @@ class ImessageGateway:
         report.replies.append(body)
         if self.dry_run:
             return True
-        return self.messages_app.send(handle, body)
+        sent = self.messages_app.send(handle, body)
+        if not sent:
+            # Usually the macOS Automation permission for Messages; surfaced in the log.
+            report.status = "send_failed"
+            report.detail = f"Messages did not send: {self.messages_app.last_error or 'no error text'}"
+        return sent
 
     def _save(self, cursor: int, history: list[dict[str, Any]]) -> None:
         if self.dry_run:

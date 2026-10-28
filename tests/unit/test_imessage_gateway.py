@@ -370,6 +370,8 @@ def test_dump_job_runs_sqlite3_directly_and_escapes_identifiers(settings) -> Non
     assert "-readonly" in dump["ProgramArguments"]
     poll = plistlib.loads(plists["com.test.ari.imessage-poll.plist"])
     assert "ANTHROPIC_API_KEY" not in poll.get("EnvironmentVariables", {})
+    # Files the jobs write (the message snapshot, logs, state) are owner-only.
+    assert dump["Umask"] == poll["Umask"] == 0o077
 
 
 def spend(session_factory, model: str, output_tokens: int) -> None:
@@ -448,3 +450,19 @@ def test_local_env_skips_placeholders_and_never_overrides(tmp_path: Path, monkey
     assert os.environ["ARI_TEST_SET"] == "value"
     assert os.environ["ARI_TEST_KEEP"] == "environment"
     monkeypatch.delenv("ARI_TEST_SET")
+
+
+def test_a_failed_send_is_reported_not_swallowed(settings, session_factory) -> None:
+    class Refusing(FakeMessages):
+        def send(self, handle: str, body: str) -> bool:
+            self.last_error = "Not authorized to send Apple events to Messages. (-1743)"
+            return False
+
+    gateway = make_gateway(settings, session_factory, messages=Refusing())
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "hello"))
+
+    report = gateway.poll_once()
+
+    assert report.status == "send_failed"
+    assert "-1743" in report.detail
