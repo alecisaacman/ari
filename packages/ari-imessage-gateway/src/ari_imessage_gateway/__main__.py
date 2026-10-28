@@ -33,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("doctor", help="Report what the surface still needs.")
     plists = commands.add_parser("plists", help="Write the launchd jobs for review; installs nothing.")
     plists.add_argument("--out", type=Path, required=True)
+    plists.add_argument("--python", type=Path, help="Interpreter the poll job runs (default: this one).")
+    plists.add_argument("--source-root", type=Path, help="Where the poll job runs (default: this checkout).")
     commands.add_parser("send-test", help="Send one test message to yourself.")
     args = parser.parse_args(argv)
 
@@ -45,7 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "plists":
         args.out.mkdir(parents=True, exist_ok=True)
         for name, payload in render_plists(
-            settings, label_prefix=f"com.{getpass.getuser()}.ari", source_root=SOURCE_ROOT
+            settings,
+            label_prefix=f"com.{getpass.getuser()}.ari",
+            source_root=args.source_root or SOURCE_ROOT,
+            python=args.python,
         ).items():
             (args.out / name).write_bytes(payload)
             print(args.out / name)

@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""ARI's live install: the running ARI updates only when a finished, tested release is ready.
+
+The live ARI never runs from a development checkout. Each release is an exported copy of
+one commit, with its own Python environment and hub build, under
+ARI_HOME/runtime/releases/. ARI_HOME/runtime/current points at the live one; the
+iMessage poller, ARI's API, and the hub all run from there. Installing a release builds
+and tests it first, then switches `current`; the previous release stays for rollback.
+
+  ari-live install [--commit REF] [--skip-tests]   build, test, and switch to a release
+  ari-live rollback                                 switch back to the previous release
+  ari-live status                                   what's live, and what's running
+  ari-live setup                                    point ARI's launchd jobs at `current`
+  ari-live hub open | stop                          start the hub on demand and open it
+  ari-live serve-api | serve-hub                    run by launchd; not for direct use
+"""
+
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import secrets
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import webbrowser
+from pathlib import Path
+
+ARI_HOME = Path(os.environ.get("ARI_HOME", str(Path.home() / "ARI"))).expanduser()
+RUNTIME = ARI_HOME / "runtime"
+RELEASES = RUNTIME / "releases"
+CURRENT = RUNTIME / "current"
+LOGS = RUNTIME / "logs"
+ENV_FILE = ARI_HOME / "ari.env"
+HUB_STATE = ARI_HOME / "hub"
+API_PORT = 8787
+HUB_PORT = 3737
+KEEP_RELEASES = 3
+PREFIX = f"com.{getpass.getuser()}.ari"
+API_LABEL = f"{PREFIX}.api"
+HUB_LABEL = f"{PREFIX}.hub"
+POLL_LABEL = f"{PREFIX}.imessage-poll"
+LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
+DEV_REPO = Path(__file__).resolve().parents[1]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="ari-live", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    install = commands.add_parser("install")
+    install.add_argument("--commit", default="HEAD")
+    install.add_argument("--repo", type=Path, default=DEV_REPO)
+    install.add_argument("--skip-tests", action="store_true")
+    commands.add_parser("rollback")
+    commands.add_parser("status")
+    commands.add_parser("setup")
+    hub = commands.add_parser("hub")
+    hub.add_argument("action", choices=["open", "stop"])
+    commands.add_parser("serve-api")
+    commands.add_parser("serve-hub")
+    args = parser.parse_args(argv)
+    if args.command == "install":
+        return install_release(args.repo, args.commit, run_tests=not args.skip_tests)
+    if args.command == "rollback":
+        return rollback()
+    if args.command == "status":
+        return status()
+    if args.command == "setup":
+        return setup()
+    if args.command == "hub":
+        return hub_open() if args.action == "open" else hub_stop()
+    if args.command == "serve-api":
+        return serve_api()
+    return serve_hub()
+
+
+# Releases
+
+
+def install_release(repo: Path, commit: str, *, run_tests: bool) -> int:
+    sha = _run(["git", "-C", str(repo), "rev-parse", f"{commit}^{{commit}}"]).strip()
+    subject = _run(["git", "-C", str(repo), "log", "-1", "--format=%s", sha]).strip()
+    name = f"{time.strftime('%Y%m%d-%H%M%S')}-{sha[:7]}"
+    release = RELEASES / name
+    release.mkdir(parents=True)
+    print(f"Building release {name}: {subject}")
+    try:
+        # Only committed work goes live: the release is an export of one commit.
+        archive = subprocess.run(["git", "-C", str(repo), "archive", sha], check=True, capture_output=True).stdout
+        subprocess.run(["tar", "-x", "-C", str(release)], input=archive, check=True)
+        uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+        _step("Python environment", [uv, "venv", "--quiet", "--python", "3.12", str(release / ".venv")])
+        _step(
+            "Python packages",
+            [uv, "pip", "install", "--quiet", "--python", str(release / ".venv" / "bin" / "python"), "-e", f"{release}[dev]"],
+        )
+        tests = "skipped"
+        if run_tests:
+            env = {
+                **os.environ,
+                "ARI_LIVE_SOURCE_ROOT": str(release),
+                "ARI_TEST_PROTECTED_STATE_PATHS": str(ENV_FILE),
+            }
+            _step(
+                "Tests",
+                [str(release / ".venv" / "bin" / "python"), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-x"],
+                cwd=release,
+                env=env,
+            )
+            tests = "passed"
+        node = shutil.which("node")
+        hub = release / "services" / "ari-hub"
+        if node and hub.is_dir():
+            npm = str(Path(node).with_name("npm"))
+            path_env = {**os.environ, "PATH": f"{Path(node).parent}:{os.environ.get('PATH', '')}"}
+            _step("Hub packages", [npm, "ci", "--no-audit", "--no-fund", "--silent"], cwd=hub, env=path_env)
+            _step("Hub build", [node, str(hub / "node_modules" / "next" / "dist" / "bin" / "next"), "build"], cwd=hub, env=path_env)
+        (release / "RELEASE.json").write_text(
+            json.dumps(
+                {
+                    "commit": sha,
+                    "subject": subject,
+                    "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "tests": tests,
+                    "node": node,
+                },
+                indent=2,
+            )
+        )
+    except subprocess.CalledProcessError as error:
+        print(f"Release {name} failed; the live ARI is unchanged. ({error})")
+        shutil.rmtree(release, ignore_errors=True)
+        return 1
+    _switch_to(release)
+    _prune()
+    print(f"Live: {name}")
+    return 0
+
+
+def rollback() -> int:
+    releases = _releases()
+    live = _live()
+    earlier = [release for release in releases if live is None or release.name < live.name]
+    if not earlier:
+        print("There is no earlier release to roll back to.")
+        return 1
+    _switch_to(earlier[-1])
+    print(f"Rolled back to {earlier[-1].name}")
+    return 0
+
+
+def _switch_to(release: Path) -> None:
+    link = RUNTIME / f".current-{os.getpid()}"
+    link.symlink_to(release)
+    os.replace(link, CURRENT)  # atomic: the poller sees the old release or the new one
+    # The poller starts fresh every 10 seconds; the API and hub restart only if running.
+    for label in (API_LABEL, HUB_LABEL):
+        if _running(label):
+            subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"], check=False)
+
+
+def _prune() -> None:
+    live = _live()
+    releases = _releases()
+    keep = set(releases[-KEEP_RELEASES:]) | ({live} if live else set())
+    for release in releases:
+        if release not in keep:
+            shutil.rmtree(release, ignore_errors=True)
+
+
+def _releases() -> list[Path]:
+    if not RELEASES.is_dir():
+        return []
+    return sorted(path for path in RELEASES.iterdir() if path.is_dir() and not path.name.startswith("."))
+
+
+def _live() -> Path | None:
+    return CURRENT.resolve() if CURRENT.is_symlink() else None
+
+
+def status() -> int:
+    live = _live()
+    if live is None:
+        print("No live release yet. Run: ari-live install")
+    else:
+        info = json.loads((live / "RELEASE.json").read_text())
+        print(f"Live: {live.name}\n  {info['subject']}\n  built {info['built_at']}, tests {info['tests']}")
+    print("Releases kept: " + (", ".join(release.name for release in _releases()) or "none"))
+    for label in (POLL_LABEL, API_LABEL, HUB_LABEL):
+        print(f"{label}: {'running' if _running(label) else 'loaded, idle' if _loaded(label) else 'not loaded'}")
+    return 0
+
+
+# launchd
+
+
+def setup() -> int:
+    if _live() is None:
+        print("Install a release first: ari-live install")
+        return 1
+    _ensure_hub_secrets()
+    python = CURRENT / ".venv" / "bin" / "python"
+    LOGS.mkdir(parents=True, exist_ok=True)
+    plists: dict[str, dict] = {}
+    with tempfile.TemporaryDirectory() as rendered:
+        subprocess.run(
+            [str(python), "-m", "ari_imessage_gateway", "plists", "--out", rendered, "--python", str(python), "--source-root", str(CURRENT)],
+            check=True,
+            capture_output=True,
+        )
+        import plistlib
+
+        # The dump job (sqlite3 with Full Disk Access) is left exactly as installed.
+        plists[POLL_LABEL] = plistlib.loads((Path(rendered) / f"{POLL_LABEL}.plist").read_bytes())
+    for label, command in ((API_LABEL, "serve-api"), (HUB_LABEL, "serve-hub")):
+        plists[label] = {
+            "Label": label,
+            "ProgramArguments": [str(python), str(CURRENT / "scripts" / "ari-live"), command],
+            "WorkingDirectory": str(CURRENT),
+            # Started on demand by `ari-live hub open`; nothing runs at login.
+            "RunAtLoad": False,
+            "Umask": 0o077,
+            "EnvironmentVariables": {"ARI_HOME": str(ARI_HOME)},
+            "StandardOutPath": str(LOGS / f"{command}.log"),
+            "StandardErrorPath": str(LOGS / f"{command}.log"),
+        }
+    import plistlib
+
+    for label, plist in plists.items():
+        path = LAUNCH_AGENTS / f"{label}.plist"
+        payload = plistlib.dumps(plist)
+        if path.exists() and path.read_bytes() == payload and _loaded(label):
+            continue
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], check=False, capture_output=True)
+        path.write_bytes(payload)
+        subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], check=True)
+        print(f"Installed {label}")
+    return 0
+
+
+def _ensure_hub_secrets() -> None:
+    """The hub's login password and session secret, kept in Alec's private env file."""
+    existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
+    keys = {line.partition("=")[0].strip() for line in existing.splitlines()}
+    additions = []
+    if "ARI_UI_PASSWORD" not in keys:
+        additions.append(f"ARI_UI_PASSWORD={secrets.token_urlsafe(12)}")
+    if "ARI_AUTH_SECRET" not in keys:
+        additions.append(f"ARI_AUTH_SECRET={secrets.token_hex(32)}")
+    if "ARI_TRIGGER_TOKEN" not in keys:
+        additions.append(f"ARI_TRIGGER_TOKEN={secrets.token_urlsafe(24)}")
+    if additions:
+        with ENV_FILE.open("a", encoding="utf-8") as handle:
+            handle.write(("" if existing.endswith("\n") or not existing else "\n") + "\n".join(additions) + "\n")
+        ENV_FILE.chmod(0o600)
+
+
+def _loaded(label: str) -> bool:
+    return subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{label}"], capture_output=True).returncode == 0
+
+
+def _running(label: str) -> bool:
+    out = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{label}"], capture_output=True, text=True).stdout
+    return "state = running" in out
+
+
+# The hub, on demand
+
+
+def hub_open() -> int:
+    if not _listening(HUB_PORT):
+        for label in (API_LABEL, HUB_LABEL):
+            subprocess.run(["launchctl", "kickstart", f"gui/{os.getuid()}/{label}"], check=False)
+        deadline = time.time() + 60
+        while not (_listening(HUB_PORT) and _listening(API_PORT)) and time.time() < deadline:
+            time.sleep(0.5)
+    if not _listening(HUB_PORT):
+        print(f"The hub didn't start; see {LOGS / 'serve-hub.log'}")
+        return 1
+    webbrowser.open(f"http://localhost:{HUB_PORT}")
+    return 0
+
+
+def hub_stop() -> int:
+    for label in (HUB_LABEL, API_LABEL):
+        subprocess.run(["launchctl", "kill", "SIGTERM", f"gui/{os.getuid()}/{label}"], check=False, capture_output=True)
+    return 0
+
+
+def serve_api() -> int:
+    env = _live_env()
+    python = str(CURRENT / ".venv" / "bin" / "python")
+    os.execve(python, [python, "-m", "uvicorn", "ari_api.main:app", "--host", "127.0.0.1", "--port", str(API_PORT)], env)
+    return 1
+
+
+def serve_hub() -> int:
+    env = _live_env()
+    info = json.loads((CURRENT / "RELEASE.json").read_text())
+    node = info.get("node") or shutil.which("node")
+    if not node:
+        print("No Node.js found for the hub.")
+        return 1
+    HUB_STATE.mkdir(parents=True, exist_ok=True)
+    env.update(
+        {
+            "ARI_API_BASE_URL": f"http://127.0.0.1:{API_PORT}",
+            "ARI_HUB_RUNTIME_DIR": str(HUB_STATE / "runtime"),
+            "ARI_HUB_WORKSPACE_DIR": str(HUB_STATE / "workspace"),
+            "ARI_CANONICAL_PROJECT_ROOT": str(CURRENT),
+            "NODE_ENV": "production",
+            "PATH": f"{Path(node).parent}:/usr/bin:/bin",
+        }
+    )
+    hub = CURRENT / "services" / "ari-hub"
+    os.chdir(hub)
+    next_bin = str(hub / "node_modules" / "next" / "dist" / "bin" / "next")
+    os.execve(node, [node, next_bin, "start", "-H", "127.0.0.1", "-p", str(HUB_PORT)], env)
+    return 1
+
+
+def _live_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["ARI_HOME"] = str(ARI_HOME)
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.strip().partition("=")
+            value = value.strip().strip("'\"")
+            if sep and key and value and not key.startswith("#"):
+                env.setdefault(key.strip(), value)
+    return env
+
+
+def _listening(port: int) -> bool:
+    with socket.socket() as probe:
+        probe.settimeout(0.3)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _step(label: str, command: list[str], **kwargs) -> None:
+    print(f"  {label}...", flush=True)
+    subprocess.run(command, check=True, **kwargs)
+
+
+def _run(command: list[str]) -> str:
+    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -36,8 +36,9 @@ export type AriConfig = {
 
 export function getConfig(): AriConfig {
   const projectRoot = process.cwd();
-  const runtimeRoot = path.join(projectRoot, "runtime");
-  const workspaceRoot = path.join(projectRoot, "workspace");
+  // A live install keeps these outside the release, so an update keeps sessions and state.
+  const runtimeRoot = process.env.ARI_HUB_RUNTIME_DIR || path.join(projectRoot, "runtime");
+  const workspaceRoot = process.env.ARI_HUB_WORKSPACE_DIR || path.join(projectRoot, "workspace");
   const orchestrationRoot = path.join(runtimeRoot, "orchestration");
 
   return {
