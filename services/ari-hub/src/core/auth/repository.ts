@@ -1,8 +1,9 @@
+import type { SessionRole } from "@/src/core/auth/session";
 import { getDatabase } from "@/src/core/db/database";
 
 export type AuthSessionRecord = {
   id: string;
-  userRole: "user";
+  userRole: SessionRole;
   deviceLabel: string;
   userAgent: string;
   createdAt: string;
@@ -21,7 +22,7 @@ function toIsoFromEpochSeconds(epochSeconds: number): string {
 
 function mapSessionRow(row: {
   id: string;
-  user_role: "user";
+  user_role: SessionRole;
   device_label: string;
   user_agent: string;
   created_at: string;
@@ -41,12 +42,17 @@ function mapSessionRow(row: {
   };
 }
 
-export function createAuthSession(input?: { deviceLabel?: string; userAgent?: string; expiresAtEpochSeconds?: number }): AuthSessionRecord {
+export function createAuthSession(input?: {
+  deviceLabel?: string;
+  userAgent?: string;
+  expiresAtEpochSeconds?: number;
+  role?: SessionRole;
+}): AuthSessionRecord {
   const database = getDatabase();
   const timestamp = now();
   const record: AuthSessionRecord = {
     id: crypto.randomUUID(),
-    userRole: "user",
+    userRole: input?.role ?? "user",
     deviceLabel: input?.deviceLabel?.trim() || "browser",
     userAgent: input?.userAgent?.trim() || "unknown",
     createdAt: timestamp,
@@ -86,7 +92,7 @@ export function getAuthSession(sessionId: string): AuthSessionRecord | null {
     .get(sessionId) as
     | {
         id: string;
-        user_role: "user";
+        user_role: SessionRole;
         device_label: string;
         user_agent: string;
         created_at: string;
@@ -110,7 +116,7 @@ export function listActiveAuthSessions(): AuthSessionRecord[] {
     )
     .all() as Array<{
     id: string;
-    user_role: "user";
+    user_role: SessionRole;
     device_label: string;
     user_agent: string;
     created_at: string;

@@ -1,8 +1,12 @@
 const SESSION_VERSION = 1;
 
+// "creator" is Alec, unlocked with Touch ID: he sees inside ARI. "user" signed in
+// with the password and sees only the Today side.
+export type SessionRole = "user" | "creator";
+
 export type SessionPayload = {
   v: number;
-  role: "user";
+  role: SessionRole;
   sid: string;
   iat: number;
   exp: number;
@@ -33,11 +37,16 @@ async function signPayload(payload: string, secret: string): Promise<string> {
   return toBase64Url(new Uint8Array(signature));
 }
 
-export async function createSessionToken(secret: string, ttlSeconds: number, sessionId?: string): Promise<string> {
+export async function createSessionToken(
+  secret: string,
+  ttlSeconds: number,
+  sessionId?: string,
+  role: SessionRole = "user"
+): Promise<string> {
   const issuedAt = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
     v: SESSION_VERSION,
-    role: "user",
+    role,
     sid: sessionId || crypto.randomUUID(),
     iat: issuedAt,
     exp: issuedAt + ttlSeconds
@@ -67,7 +76,7 @@ export async function decodeSessionToken(token: string | undefined, secret: stri
     const payload = JSON.parse(payloadJson) as SessionPayload;
     if (
       payload.v !== SESSION_VERSION ||
-      payload.role !== "user" ||
+      (payload.role !== "user" && payload.role !== "creator") ||
       typeof payload.sid !== "string" ||
       typeof payload.iat !== "number" ||
       payload.exp < Math.floor(Date.now() / 1000)

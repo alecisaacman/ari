@@ -1,4 +1,12 @@
-import { InsideAri } from "@/src/components/ace/inside-ari";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+
+import { greeting } from "@/src/components/hub/format";
+import { Inside } from "@/src/components/hub/inside";
+import { Today } from "@/src/components/hub/today";
+import { TouchIdButton } from "@/src/components/hub/touch-id";
+import { getUiSession } from "@/src/core/auth/guard";
+import { hasPasskeys } from "@/src/core/auth/passkeys";
 import { getBrainPanel, type BrainPanel } from "@/src/core/ari-spine/brain-bridge";
 import { getDashboardOverview } from "@/src/core/ari-spine/overview-bridge";
 import type {
@@ -45,8 +53,70 @@ async function loadBrainPanel(): Promise<{ panel: BrainPanel | null; error: stri
   }
 }
 
-export default async function HomePage() {
+export default async function HomePage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const session = await getUiSession();
+  if (!session) {
+    redirect("/login");
+  }
+  const creator = session.role === "creator";
+  const tab = (await searchParams).tab === "ari" ? "ari" : "today";
   const brain = await loadBrainPanel();
+  const now = new Date();
+
+  return (
+    <main className="hub">
+      <header className="hub-top">
+        <div className="hub-hello">
+          <p className="hub-date">{now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</p>
+          <h1>{greeting(now)}, Alec</h1>
+        </div>
+        <nav className="hub-tabs" aria-label="Hub">
+          <Link href="/" className={tab === "today" ? "is-on" : ""} aria-current={tab === "today" ? "page" : undefined}>
+            Today
+          </Link>
+          <Link href="/?tab=ari" className={tab === "ari" ? "is-on" : ""} aria-current={tab === "ari" ? "page" : undefined}>
+            ARI{creator ? "" : " 🔒"}
+          </Link>
+        </nav>
+        {brain.panel ? (
+          <span className={`hub-status ${brain.panel.paused.paused ? "is-paused" : ""}`}>
+            <span aria-hidden="true" />
+            {brain.panel.paused.paused ? "Paused" : "Running"}
+          </span>
+        ) : null}
+      </header>
+
+      {!brain.panel ? (
+        <section className="hub-card hub-down">
+          <h2>ARI's brain isn't answering</h2>
+          <p className="hub-quiet">{brain.error ?? "Unknown error."}. The hub starts ARI's API on demand, so try again in a moment.</p>
+        </section>
+      ) : tab === "today" ? (
+        <Today panel={brain.panel} />
+      ) : creator ? (
+        <InsidePage panel={brain.panel} />
+      ) : (
+        <section className="hub-card hub-locked">
+          <h2>Inside ARI is for its creator</h2>
+          <p className="hub-quiet">
+            {hasPasskeys()
+              ? "Unlock with Touch ID to see what ARI is building, its reviews, and what it knows."
+              : "Set up Touch ID once on this Mac. After that, Touch ID unlocks this side and the password only opens Today."}
+          </p>
+          <TouchIdButton mode={hasPasskeys() ? "unlock" : "setup"} />
+        </section>
+      )}
+    </main>
+  );
+}
+
+async function InsidePage({ panel }: { panel: BrainPanel }) {
+  const overview = (await getDashboardOverview()).overview;
+  const skills = [...overview.active_skills, ...overview.prototype_skills, ...overview.candidate_skills];
+  return <Inside panel={panel} skills={skills} underTheHood={<UnderTheHood />} />;
+}
+
+async function UnderTheHood() {
   const result = await getDashboardOverview();
   const overview = result.overview;
   const pendingApprovals = result.pendingApprovals;
@@ -70,8 +140,7 @@ export default async function HomePage() {
   ];
 
   return (
-    <main className="ace-readonly-shell">
-      <InsideAri panel={brain.panel} error={brain.error} />
+    <div className="ace-readonly-shell hub-legacy">
 
       <section className="ace-readonly-hero" aria-labelledby="dashboard-title">
         <div>
@@ -411,7 +480,7 @@ export default async function HomePage() {
           ))}
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 

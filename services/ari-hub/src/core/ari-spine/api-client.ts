@@ -6,6 +6,8 @@ import { runCanonicalSubprocessCommand } from "@/src/core/ari-spine/subprocess-r
 type RequestOptions = {
   query?: Record<string, string | number | boolean | Array<string | number | boolean> | undefined>;
   body?: unknown;
+  // A call that waits on ARI's brain needs longer than a plain read.
+  timeoutMs?: number;
 };
 
 type WorkerResult = {
@@ -62,7 +64,7 @@ export async function requestAriApi<T>(method: "GET" | "POST" | "PUT", pathname:
       ...(options.body !== undefined ? { "Content-Type": "application/json" } : {})
     },
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    signal: AbortSignal.timeout(config.canonicalApiTimeoutMs)
+    signal: AbortSignal.timeout(options.timeoutMs ?? config.canonicalApiTimeoutMs)
   });
 
   const text = await response.text();

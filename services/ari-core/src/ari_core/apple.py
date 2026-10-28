@@ -22,7 +22,7 @@ from ari_core.core.env import ari_home
 
 GET_DONE = "GET DONE"
 DEFAULT_CALENDAR = "ARI"
-HELPER_TIMEOUT_SECONDS = 30
+HELPER_TIMEOUT_SECONDS = 15
 
 
 class AppleError(RuntimeError):

@@ -71,3 +71,24 @@ test("active session list marks current session and only revokes other sessions"
     teardownIsolatedRuntime();
   }
 });
+
+test("a creator session carries its role, and a forged role doesn't verify", async () => {
+  const token = await createSessionToken("secret", 60, "session-c", "creator");
+  assert.equal((await verifySessionToken(token, "secret"))?.role, "creator");
+
+  const [payload, signature] = (await createSessionToken("secret", 60, "session-u")).split(".");
+  const forged = Buffer.from(
+    JSON.stringify({ ...JSON.parse(Buffer.from(payload, "base64url").toString()), role: "creator" })
+  ).toString("base64url");
+  assert.equal(await verifySessionToken(`${forged}.${signature}`, "secret"), null);
+});
+
+test("no passkeys at first, so the first Touch ID setup is open to a signed-in session", async () => {
+  setupIsolatedRuntime("passkeys");
+  try {
+    const { hasPasskeys } = await import("../src/core/auth/passkeys");
+    assert.equal(hasPasskeys(), false);
+  } finally {
+    teardownIsolatedRuntime();
+  }
+});

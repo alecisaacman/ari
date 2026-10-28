@@ -92,6 +92,23 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   revoked_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS passkeys (
+  id TEXT PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL,
+  transports_json TEXT NOT NULL DEFAULT '[]',
+  label TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS passkey_challenges (
+  challenge TEXT PRIMARY KEY,
+  purpose TEXT NOT NULL,
+  session_id TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ari_events (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,

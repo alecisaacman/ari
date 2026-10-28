@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+import "./hub.css";
 
 export const metadata: Metadata = {
   title: "ARI",

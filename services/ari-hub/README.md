@@ -2,22 +2,26 @@
 
 ARI v1 is the private local-first ARI runtime. ACE is the browser, phone, voice, and trigger access layer around it.
 
-## Inside ARI
+## Today and ARI
 
-The hub has no brain of its own. The top of the home page is a window into ARI's
-one brain (`ari_core/brain.py`, the same one iMessage reaches), read live from
-ari-api's `/brain/panel`: today's priorities and stress, the week's plan, open
-loops with their history, reminders ARI will text, what is waiting for approval,
-what the signal engine noticed and why, what ARI remembers, notes, the recent
-iMessage conversation, and model spend.
+The hub has no brain of its own. It is a window into ARI's one brain
+(`ari_core/brain.py`, the same one iMessage reaches), read live from ari-api's
+`/brain/panel`, in two tabs:
+
+- **Today**, for anyone signed in: the chat with ARI (laid out like Messages), the
+  day's calendar, GET DONE, reminders, what is waiting for approval, and what ARI
+  noticed.
+- **ARI**, for its creator: what ARI wants to build, its latest morning and night
+  reviews, open loops, spend, what it remembers, notes, the iMessage conversation,
+  skills, and, under the hood, the systems read models.
 
 The chat box sends each message to `/brain/messages`, which runs the same
 conversation logic as iMessage (`ari_core/conversation.py`): "ARI stop",
-"ARI spend", "yes"/"no" for proposals, and everything else to the brain, under
-the same budget and loop breaker. The hub keeps its own conversation thread, and
-shares everything else, because memory, loops, and state are ARI's records.
-`/api/trigger` and `/api/voice/input` (with a browser transcript) reach ARI the
-same way. In subprocess bridge mode the hub uses `ari api brain panel` and
+"ARI spend", "ARI review", "yes"/"no" for proposals, and everything else to the
+brain, under the same budget and loop breaker. The hub keeps its own conversation
+thread and shares everything else, because memory, loops, and state are ARI's
+records. `/api/trigger` and `/api/voice/input` (with a browser transcript) reach ARI
+the same way. In subprocess bridge mode the hub uses `ari api brain panel` and
 `ari api brain message` instead.
 
 Run ari-api for the hub to see inside ARI. It reads `ANTHROPIC_API_KEY` from
@@ -108,10 +112,14 @@ For the most reliable phone demo path, prefer `npm run start:lan` over the devel
 
 ## Session behavior
 
-- One private user can stay logged in on multiple devices and browsers at the same time.
-- Each login creates its own device-local session cookie.
-- Logging out clears only the current device session.
-- Future stronger auth can replace this without changing the rest of the runtime.
+- The password opens the Today side. Touch ID (a passkey) opens everything: that
+  session is the creator's.
+- The first passkey is set up from a password session, on the ARI tab. After that,
+  only the creator can add another. A passkey never leaves the device; the hub keeps
+  its public key (`passkeys` table) and single-use challenges that expire in five
+  minutes.
+- Each login creates its own device-local session cookie, and logging out clears
+  only that device's session.
 
 ## iOS Shortcuts
 

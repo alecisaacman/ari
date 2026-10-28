@@ -1,15 +1,19 @@
-import { ACE_FULL_NAME, ARI_FULL_NAME } from "@/src/core/identity";
 import { LoginForm } from "@/src/components/ace/login-form";
+import { TouchIdButton } from "@/src/components/hub/touch-id";
+import { hasPasskeys } from "@/src/core/auth/passkeys";
+
+export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
+  const touchId = hasPasskeys();
   return (
     <main className="login-shell">
       <section className="login-panel">
-        <p className="eyebrow">{ACE_FULL_NAME}</p>
         <h1>ARI</h1>
         <p className="login-copy">
-          {ARI_FULL_NAME}. This private ACE interface opens the ARI runtime from browser, phone, and other personal access surfaces.
+          {touchId ? "Touch ID opens everything. The password opens Today." : "Sign in to talk to ARI and see your day."}
         </p>
+        {touchId ? <TouchIdButton mode="unlock" /> : null}
         <LoginForm />
       </section>
     </main>

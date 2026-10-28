@@ -3,7 +3,19 @@ import type { NextRequest } from "next/server";
 
 import { isAuthSessionActive, touchAuthSession } from "@/src/core/auth/repository";
 import { getConfig } from "@/src/core/config";
-import { readBearerToken, verifySessionToken } from "@/src/core/auth/session";
+import { readBearerToken, verifySessionToken, type SessionPayload } from "@/src/core/auth/session";
+
+// The signed-in session, or null. Revoked and expired sessions don't count.
+export async function getUiSession(request?: NextRequest): Promise<SessionPayload | null> {
+  const config = getConfig();
+  const cookieStore = request ? request.cookies : await cookies();
+  const payload = await verifySessionToken(cookieStore.get(config.sessionCookieName)?.value, config.authSecret);
+  if (!payload || !isAuthSessionActive(payload.sid)) {
+    return null;
+  }
+  touchAuthSession(payload.sid);
+  return payload;
+}
 
 export async function hasUiSession(request?: NextRequest): Promise<boolean> {
   const config = getConfig();

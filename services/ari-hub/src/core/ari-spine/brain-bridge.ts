@@ -54,18 +54,22 @@ export type BrainPanel = {
   waitingForApproval: Array<{ taskId: string; summary: string; createdAt: string }>;
 };
 
+// The panel reads Apple's Reminders and Calendar; a reply may search the web.
+const PANEL_TIMEOUT_MS = 20_000;
+const REPLY_TIMEOUT_MS = 120_000;
+
 export type BrainReply = { reply: string | null; conversation: ExchangeLine[] };
 
 export async function getBrainPanel(): Promise<BrainPanel> {
   if (isSubprocessBridgeMode()) {
     return runCanonicalJsonCommand<BrainPanel>(["api", "brain", "panel", "--json"]);
   }
-  return requestAriApi<BrainPanel>("GET", "/brain/panel");
+  return requestAriApi<BrainPanel>("GET", "/brain/panel", { timeoutMs: PANEL_TIMEOUT_MS });
 }
 
 export async function sendToAri(text: string): Promise<BrainReply> {
   if (isSubprocessBridgeMode()) {
     return runCanonicalJsonCommand<BrainReply>(["api", "brain", "message", "--text", text, "--json"]);
   }
-  return requestAriApi<BrainReply>("POST", "/brain/messages", { body: { text } });
+  return requestAriApi<BrainReply>("POST", "/brain/messages", { body: { text }, timeoutMs: REPLY_TIMEOUT_MS });
 }

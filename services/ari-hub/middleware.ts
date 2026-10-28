@@ -6,6 +6,8 @@ const ALLOWED_PATHS = new Set([
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
+  "/api/auth/passkey/login/options",
+  "/api/auth/passkey/login/verify",
   "/api/trigger",
   "/api/health"
 ]);
