@@ -1,8 +1,10 @@
-# ARI's Desktop Pet
+# Desktop Pets
 
-ARI has a pet that lives on top of the desktop, apart from the hub: a small owl. It is
-its own little Mac app (`tools/ari-pet`), floating above other windows on every
-desktop, with no Dock icon.
+Each service has a pet that lives on top of the desktop, apart from its app: ARI's
+owl and Claude's golden retriever. They are small Mac apps built from one program
+(`tools/ari-pet`), one app bundle per character, floating above other windows on every
+desktop, with no Dock icon. Clicking a pet opens its app: the owl opens the hub, the
+retriever opens Claude.
 
 - **Drag it anywhere.** It leans into a sideways drag, flaps when lifted, and flings its
   wings out when dragged down. It remembers where you leave it.
@@ -21,4 +23,11 @@ reads it every two seconds. `ari-live install` rebuilds the pet into
 `~/Applications/ARI Pet.app` when its source changes; `ari-live setup` starts it at
 login. `ARI Pet --snapshot DIR` draws every pose to PNGs for checking the art.
 
-The same app is meant to carry other characters later, one per service.
+## Claude's retriever
+
+Claude's pet reads Claude's own local session files (`~/.claude/projects`), not ARI's
+records. It works (tongue out, wagging, thinking dots) while Claude is mid-task,
+perks up with a red dot when Claude has finished and is waiting, says Claude's last
+reply in a bubble, sits sadly by an empty bowl when Claude hits a usage limit, and
+sleeps when the Claude app is closed or it's late. It is `~/Applications/Claude
+Pet.app`, started at login the same way.

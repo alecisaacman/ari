@@ -47,8 +47,15 @@ PREFIX = f"com.{getpass.getuser()}.ari"
 API_LABEL = f"{PREFIX}.api"
 HUB_LABEL = f"{PREFIX}.hub"
 POLL_LABEL = f"{PREFIX}.imessage-poll"
-PET_LABEL = f"{PREFIX}.pet"
-PET_APP = Path.home() / "Applications" / "ARI Pet.app"
+# Desktop pets, one app per character, all built from tools/ari-pet.
+PETS = {
+    "ARI Pet": {"label": f"{PREFIX}.pet", "plist": "Info.plist", "id": "com.alecisaacman.ari.pet"},
+    "Claude Pet": {"label": f"{PREFIX}.claude-pet", "plist": "Claude-Info.plist", "id": "com.alecisaacman.claude.pet"},
+}
+
+
+def pet_app(name: str) -> Path:
+    return Path.home() / "Applications" / f"{name}.app"
 LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 EVENTKIT = ARI_HOME / "bin" / "ari-eventkit"
 DEV_REPO = Path(__file__).resolve().parents[1]
@@ -127,7 +134,8 @@ def install_release(repo: Path, commit: str, *, run_tests: bool) -> int:
         if (release / "tools" / "ari-eventkit").is_dir():
             _build_eventkit(release / "tools" / "ari-eventkit")
         if (release / "tools" / "ari-pet").is_dir():
-            _build_pet(release / "tools" / "ari-pet")
+            for pet in PETS:
+                _build_pet(release / "tools" / "ari-pet", pet)
         (release / "RELEASE.json").write_text(
             json.dumps(
                 {
@@ -199,7 +207,7 @@ def status() -> int:
         info = json.loads((live / "RELEASE.json").read_text())
         print(f"Live: {live.name}\n  {info['subject']}\n  built {info['built_at']}, tests {info['tests']}")
     print("Releases kept: " + (", ".join(release.name for release in _releases()) or "none"))
-    for label in (POLL_LABEL, API_LABEL, HUB_LABEL, PET_LABEL):
+    for label in (POLL_LABEL, API_LABEL, HUB_LABEL, *(pet["label"] for pet in PETS.values())):
         print(f"{label}: {'running' if _running(label) else 'loaded, idle' if _loaded(label) else 'not loaded'}")
     return 0
 
@@ -225,17 +233,19 @@ def setup() -> int:
 
         # The dump job (sqlite3 with Full Disk Access) is left exactly as installed.
         plists[POLL_LABEL] = plistlib.loads((Path(rendered) / f"{POLL_LABEL}.plist").read_bytes())
-    if PET_APP.exists():
-        plists[PET_LABEL] = {
-            "Label": PET_LABEL,
-            "ProgramArguments": [str(PET_APP / "Contents" / "MacOS" / "ARI Pet")],
+    for name, pet in PETS.items():
+        if not pet_app(name).exists():
+            continue
+        plists[pet["label"]] = {
+            "Label": pet["label"],
+            "ProgramArguments": [str(pet_app(name) / "Contents" / "MacOS" / name)],
             # Starts at login, comes back after a crash, and stays quit when Alec quits it.
             "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False},
             "ProcessType": "Interactive",
             "EnvironmentVariables": {"ARI_HOME": str(ARI_HOME)},
-            "StandardOutPath": str(LOGS / "pet.log"),
-            "StandardErrorPath": str(LOGS / "pet.log"),
+            "StandardOutPath": str(LOGS / "pets.log"),
+            "StandardErrorPath": str(LOGS / "pets.log"),
         }
     for label, command in ((API_LABEL, "serve-api"), (HUB_LABEL, "serve-hub")):
         plists[label] = {
@@ -293,25 +303,27 @@ def _build_eventkit(source: Path) -> None:
     print("  The helper changed: run `ari-live connect-apple` to allow Reminders and Calendar again.")
 
 
-def _build_pet(source: Path) -> None:
-    """Build ARI's desktop pet into ~/Applications when its source changes, and restart it."""
-    files = [source / "main.swift", source / "Info.plist"]
+def _build_pet(source: Path, name: str) -> None:
+    """Build a desktop pet into ~/Applications when its source changes, and restart it."""
+    pet = PETS[name]
+    files = [source / "main.swift", source / pet["plist"]]
     digest = hashlib.sha256(b"".join(path.read_bytes() for path in files)).hexdigest()
-    stamp = PET_APP / "Contents" / "source.sha256"
+    target = pet_app(name)
+    stamp = target / "Contents" / "source.sha256"
     if stamp.exists() and stamp.read_text().strip() == digest:
         return
     with tempfile.TemporaryDirectory() as building:
-        app = Path(building) / PET_APP.name
+        app = Path(building) / target.name
         (app / "Contents" / "MacOS").mkdir(parents=True)
         shutil.copy(files[1], app / "Contents" / "Info.plist")
-        _step("Desktop pet", ["swiftc", "-O", str(files[0]), "-o", str(app / "Contents" / "MacOS" / "ARI Pet")])
-        _step("Sign pet", ["codesign", "--force", "-s", "-", "--identifier", "com.alecisaacman.ari.pet", str(app)])
+        _step(name, ["swiftc", "-O", str(files[0]), "-o", str(app / "Contents" / "MacOS" / name)])
+        _step(f"Sign {name}", ["codesign", "--force", "-s", "-", "--identifier", pet["id"], str(app)])
         (app / "Contents" / "source.sha256").write_text(digest + "\n")
-        PET_APP.parent.mkdir(parents=True, exist_ok=True)
-        shutil.rmtree(PET_APP, ignore_errors=True)
-        shutil.copytree(app, PET_APP)
-    if _loaded(PET_LABEL):
-        subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{PET_LABEL}"], check=False)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(app, target)
+    if _loaded(pet["label"]):
+        subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{pet['label']}"], check=False)
 
 
 def connect_apple() -> int:
