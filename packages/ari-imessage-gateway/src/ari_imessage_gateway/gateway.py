@@ -20,6 +20,7 @@ replays a message that already got a reply.
 from __future__ import annotations
 
 import fcntl
+import json
 import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -55,6 +56,9 @@ ALERT_LOOKBACK = timedelta(hours=24)
 # Circuit breaker: a burst of model requests this large is a loop, not Alec typing.
 # Each message takes one to four requests, so this allows a fast exchange.
 LOOP_WINDOW = timedelta(minutes=10)
+# A message answered this long after it was sent gets an honest explanation first.
+LATE_AFTER = timedelta(minutes=3)
+SENT_LOG_SIZE = 50
 LOOP_MAX_REQUESTS = 30
 NOTIFY_LEVELS = {
     AlertEscalationLevel.ELEVATED.value,
@@ -121,6 +125,10 @@ class ImessageGateway:
                 rows = read_dump(self.settings.dump_path, stale_after=self.settings.stale_after)
             except DumpUnavailable as error:
                 return PollReport(status="dump_unavailable", detail=str(error))
+            # When ARI last ran, recorded before this run, explains any late reply.
+            self._previous_run = self._read_heartbeat()
+            self._late_notice_sent = False
+            self._write_heartbeat()
             with self.session_factory() as session:
                 state = get_conversation_state(session, channel=CHANNEL)
             if state is None:
@@ -143,7 +151,7 @@ class ImessageGateway:
 
     def _handle(self, row: DumpRow, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
         text = row.text
-        if row.is_tapback or not text or _normalize(text) in _recent_replies(history):
+        if row.is_tapback or not text or _normalize(text) in _recent_replies(history) | self._sent_log():
             # Reactions are not messages, and in a self-thread ARI's own replies
             # come back looking like Alec's; they are recognized by their text.
             return history
@@ -151,6 +159,7 @@ class ImessageGateway:
         command = " ".join(text.lower().split()).rstrip(".!")
         # poll_once refuses to run without a reply handle.
         reply_to = row.chat_identifier or self.settings.reply_to or ""
+        self._explain_if_late(row, reply_to, report)
 
         if STOP_RE.match(command):
             if not self.dry_run:
@@ -296,10 +305,56 @@ class ImessageGateway:
             {"role": "assistant", "content": [{"type": "text", "text": reply}]},
         ]
 
+    def _explain_if_late(self, row: DumpRow, handle: str, report: PollReport) -> None:
+        """Say plainly why a reply is late, from facts ARI recorded, before answering."""
+        now = self.now()
+        if self._late_notice_sent or row.sent_at is None or now - row.sent_at < LATE_AFTER:
+            return
+        self._late_notice_sent = True
+        sent = _clock(row.sent_at)
+        previous = getattr(self, "_previous_run", None)
+        if previous is not None and now - previous >= LATE_AFTER:
+            notice = (
+                f"Sorry for the slow reply. You sent this at {sent}, and I couldn't see it until now: "
+                f"I wasn't running from {_clock(previous)} to {_clock(now)}, most likely because your Mac was asleep."
+            )
+        else:
+            notice = f"Sorry for the slow reply. You sent this at {sent}, and I'm only answering it now."
+        self._send(handle, notice, report)
+
+    def _read_heartbeat(self) -> datetime | None:
+        try:
+            return datetime.fromisoformat((self.settings.state_dir / "last-run").read_text().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _write_heartbeat(self) -> None:
+        if self.dry_run:
+            return
+        self.settings.state_dir.mkdir(parents=True, exist_ok=True)
+        (self.settings.state_dir / "last-run").write_text(self.now().isoformat())
+
+    def _sent_log(self) -> set[str]:
+        """Everything ARI sent recently, so its own messages are never answered, whatever produced them."""
+        try:
+            return set(json.loads((self.settings.state_dir / "sent.json").read_text()))
+        except (OSError, ValueError):
+            return set()
+
+    def _record_sent(self, body: str) -> None:
+        path = self.settings.state_dir / "sent.json"
+        try:
+            sent = json.loads(path.read_text())
+        except (OSError, ValueError):
+            sent = []
+        path.write_text(json.dumps([*sent, _normalize(body)][-SENT_LOG_SIZE:]))
+
     def _send(self, handle: str, body: str, report: PollReport) -> bool:
         report.replies.append(body)
         if self.dry_run:
             return True
+        # Recorded before sending: the echo can come back before the send call returns.
+        self._record_sent(body)
         sent = self.messages_app.send(handle, body)
         if not sent:
             # Usually the macOS Automation permission for Messages; surfaced in the log.
@@ -379,6 +434,10 @@ def _normalize(text: str) -> str:
     for curly, straight in (("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'), ("\u201d", '"')):
         text = text.replace(curly, straight)
     return " ".join(text.split())
+
+
+def _clock(moment: datetime) -> str:
+    return moment.astimezone().strftime("%-I:%M %p")
 
 
 def _utc(value: datetime) -> datetime:

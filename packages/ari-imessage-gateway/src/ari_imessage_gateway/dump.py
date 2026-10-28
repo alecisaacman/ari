@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 FIELD_SEPARATOR = "|"
+APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=UTC)
 OBJECT_REPLACEMENT_CHAR = "￼"
 
 
@@ -21,6 +22,7 @@ class DumpRow:
     text: str | None
     chat_identifier: str
     is_tapback: bool
+    sent_at: datetime | None = None
 
 
 class DumpUnavailable(RuntimeError):
@@ -39,7 +41,7 @@ def read_dump(path: Path, *, stale_after: timedelta, now: datetime | None = None
         fields = line.split(FIELD_SEPARATOR)
         if len(fields) != 6 or not fields[0].isdigit():
             continue
-        rowid, text_hex, body_hex, _date, chat_identifier, associated_type = fields
+        rowid, text_hex, body_hex, apple_date, chat_identifier, associated_type = fields
         text = bytes.fromhex(text_hex).decode("utf-8", errors="replace") if text_hex else None
         body = bytes.fromhex(body_hex) if body_hex else None
         rows.append(
@@ -49,9 +51,18 @@ def read_dump(path: Path, *, stale_after: timedelta, now: datetime | None = None
                 chat_identifier=chat_identifier,
                 # Tapbacks (Liked, Loved, ...) carry a nonzero associated type.
                 is_tapback=bool(associated_type) and associated_type != "0",
+                sent_at=_apple_time(apple_date),
             )
         )
     return sorted(rows, key=lambda row: row.rowid)
+
+
+def _apple_time(raw: str) -> datetime | None:
+    """Messages stores time since 2001-01-01 UTC, in nanoseconds on current macOS."""
+    if not raw.lstrip("-").isdigit() or int(raw) <= 0:
+        return None
+    value = int(raw)
+    return APPLE_EPOCH + timedelta(seconds=value / 1e9 if value > 10**12 else value)
 
 
 def extract_text(text: str | None, attributed_body: bytes | None) -> str | None:

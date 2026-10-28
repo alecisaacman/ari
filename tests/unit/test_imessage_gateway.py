@@ -535,3 +535,63 @@ def test_circuit_breaker_pauses_ari_instead_of_looping(settings, session_factory
     assert brain.texts == []
     assert pause_module.get_pause_state()["paused"] is True
     assert "paused myself" in messages.sent[-1][1]
+
+
+def apple_ns(moment: datetime) -> int:
+    return int((moment - datetime(2001, 1, 1, tzinfo=UTC)).total_seconds() * 1e9)
+
+
+def dump_line(rowid: int, text: str, sent_at: datetime) -> str:
+    return f"{rowid}|{text.encode().hex()}||{apple_ns(sent_at)}|{SELF}|0"
+
+
+def test_late_reply_explains_the_downtime_from_recorded_facts(settings, session_factory) -> None:
+    now = datetime(2026, 10, 28, 4, 57, tzinfo=UTC)
+    brain = FakeBrain(reply="Nothing on your plate right now.")
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=brain, messages=messages, now=lambda: now)
+    seed(gateway, settings)
+    # ARI last ran at 4:20; the Mac slept; Alec texted at 4:41.
+    (settings.state_dir / "last-run").write_text((now - timedelta(minutes=37)).isoformat())
+    settings.dump_path.write_text(
+        "\n".join([f"1|{b'old'.hex()}||0|{SELF}|0", dump_line(2, "What's on my plate", now - timedelta(minutes=16))]) + "\n"
+    )
+
+    gateway.poll_once()
+
+    notice, reply = (body for _, body in messages.sent)
+    assert notice.startswith("Sorry for the slow reply. You sent this at ")
+    assert "I wasn't running from" in notice and "most likely because your Mac was asleep" in notice
+    assert reply == "Nothing on your plate right now."
+    # The notice comes back into the thread too, and is never answered.
+    settings.dump_path.write_text(settings.dump_path.read_text() + dump_line(3, notice, now) + "\n")
+    assert gateway.poll_once().handled == 0
+    assert brain.texts == ["What's on my plate"]
+
+
+def test_prompt_reply_has_no_notice(settings, session_factory) -> None:
+    now = datetime(2026, 10, 28, 4, 57, tzinfo=UTC)
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now)
+    seed(gateway, settings)
+    settings.dump_path.write_text(dump_line(2, "hi", now - timedelta(seconds=15)) + "\n")
+
+    gateway.poll_once()
+
+    assert [body for _, body in messages.sent] == ["On it."]
+
+
+def test_own_messages_are_never_answered_even_with_an_empty_conversation(settings, session_factory) -> None:
+    brain = FakeBrain()
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=brain, messages=messages)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old"), (2, "ARI stop"))
+    gateway.poll_once()
+    with session_factory() as session:
+        from ari_core.memory import save_conversation_state
+
+        save_conversation_state(session, channel="imessage", cursor=2, messages=[])
+    write_dump(settings, (1, "old"), (2, "ARI stop"), (3, messages.sent[-1][1]))
+
+    assert gateway.poll_once().handled == 0
