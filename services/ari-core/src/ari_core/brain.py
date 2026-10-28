@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID
 
 import anthropic
+from ari_memory import OpenLoopRepository
 from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
 from sqlalchemy.orm import Session
 
@@ -32,16 +33,19 @@ from ari_core.history import get_latest_run_details
 from ari_core.modules.memory.db import remember_ari_memory, search_ari_memories
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 from ari_core.modules.tasks.db import list_ari_tasks
+from ari_core.reminders import cancel_reminder, parse_when, pending_reminders, set_reminder
 from ari_core.skills import MCP_BETA_HEADER, extract_resolved_skill_invocations
 from ari_core.state import (
     CreateOpenLoopInput,
     DailyStateUpdate,
     WeeklyPlanningUpdate,
     create_open_loop,
+    find_matching_open_loop,
     get_daily_state,
     get_weekly_state,
     list_open_loops,
     resolve_open_loop,
+    touch_open_loop,
     update_daily_state,
     update_weekly_plan,
 )
@@ -129,6 +133,17 @@ wants to watch later, not a task. Call save_for_later and reply with exactly \
 create_open_loop — one call per discrete item. Then reply with a short confirmation \
 naming exactly what you filed, so Alec can tell you parsed it correctly and aren't \
 making things up.
+- Alec will talk about the same thing more than once. ARI recognizes a loop that is \
+already open: create_open_loop then adds to that loop instead of filing it twice, and \
+says so (already_open). Tell him it was already on his list and what you added. To \
+add to a loop you already know about, use update_open_loop.
+- Today's priorities are not new open loops. Record them with set_daily_state only, \
+unless he asks for them to be tracked as tasks too.
+- "Remind me at 3 to call Sam" or "remind me tomorrow morning about X" is a reminder: \
+call set_reminder with the local date-time (work it out from when his message was \
+sent; "morning" means 9 AM unless he has said otherwise). ARI texts him at that time. \
+Confirm the exact day and time back to him. list_reminders and cancel_reminder handle \
+"what reminders do I have" and "cancel that".
 - If Alec says he applied to, submitted an application to, or sent his resume to a \
 company, file it with create_open_loop using kind="job_application" and the company \
 name in the company field — not kind="task". Filing it this way automatically \
@@ -290,6 +305,48 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"loop_id": {"type": "string"}},
             "required": ["loop_id"],
+        },
+    },
+    {
+        "name": "update_open_loop",
+        "description": (
+            "Add to an open loop Alec already has: a dated note with what he said, or a new priority."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "loop_id": {"type": "string"},
+                "note": {"type": "string"},
+                "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            },
+            "required": ["loop_id"],
+        },
+    },
+    {
+        "name": "set_reminder",
+        "description": "Have ARI text Alec at a specific time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "What to tell him, e.g. 'Call Sam about the Ramp offer.'"},
+                "at": {"type": "string", "description": "Local date-time, ISO 8601, e.g. 2026-10-28T15:00."},
+                "loop_id": {"type": "string", "description": "The open loop it is about, if any."},
+            },
+            "required": ["text", "at"],
+        },
+    },
+    {
+        "name": "list_reminders",
+        "description": "Reminders ARI has yet to send.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cancel_reminder",
+        "description": "Cancel a reminder by its id, from list_reminders.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"reminder_id": {"type": "string"}},
+            "required": ["reminder_id"],
         },
     },
     {
@@ -460,7 +517,10 @@ def make_tool_dispatcher(
             return {"resolved": {"loop_id": tool_input["loop_id"], "dry_run": True}}
         if dry_run and name == "save_for_later":
             return {"saved": tool_input["link"], "dry_run": True}
-        if dry_run and name in {"remember", "save_note", "set_daily_state", "set_weekly_plan"}:
+        if dry_run and name in {
+            "remember", "save_note", "set_daily_state", "set_weekly_plan",
+            "update_open_loop", "set_reminder", "cancel_reminder",
+        }:
             return {"recorded": {"tool": name, "dry_run": True}}
 
         if name == "remember":
@@ -536,6 +596,15 @@ def make_tool_dispatcher(
                 }
 
             if name == "create_open_loop":
+                existing = find_matching_open_loop(session, title=tool_input["title"])
+                if existing is not None:
+                    note = tool_input.get("notes") or ""
+                    if tool_input["title"].strip().lower() != existing.title.strip().lower():
+                        note = f"{tool_input['title']}. {note}".strip()
+                    touched = touch_open_loop(
+                        session, loop=existing, touched_at=datetime.now(tz=UTC), note=note, source="ari.brain"
+                    )
+                    return {"already_open": _serialize_loop(touched.state)}
                 loop_input = CreateOpenLoopInput(
                     title=tool_input["title"],
                     source="ari.brain",
@@ -556,6 +625,43 @@ def make_tool_dispatcher(
                 if result is None:
                     return {"error": f"no open loop found with id {tool_input['loop_id']}"}
                 return {"resolved": _serialize_loop(result.state)}
+
+            if name == "update_open_loop":
+                loop = OpenLoopRepository(session).get(UUID(tool_input["loop_id"]))
+                if loop is None:
+                    return {"error": f"no open loop found with id {tool_input['loop_id']}"}
+                priority = tool_input.get("priority")
+                touched = touch_open_loop(
+                    session,
+                    loop=loop,
+                    touched_at=datetime.now(tz=UTC),
+                    note=tool_input.get("note") or "",
+                    priority=OpenLoopPriority(priority) if priority else None,
+                    source="ari.brain",
+                )
+                return {"updated": _serialize_loop(touched.state)}
+
+            if name == "set_reminder":
+                try:
+                    reminder = set_reminder(
+                        session,
+                        text=str(tool_input["text"]),
+                        remind_at=parse_when(str(tool_input["at"])),
+                        now=datetime.now(tz=UTC),
+                        loop_id=UUID(tool_input["loop_id"]) if tool_input.get("loop_id") else None,
+                    )
+                except ValueError as error:
+                    return {"error": str(error)}
+                return {"reminder": reminder.describe()}
+
+            if name == "list_reminders":
+                return {"reminders": [reminder.describe() for reminder in pending_reminders(session)]}
+
+            if name == "cancel_reminder":
+                cancelled = cancel_reminder(session, UUID(tool_input["reminder_id"]))
+                if cancelled is None:
+                    return {"error": "No pending reminder with that id."}
+                return {"cancelled": cancelled.describe()}
 
             if name == "save_for_later":
                 save_for_later(tool_input["link"], tool_input.get("note"))
@@ -579,6 +685,10 @@ FAST_TOOL_NAMES = {
     "save_note",
     "set_daily_state",
     "set_weekly_plan",
+    "update_open_loop",
+    "set_reminder",
+    "list_reminders",
+    "cancel_reminder",
 }
 FAST_TOOLS: list[dict[str, Any]] = [tool for tool in TOOLS if tool["name"] in FAST_TOOL_NAMES] + [ESCALATE_TOOL]
 

@@ -257,3 +257,54 @@ def test_brain_keeps_and_finds_memory_notes_and_daily_state(tmp_path) -> None:
         state = get_daily_state(session, day=datetime.now().date())
     assert state is not None and state.priorities == ["Outline section 3"] and state.stress == 4
     assert "hub_tasks" in dispatch("get_open_loops", {})
+
+
+def _dispatcher(tmp_path):
+    from ari_memory import create_engine, create_session_factory
+
+    session_factory = create_session_factory(create_engine(f"sqlite+pysqlite:///{tmp_path / 'ari.db'}"))
+    dispatch = brain.make_tool_dispatcher(
+        session_factory, save_for_later=lambda link, note: None, spine_db_path=tmp_path / "spine.db"
+    )
+    return session_factory, dispatch
+
+
+def test_talking_about_an_open_loop_again_adds_to_it_instead_of_filing_it_twice(tmp_path) -> None:
+    _, dispatch = _dispatcher(tmp_path)
+
+    first = dispatch("create_open_loop", {"title": "Finish the outline"})["created"]
+    again = dispatch("create_open_loop", {"title": "Finish outline for section 3", "notes": "Due Friday"})
+    other = dispatch("create_open_loop", {"title": "Call Sam"})
+
+    assert again["already_open"]["id"] == first["id"]
+    assert "Finish outline for section 3" in again["already_open"]["notes"]
+    assert "Due Friday" in again["already_open"]["notes"]
+    assert "created" in other
+    loops = dispatch("get_open_loops", {})["open_loops"]
+    assert sorted(loop["title"] for loop in loops) == ["Call Sam", "Finish the outline"]
+
+    updated = dispatch("update_open_loop", {"loop_id": first["id"], "note": "Sam wants it by Thursday", "priority": "high"})
+    assert updated["updated"]["priority"] == "high"
+    assert "Sam wants it by Thursday" in updated["updated"]["notes"]
+
+
+def test_different_loops_about_the_same_person_stay_separate(tmp_path) -> None:
+    _, dispatch = _dispatcher(tmp_path)
+
+    dispatch("create_open_loop", {"title": "Email Sam the deck"})
+
+    assert "created" in dispatch("create_open_loop", {"title": "Call Sam about Ramp"})
+
+
+def test_reminders_are_set_listed_and_cancelled(tmp_path) -> None:
+    from datetime import timedelta
+
+    _, dispatch = _dispatcher(tmp_path)
+    at = (datetime.now() + timedelta(hours=2)).replace(microsecond=0).isoformat()
+
+    reminder = dispatch("set_reminder", {"text": "Call Sam", "at": at})["reminder"]
+    assert [item["id"] for item in dispatch("list_reminders", {})["reminders"]] == [reminder["id"]]
+    assert dispatch("cancel_reminder", {"reminder_id": reminder["id"]})["cancelled"]["status"] == "cancelled"
+    assert dispatch("list_reminders", {})["reminders"] == []
+    past = (datetime.now() - timedelta(hours=1)).isoformat()
+    assert "error" in dispatch("set_reminder", {"text": "Too late", "at": past})

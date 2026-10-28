@@ -254,3 +254,20 @@ class BrainUsageRow(Base):
     # Integer micro-dollars, so monthly totals never accumulate float error.
     cost_microusd: Mapped[int] = mapped_column(BigInteger, default=0)
     escalated: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ReminderRow(Base):
+    """Something Alec asked ARI to tell him at a specific time."""
+
+    __tablename__ = "reminders"
+    __table_args__ = (Index("ix_reminders_status_remind_at", "status", "remind_at"),)
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # pending, sent, or cancelled
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    loop_id: Mapped[UUID | None] = mapped_column(SQLUUID(as_uuid=True), nullable=True)
+    source: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

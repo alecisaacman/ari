@@ -41,6 +41,7 @@ from ari_core.brain_usage import (
 from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orchestration
+from ari_core.reminders import due_reminders, mark_sent
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
 from ari_memory.tables import AlertRow
 from ari_state import AlertChannel, AlertEscalationLevel, AlertStatus
@@ -88,6 +89,7 @@ class PollReport:
     replies: list[str] = field(default_factory=list)
     alerts_sent: int = 0
     signals_raised: int = 0
+    reminders_sent: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +99,7 @@ class PollReport:
             "replies": self.replies,
             "alertsSent": self.alerts_sent,
             "signalsRaised": self.signals_raised,
+            "remindersSent": self.reminders_sent,
         }
 
 
@@ -111,6 +114,7 @@ class ImessageGateway:
         respond: Respond = respond_to_message,
         now: Callable[[], datetime] = lambda: datetime.now(tz=UTC),
         dry_run: bool = False,
+        signal_engine: bool = True,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
@@ -119,6 +123,7 @@ class ImessageGateway:
         self.respond = respond
         self.now = now
         self.dry_run = dry_run
+        self.signal_engine = signal_engine
 
     def poll_once(self) -> PollReport:
         report = PollReport()
@@ -151,14 +156,16 @@ class ImessageGateway:
                     return report
                 cursor = row.rowid
                 self._save(cursor, history)
-            self._maybe_orchestrate(report)
+            # A message may have changed ARI's state, so the engine re-checks before alerts go out.
+            self._maybe_orchestrate(report, force=report.handled > 0)
             history = self._send_alerts(history, report)
+            history = self._send_reminders(history, report)
             self._save(cursor, history)
         return report
 
-    def _maybe_orchestrate(self, report: PollReport) -> None:
+    def _maybe_orchestrate(self, report: PollReport, *, force: bool = False) -> None:
         """Run ARI's signal engine on schedule, so ARI notices things without being asked."""
-        if self.dry_run or get_pause_state()["paused"]:
+        if not self.signal_engine or self.dry_run or get_pause_state()["paused"]:
             return
         marker = self.settings.state_dir / "last-orchestration"
         now = self.now()
@@ -166,7 +173,7 @@ class ImessageGateway:
             last = datetime.fromisoformat(marker.read_text().strip())
         except (OSError, ValueError):
             last = None
-        if last is not None and now - last < ORCHESTRATE_EVERY:
+        if not force and last is not None and now - last < ORCHESTRATE_EVERY:
             return
         marker.write_text(now.isoformat())
         try:
@@ -304,13 +311,14 @@ class ImessageGateway:
         now = self.now()
         with self.session_factory() as session:
             rows = session.scalars(
-                select(AlertRow).where(AlertRow.sent_at.is_(None), AlertRow.escalation_level.in_(NOTIFY_LEVELS))
+                select(AlertRow).where(
+                    AlertRow.status == AlertStatus.PENDING.value,
+                    AlertRow.sent_at.is_(None),
+                    AlertRow.escalation_level.in_(NOTIFY_LEVELS),
+                )
             ).all()
             for alert in sorted(rows, key=lambda row: _utc(row.created_at)):
                 if now - _utc(alert.created_at) > ALERT_LOOKBACK:
-                    continue
-                if alert.state_date is not None and alert.state_date != now.astimezone().date():
-                    # An alert about a day that is over is not worth interrupting Alec for.
                     continue
                 if alert.escalation_level != AlertEscalationLevel.URGENT.value and self._quiet(now):
                     continue
@@ -323,6 +331,24 @@ class ImessageGateway:
                     history = [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
             if not self.dry_run:
                 session.commit()
+        return history
+
+    def _send_reminders(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
+        """Text Alec the reminders that are due. He chose the time, so quiet hours don't hold them."""
+        if self.dry_run or get_pause_state()["paused"]:
+            return history
+        now = self.now()
+        with self.session_factory() as session:
+            for reminder in due_reminders(session, now=now):
+                body = f"Reminder: {reminder.text}"
+                if now - reminder.remind_at > LATE_AFTER:
+                    body += f" (This was due at {_clock(reminder.remind_at)}; I wasn't running then.)"
+                if not self._send(self.settings.reply_to or "", body, report):
+                    break
+                mark_sent(session, reminder.id, sent_at=now)
+                report.reminders_sent += 1
+                if history:
+                    history = [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}]
         return history
 
     def _quiet(self, now: datetime) -> bool:

@@ -11,6 +11,14 @@ reasons on its own, and neither does any other surface.
   when that changes the answer.
 - **Capture.** Tasks, commitments, job applications (which start company
   research), and links to save for later go straight into ARI's records.
+  Talking about something again doesn't file it twice: ARI's core recognizes an
+  open loop the new one is about (one title's words contain the other's, or most
+  words are shared) and adds a dated note to it instead (`find_matching_open_loop`,
+  `touch_open_loop`). Today's priorities are daily state, not new loops.
+- **Remind.** "Remind me at 3 to call Sam" becomes a reminder in ARI's store.
+  The poller texts it when it is due, with no model call. Alec chose the time, so
+  quiet hours don't hold it; "ARI stop" does. A reminder sent late (the Mac was
+  asleep) says when it was due.
 - **Remember.** Lasting facts about Alec, his people, and his work go into ARI's
   canonical memory (`remember`), longer material into notes (`save_note`), and
   the brain checks them (`recall`) before answering about a person or something
@@ -31,8 +39,11 @@ reasons on its own, and neither does any other surface.
   for open loops piling up, high-priority loops going stale, the week drifting
   from its outcomes, elevated stress, and no check-in for the day. Its alerts are
   sent as below; for the text, the gateway phrases them for a person (the
-  engine's own wording stays in ARI's records), and only alerts about the current
-  day are sent. Unattended runs may auto-execute only reads (`read_file`, `ls`,
+  engine's own wording stays in ARI's records). Each run dismisses unsent alerts
+  it no longer raises: an alert from an earlier day, or one whose condition has
+  cleared, such as a check-in recorded before the alert went out. The engine also
+  re-runs after every handled message, so a reply is reflected before the next
+  alert is sent. Unattended runs may auto-execute only reads (`read_file`, `ls`,
   `cat`) in the workspace; anything else needs approval and does not run.
 - **Hear from ARI.** Elevated, interruptive, and urgent alerts from the last day
   are texted once, with the reason ARI raised them. Quiet hours (default 22:00

@@ -173,6 +173,10 @@ def run_signal_orchestration(
         )
         for alert in generated_alerts
     ]
+    alerts.dismiss_unconfirmed(
+        state_date=orchestration_input.state_date,
+        still_true={alert.id for alert in persisted_alerts},
+    )
     dispatch_results = [dispatch_decision(decision) for decision in actionable_decisions]
     evaluation_results = [evaluate_dispatch_result(result) for result in dispatch_results]
     loop_control = summarize_evaluation_results(evaluation_results)

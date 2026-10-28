@@ -219,6 +219,10 @@ class _FakeAlertRepository:
     def create(self, alert):
         return alert
 
+    def dismiss_unconfirmed(self, *, state_date, still_true):
+        del state_date, still_true
+        return 0
+
 
 class _FakeRunRepository:
     def __init__(self, session) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TypeVar
@@ -276,6 +277,77 @@ def create_open_loop(
         )
 
     return StateMutationResult(state=created, events=[event])
+
+
+_LOOP_STOPWORDS = frozenset(
+    "the and for with about from into this that then them his her its out off our your "
+    "need needs want wants have has get got make sure today tomorrow week".split()
+)
+
+
+def _loop_words(title: str) -> frozenset[str]:
+    words = re.findall(r"[a-z0-9']+", title.lower())
+    return frozenset(word for word in words if len(word) >= 3 and word not in _LOOP_STOPWORDS)
+
+
+def find_matching_open_loop(session: Session, *, title: str) -> OpenLoop | None:
+    """The open loop `title` is already about, if any.
+
+    Alec talks about the same thing more than once ("finish the outline", later "the
+    outline for section 3"). A loop matches when one title's words contain the
+    other's (at least two words), or when most of their words are shared.
+    """
+    words = _loop_words(title)
+    if not words:
+        return None
+    best: tuple[float, OpenLoop] | None = None
+    for loop in OpenLoopRepository(session).list_open():
+        other = _loop_words(loop.title)
+        if not other:
+            continue
+        shared = len(words & other)
+        overlap = shared / len(words | other)
+        contained = shared >= 2 and (words <= other or other <= words)
+        if (contained or overlap >= 0.6) and (best is None or overlap > best[0]):
+            best = (overlap, loop)
+    return None if best is None else best[1]
+
+
+def touch_open_loop(
+    session: Session,
+    *,
+    loop: OpenLoop,
+    touched_at: datetime,
+    note: str = "",
+    priority: OpenLoopPriority | None = None,
+    source: str = "ari.cli.loops",
+) -> StateMutationResult[OpenLoop]:
+    """Add what Alec said to a loop that is already open, instead of filing it twice."""
+    timestamp = _normalize_timestamp(touched_at)
+    notes = loop.notes
+    if note.strip() and note.strip() not in notes:
+        dated = f"{timestamp.astimezone():%b %-d}: {note.strip()}"
+        notes = f"{notes}\n{dated}".strip()
+    updated = OpenLoopRepository(session).upsert(
+        loop.model_copy(
+            update={
+                "notes": notes,
+                "priority": priority or loop.priority,
+                "last_touched_at": timestamp,
+            }
+        )
+    )
+    event = EventRepository(session).create(
+        Event(
+            source=source,
+            category=EventCategory.OPEN_LOOP_UPDATE,
+            occurred_at=timestamp,
+            title="Open loop updated",
+            payload=updated.model_dump(mode="json"),
+        )
+    )
+    session.commit()
+    return StateMutationResult(state=updated, events=[event])
 
 
 def _trigger_job_application_enrichment(

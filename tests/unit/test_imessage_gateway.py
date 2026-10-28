@@ -75,8 +75,6 @@ def isolated_pause(monkeypatch: pytest.MonkeyPatch, ledger_dir: Path) -> None:
 def settings(ledger_dir: Path) -> ImessageSettings:
     state_dir = ledger_dir / "imessage"
     state_dir.mkdir()
-    # The signal engine stays off unless a test turns it on.
-    (state_dir / "last-orchestration").write_text("2999-01-01T00:00:00+00:00")
     return ImessageSettings(
         self_identifiers=(SELF,),
         reply_to=SELF,
@@ -95,13 +93,17 @@ def write_dump(settings: ImessageSettings, *rows: tuple[int, str] | tuple[int, s
     settings.dump_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def make_gateway(settings, session_factory, *, brain=None, desk=None, messages=None, **kwargs) -> ImessageGateway:
+def make_gateway(
+    settings, session_factory, *, brain=None, desk=None, messages=None, signal_engine=False, **kwargs
+) -> ImessageGateway:
+    # The signal engine stays off unless a test turns it on.
     return ImessageGateway(
         settings=settings,
         session_factory=session_factory,
         action_desk=desk,
         messages_app=messages or FakeMessages(),
         respond=brain or FakeBrain(),
+        signal_engine=signal_engine,
         **kwargs,
     )
 
@@ -600,10 +602,9 @@ def test_own_messages_are_never_answered_even_with_an_empty_conversation(setting
 
 
 def test_signal_engine_runs_on_schedule_and_asks_for_a_check_in(settings, session_factory) -> None:
-    (settings.state_dir / "last-orchestration").unlink()
     now = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)
     messages = FakeMessages()
-    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now)
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now, signal_engine=True)
     seed(gateway, settings)
 
     report = gateway.poll_once()
@@ -618,40 +619,72 @@ def test_signal_engine_runs_on_schedule_and_asks_for_a_check_in(settings, sessio
 
 
 def test_signal_engine_waits_while_ari_is_paused(settings, session_factory) -> None:
-    (settings.state_dir / "last-orchestration").unlink()
     pause_module.pause("test")
-    gateway = make_gateway(settings, session_factory)
+    gateway = make_gateway(settings, session_factory, signal_engine=True)
     seed(gateway, settings)
 
     assert gateway.poll_once().signals_raised == 0
     assert not (settings.state_dir / "last-orchestration").exists()
 
 
-def test_alert_about_a_day_that_is_over_is_not_sent(settings, session_factory) -> None:
-    now = datetime(2026, 10, 28, 15, 0, tzinfo=UTC)
+def _pending_alert(state_date, created_at, fingerprint: str) -> AlertRow:
+    return AlertRow(
+        id=uuid4(),
+        state_date=state_date,
+        fingerprint=fingerprint,
+        status="pending",
+        channel="phone",
+        escalation_level="elevated",
+        title="No daily check-in recorded",
+        message="",
+        reason="",
+        source_signal_ids=[],
+        created_at=created_at,
+    )
+
+
+def test_alert_about_a_day_that_is_over_is_dismissed_not_sent(settings, session_factory) -> None:
+    now = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)
+    yesterday = _pending_alert((now - timedelta(days=1)).astimezone().date(), now - timedelta(hours=8), "yesterday")
+    yesterday_id = yesterday.id
     with session_factory() as session:
-        session.add(
-            AlertRow(
-                id=uuid4(),
-                state_date=(now - timedelta(days=1)).astimezone().date(),
-                fingerprint="yesterday",
-                status="pending",
-                channel="phone",
-                escalation_level="elevated",
-                title="No daily check-in recorded",
-                message="",
-                reason="",
-                source_signal_ids=[],
-                created_at=now - timedelta(hours=8),
-            )
-        )
+        session.add(yesterday)
         session.commit()
     messages = FakeMessages()
-    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now)
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now, signal_engine=True)
     seed(gateway, settings)
 
-    assert gateway.poll_once().alerts_sent == 0
-    assert messages.sent == []
+    gateway.poll_once()
+
+    with session_factory() as session:
+        assert session.get(AlertRow, yesterday_id).status == "dismissed"
+    # Only today's check-in question goes out, once.
+    assert [text for _, text in messages.sent] == [
+        "You haven't checked in today. What are your priorities, and what would make today a win?"
+    ]
+
+
+def test_alert_whose_condition_cleared_is_dismissed_before_it_is_sent(settings, session_factory) -> None:
+    from ari_core.state import DailyStateUpdate, update_daily_state
+
+    now = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)
+    with session_factory() as session:
+        # Raised overnight, held for quiet hours; Alec then checked in before it went out.
+        session.add(_pending_alert(now.astimezone().date(), now - timedelta(hours=8), "overnight"))
+        session.commit()
+        update_daily_state(
+            session,
+            day=now.astimezone().date(),
+            update=DailyStateUpdate(priorities=["Outline"], win_condition="Outline done"),
+            checked_at=now - timedelta(minutes=5),
+        )
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now, signal_engine=True)
+    seed(gateway, settings)
+
+    gateway.poll_once()
+
+    assert not any("checked in" in text for _, text in messages.sent)
 
 
 def test_out_of_credits_is_explained_once_per_message_not_retried(settings, session_factory) -> None:
@@ -674,3 +707,57 @@ def test_out_of_credits_is_explained_once_per_message_not_retried(settings, sess
     assert gateway.poll_once().handled == 0  # not retried
     assert calls == ["what's on my plate"]
     assert "credits have run out" in messages.sent[-1][1]
+
+
+def test_reminder_is_texted_when_due_even_in_quiet_hours_and_only_once(settings, session_factory) -> None:
+    from dataclasses import replace
+
+    from ari_core.reminders import set_reminder
+
+    now = datetime(2026, 10, 28, 15, 0, tzinfo=UTC)
+    with session_factory() as session:
+        set_reminder(session, text="Call Sam about the Ramp offer.", remind_at=now + timedelta(minutes=1), now=now)
+    clock = {"now": now}
+    messages = FakeMessages()
+    quiet_all_day = replace(settings, quiet_hours=(0, 23))
+    gateway = make_gateway(quiet_all_day, session_factory, messages=messages, now=lambda: clock["now"])
+    seed(gateway, quiet_all_day)
+
+    assert gateway.poll_once().reminders_sent == 0  # not due yet
+    clock["now"] = now + timedelta(minutes=1, seconds=5)
+    assert gateway.poll_once().reminders_sent == 1
+    assert gateway.poll_once().reminders_sent == 0
+    assert messages.sent == [(SELF, "Reminder: Call Sam about the Ramp offer.")]
+
+
+def test_late_reminder_says_when_it_was_due(settings, session_factory) -> None:
+    from ari_core.reminders import set_reminder
+
+    now = datetime(2026, 10, 28, 15, 0, tzinfo=UTC)
+    with session_factory() as session:
+        set_reminder(session, text="Submit the Stripe application.", remind_at=now + timedelta(minutes=1), now=now)
+    messages = FakeMessages()
+    later = now + timedelta(hours=2)
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: later)
+    seed(gateway, settings)
+
+    gateway.poll_once()
+
+    text = messages.sent[-1][1]
+    assert text.startswith("Reminder: Submit the Stripe application.")
+    assert "This was due at" in text and "I wasn't running then" in text
+
+
+def test_reminders_wait_while_ari_is_paused(settings, session_factory) -> None:
+    from ari_core.reminders import set_reminder
+
+    now = datetime(2026, 10, 28, 15, 0, tzinfo=UTC)
+    with session_factory() as session:
+        set_reminder(session, text="Stretch.", remind_at=now + timedelta(seconds=1), now=now)
+    pause_module.pause("test")
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now + timedelta(minutes=1))
+    seed(gateway, settings)
+
+    assert gateway.poll_once().reminders_sent == 0
+    assert messages.sent == []

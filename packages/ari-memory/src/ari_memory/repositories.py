@@ -473,6 +473,28 @@ class AlertRepository:
         ).all()
         return [self._to_model(row) for row in rows]
 
+    def dismiss_unconfirmed(self, *, state_date: date, still_true: set[UUID]) -> int:
+        """Dismiss unsent alerts a run on `state_date` no longer raises.
+
+        An alert from an earlier day, or one whose condition has cleared (the
+        check-in was recorded, the loop was closed), is no longer true, so it is
+        never delivered late.
+        """
+        rows = self._session.scalars(
+            select(AlertRow).where(
+                AlertRow.status == AlertStatus.PENDING.value,
+                AlertRow.sent_at.is_(None),
+                AlertRow.state_date <= state_date,
+            )
+        ).all()
+        dismissed = 0
+        for row in rows:
+            if row.state_date < state_date or row.id not in still_true:
+                row.status = AlertStatus.DISMISSED.value
+                dismissed += 1
+        self._session.flush()
+        return dismissed
+
     def _to_model(self, row: AlertRow) -> Alert:
         return Alert(
             id=row.id,
