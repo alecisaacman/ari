@@ -326,6 +326,105 @@ struct Owl: View {
 }
 
 
+// MARK: - The golden retriever, from photos
+
+// Photo poses ship inside Claude Pet.app (Contents/Resources/poses), cut out of their
+// backgrounds by tools/ari-pet/cutout.swift. When they're there, the retriever is the
+// photo of the pose that fits, with live motion on top; otherwise it's drawn.
+let photoPoses: [String: NSImage] = {
+    guard let folder = Bundle.main.resourceURL?.appendingPathComponent("poses"),
+          let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return [:] }
+    var poses: [String: NSImage] = [:]
+    for file in files where file.pathExtension == "png" {
+        poses[file.deletingPathExtension().lastPathComponent] = NSImage(contentsOf: file)
+    }
+    return poses
+}()
+
+struct PhotoRetriever: View {
+    @ObservedObject var model: PetModel
+
+    // The photo for the moment, and whether to mirror it (the leap faces right).
+    func photo() -> (name: String, flipped: Bool) {
+        let wanted: (String, Bool) = {
+            switch model.drag {
+            case .left: return ("leap", true)
+            case .right: return ("leap", false)
+            case .up: return ("lifted", false)
+            case .down: return ("startled", false)
+            case .none: break
+            }
+            switch model.mood {
+            case .thinking: return ("panting", false)
+            case .alert: return ("alert", false)
+            case .asleep, .offline: return ("asleep", false)
+            case .outOfCredits: return ("sad", false)
+            case .idle: return ("sit", false)
+            }
+        }()
+        return photoPoses[wanted.0] == nil ? ("sit", false) : wanted
+    }
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let mood = model.mood
+            let drag = model.drag
+            let current = photo()
+            let panting = current.name == "panting"
+            let breathe = 1 + (panting ? 0.022 * sin(t * 9) : 0.012 * sin(t * (mood == .asleep ? 1.0 : 1.8)))
+            let hop: Double = mood == .alert && drag == .none && sin(t * 3) > 0.8 ? -3 : 0
+            let sway: Double = {
+                switch drag {
+                case .left: return -5 + sin(t * 10) * 1.5
+                case .right: return 5 + sin(t * 10) * 1.5
+                case .up: return sin(t * 6) * 6
+                case .down: return sin(t * 30) * 1.5
+                case .none: return 0
+                }
+            }()
+            ZStack {
+                if let image = photoPoses[current.name] {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .scaleEffect(x: (current.flipped ? -1 : 1) * (2 - breathe), y: breathe, anchor: .bottom)
+                        .rotationEffect(.degrees(sway), anchor: drag == .up ? .top : .bottom)
+                        .offset(y: hop)
+                        .saturation(mood == .offline ? 0.25 : (mood == .outOfCredits ? 0.6 : 1))
+                        .opacity(mood == .offline ? 0.8 : 1)
+                        .shadow(color: .black.opacity(0.18), radius: 3, y: 2)
+                        .id(current.name + (current.flipped ? "-flipped" : ""))
+                        .transition(.opacity)
+                }
+                if mood == .alert {
+                    Circle().fill(Color(hex: 0xe5484d)).frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Color.white, lineWidth: 1.5)).offset(x: 34, y: -40)
+                }
+                if mood == .asleep || mood == .offline {
+                    let phase = t.truncatingRemainder(dividingBy: 3) / 3
+                    Text("z").font(.system(size: 10, weight: .bold, design: .rounded)).foregroundColor(.secondary)
+                        .opacity(sin(phase * .pi)).offset(x: 34, y: -30 - phase * 8)
+                }
+                if mood == .outOfCredits {
+                    EmptyBowl().offset(x: 44, y: 40)
+                }
+                if mood == .thinking {
+                    HStack(spacing: 3) {
+                        ForEach(0..<3) { index in
+                            Circle().fill(Color.secondary).frame(width: 4, height: 4)
+                                .opacity(0.35 + 0.65 * max(0, sin(t * 5 - Double(index) * 0.7)))
+                        }
+                    }.offset(x: 38, y: -42)
+                }
+            }
+            .frame(width: petBox.width, height: petBox.height, alignment: .bottom)
+            .animation(.easeInOut(duration: 0.18), value: current.name + (current.flipped ? "1" : "0"))
+        }
+    }
+}
+
 // MARK: - The golden retriever
 
 // Drawn on a 100 x 110 canvas, sitting and facing out, with shading and fur strokes.
@@ -696,7 +795,13 @@ struct PetView: View {
                     .frame(maxWidth: 230)
                     .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
             }
-            if model.character == .owl { Owl(model: model) } else { Retriever(model: model) }
+            if model.character == .owl {
+                Owl(model: model)
+            } else if photoPoses["sit"] != nil {
+                PhotoRetriever(model: model)
+            } else {
+                Retriever(model: model)
+            }
         }
         .frame(width: 250, height: 210, alignment: .bottom)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: model.bubble)
@@ -726,13 +831,13 @@ final class DragLayer: NSView {
     // Only the owl itself catches the mouse; the rest of the window is see-through to clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
-        let owlBox = NSRect(x: bounds.midX - 42, y: 0, width: 84, height: 92)
+        let owlBox = NSRect(x: bounds.midX - petBox.width / 2, y: 0, width: petBox.width, height: petBox.height)
         return owlBox.contains(local) ? self : nil
     }
 
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
-        let owlBox = NSRect(x: bounds.midX - 42, y: 0, width: 84, height: 92)
+        let owlBox = NSRect(x: bounds.midX - petBox.width / 2, y: 0, width: petBox.width, height: petBox.height)
         addTrackingArea(NSTrackingArea(rect: owlBox, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
     }
 
@@ -802,6 +907,7 @@ let appURL = character == .owl
     ? URL(fileURLWithPath: NSHomeDirectory() + "/Applications/ARI Hub.app")
     : URL(fileURLWithPath: "/Applications/Claude.app")
 let appName = character == .owl ? "ARI Hub" : "Claude"
+let petBox = character == .retriever && photoPoses["sit"] != nil ? CGSize(width: 118, height: 104) : CGSize(width: 84, height: 92)
 let petName = character == .owl ? "ARI Pet" : "Claude Pet"
 
 // `ARI Pet --snapshot DIR` draws every mood and drag pose to PNGs, for checking the art.

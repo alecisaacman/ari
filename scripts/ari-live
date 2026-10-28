@@ -50,7 +50,13 @@ POLL_LABEL = f"{PREFIX}.imessage-poll"
 # Desktop pets, one app per character, all built from tools/ari-pet.
 PETS = {
     "ARI Pet": {"label": f"{PREFIX}.pet", "plist": "Info.plist", "id": "com.alecisaacman.ari.pet"},
-    "Claude Pet": {"label": f"{PREFIX}.claude-pet", "plist": "Claude-Info.plist", "id": "com.alecisaacman.claude.pet"},
+    "Claude Pet": {
+        "label": f"{PREFIX}.claude-pet",
+        "plist": "Claude-Info.plist",
+        "id": "com.alecisaacman.claude.pet",
+        # Photo poses, already cut out of their backgrounds (tools/ari-pet/cutout.swift).
+        "art": "art/claude",
+    },
 }
 
 
@@ -307,7 +313,8 @@ def _build_pet(source: Path, name: str) -> None:
     """Build a desktop pet into ~/Applications when its source changes, and restart it."""
     pet = PETS[name]
     files = [source / "main.swift", source / pet["plist"]]
-    digest = hashlib.sha256(b"".join(path.read_bytes() for path in files)).hexdigest()
+    art = sorted((source / pet["art"]).glob("*.png")) if pet.get("art") else []
+    digest = hashlib.sha256(b"".join(path.read_bytes() for path in [*files, *art])).hexdigest()
     target = pet_app(name)
     stamp = target / "Contents" / "source.sha256"
     if stamp.exists() and stamp.read_text().strip() == digest:
@@ -316,6 +323,11 @@ def _build_pet(source: Path, name: str) -> None:
         app = Path(building) / target.name
         (app / "Contents" / "MacOS").mkdir(parents=True)
         shutil.copy(files[1], app / "Contents" / "Info.plist")
+        if art:
+            poses = app / "Contents" / "Resources" / "poses"
+            poses.mkdir(parents=True)
+            for image in art:
+                shutil.copy(image, poses / image.name)
         _step(name, ["swiftc", "-O", str(files[0]), "-o", str(app / "Contents" / "MacOS" / name)])
         _step(f"Sign {name}", ["codesign", "--force", "-s", "-", "--identifier", pet["id"], str(app)])
         (app / "Contents" / "source.sha256").write_text(digest + "\n")

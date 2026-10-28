@@ -31,3 +31,14 @@ perks up with a red dot when Claude has finished and is waiting, says Claude's l
 reply in a bubble, sits sadly by an empty bowl when Claude hits a usage limit, and
 sleeps when the Claude app is closed or it's late. It is `~/Applications/Claude
 Pet.app`, started at login the same way.
+
+### Photo poses
+
+Claude's retriever is meant to be photorealistic. The eight poses are generated as
+photos (prompts in `tools/ari-pet/art/claude/PROMPTS.md`), then
+`tools/ari-pet/import-art.sh` lifts each dog out of its background with Apple's Vision
+subject lifting and files it in `tools/ari-pet/art/claude/`. `ari-live install`
+bundles them into Claude Pet. The pet shows the photo for the moment (sitting, panting
+while Claude works, alert when Claude waits, asleep, sad at a usage limit, lifted,
+leaping, startled), mirrored to face the way it's dragged, with breathing, bounce, and
+sway on top. Until the photos exist, it draws the dog instead.
