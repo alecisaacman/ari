@@ -5,19 +5,15 @@ import {
   createCanonicalCodingAction,
   runCanonicalCodingAction
 } from "@/src/core/ari-spine/execution-bridge";
+import { getBrainPanel, sendToAri } from "@/src/core/ari-spine/brain-bridge";
 import { getConfig } from "@/src/core/config";
 import { getDatabase } from "@/src/core/db/database";
-import { runTurn } from "@/src/core/agent/run-turn";
 import { getActiveStateSnapshot } from "@/src/core/memory/spine";
-import { getModelProvider } from "@/src/core/models";
 import { dispatchOrchestrationInstruction, getLatestOrchestrationSnapshot, ingestBuilderOutputForProcessing, recordAlecOrchestrationDecision } from "@/src/core/orchestration/processor";
-import { getVoiceCapabilities } from "@/src/core/voice/capabilities";
 import type { ChatRequestBody, HealthSnapshot, TriggerRequestBody } from "@/src/core/api/types";
 
 export async function getHealthSnapshot(): Promise<HealthSnapshot> {
   const config = getConfig();
-  const provider = getModelProvider();
-  const voice = getVoiceCapabilities();
 
   getDatabase();
   ensureBackgroundRuntime();
@@ -25,12 +21,18 @@ export async function getHealthSnapshot(): Promise<HealthSnapshot> {
 
   return {
     appName: config.appName,
-    mode: provider.mode,
+    // The hub has no model of its own; every message goes to ARI's brain.
+    mode: "ari",
     auth: {
       uiPasswordConfigured: Boolean(config.uiPassword && config.uiPassword !== "change-me"),
       triggerTokenConfigured: Boolean(config.triggerToken && config.triggerToken !== "change-me-too")
     },
-    voice,
+    voice: {
+      serverTranscription: false,
+      serverSpeechSynthesis: false,
+      browserFallbackInput: true,
+      browserFallbackOutput: true
+    },
     storage: {
       dbReady: true,
       workspacePath: config.workspaceRoot
@@ -45,17 +47,16 @@ export async function getHealthSnapshot(): Promise<HealthSnapshot> {
   };
 }
 
+export async function getAriPanel() {
+  return getBrainPanel();
+}
+
 export async function handleChatRequest(body: ChatRequestBody) {
   if (!body.message?.trim()) {
     throw new Error("message is required.");
   }
 
-  ensureBackgroundRuntime();
-  return runTurn({
-    message: body.message,
-    conversationId: body.conversationId,
-    source: body.source || "web"
-  });
+  return sendToAri(body.message.trim());
 }
 
 export async function handleTriggerRequest(body: TriggerRequestBody) {
@@ -63,78 +64,27 @@ export async function handleTriggerRequest(body: TriggerRequestBody) {
     throw new Error("text is required.");
   }
 
-  ensureBackgroundRuntime();
-  const result = await runTurn({
-    message: body.text,
-    conversationId: body.conversationId,
-    source: body.source || "trigger"
-  });
-
+  const result = await sendToAri(body.text.trim());
   return {
     reply: result.reply,
-    conversationId: result.conversationId,
-    status: result.mode === "hosted" ? "ok" : "fallback"
+    status: "ok"
   };
 }
 
 export async function handleVoiceInputRequest(formData: FormData) {
-  const provider = getModelProvider();
+  // Speech is recognized in the browser; ARI hears the transcript like any message.
   const transcriptField = formData.get("transcript");
-  const conversationId = typeof formData.get("conversationId") === "string" ? String(formData.get("conversationId")) : undefined;
-  ensureBackgroundRuntime();
-
-  let transcript = typeof transcriptField === "string" ? transcriptField.trim() : "";
-
+  const transcript = typeof transcriptField === "string" ? transcriptField.trim() : "";
   if (!transcript) {
-    const file = formData.get("file");
-    if (!(file instanceof File)) {
-      throw new Error("file is required.");
-    }
-
-    if (!provider.supportsTranscription) {
-      return {
-        transcript: "",
-        conversationId: conversationId || "",
-        reply: "Server transcription is unavailable. Use browser speech recognition and then send the transcript through chat.",
-        mode: provider.mode,
-        requiresBrowserTranscription: true
-      };
-    }
-
-    const transcription = await provider.transcribeAudio(file);
-    transcript = transcription.transcript;
+    throw new Error("transcript is required. Use the browser's speech recognition.");
   }
 
-  const result = await runTurn({
-    message: transcript,
-    conversationId,
-    source: "voice"
-  });
-
+  const result = await sendToAri(transcript);
   return {
     transcript,
-    conversationId: result.conversationId,
     reply: result.reply,
-    mode: result.mode
+    conversation: result.conversation
   };
-}
-
-export async function handleVoiceOutputRequest(text: string) {
-  const provider = getModelProvider();
-  if (!text.trim()) {
-    throw new Error("text is required.");
-  }
-
-  ensureBackgroundRuntime();
-
-  if (!provider.supportsSpeechSynthesis) {
-    return {
-      mode: provider.mode,
-      useBrowserTts: true
-    };
-  }
-
-  return provider.synthesizeSpeech(text);
 }
 
 export async function getActivitySnapshot() {

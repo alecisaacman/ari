@@ -1,41 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { handleChatRequest, getActivitySnapshot } from "../src/core/api/services";
+import { getAriPanel, handleChatRequest } from "../src/core/api/services";
 import { getDatabase } from "../src/core/db/database";
 import { setupApiBackedRuntime, teardownIsolatedRuntime } from "./helpers";
 
-test("hub canonical data flows through ari-api by default", async () => {
+test("hub talks to ARI's brain through ari-api by default", async () => {
   await setupApiBackedRuntime("api-bridge");
   try {
-    const first = await handleChatRequest({
-      message: "My priority is converge ARI into the canonical repo through ari-api",
-      source: "web"
-    });
-    const second = await handleChatRequest({
-      message: "Create task verify the ari-api seam end to end",
-      source: "web",
-      conversationId: first.conversationId
-    });
+    const spend = await handleChatRequest({ message: "ARI spend" });
+    assert.match(spend.reply ?? "", /this month/);
+    assert.deepEqual(spend.conversation.map((line) => line.role), ["alec", "ari"]);
 
-    assert.match(second.reply, /canonical ARI spine/i);
+    const panel = await getAriPanel();
+    assert.equal(panel.paused.paused, false);
+    assert.equal(panel.conversations.hub.at(-1)?.text, spend.reply);
+    assert.deepEqual(panel.openLoops, []);
 
-    const activity = await getActivitySnapshot();
-    assert.equal(activity.activeState.currentPriorities[0]?.content.includes("ari-api"), true);
-    assert.equal(activity.activeState.currentTasks.some((task) => /ari-api seam end to end/i.test(task.title)), true);
-
-    const localTaskCount = (
-      getDatabase().prepare("SELECT COUNT(*) AS count FROM tasks").get() as {
-        count: number;
-      }
-    ).count;
     const localMemoryCount = (
       getDatabase().prepare("SELECT COUNT(*) AS count FROM memories").get() as {
         count: number;
       }
     ).count;
-
-    assert.equal(localTaskCount, 0);
     assert.equal(localMemoryCount, 0);
   } finally {
     teardownIsolatedRuntime();

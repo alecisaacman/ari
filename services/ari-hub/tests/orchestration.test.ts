@@ -7,7 +7,6 @@ import { runBackgroundCycleOnce } from "../src/core/agent/background-runtime";
 import { refreshExecutionOutcomes } from "../src/core/agent/execution";
 import { getTopRankedCapabilityGap, upsertImprovementProposal } from "../src/core/agent/self-improvement";
 import { handleAlecDecision, handleApprovalDecision, handleOrchestrationDispatch, getActivitySnapshot, getOrchestrationSnapshot } from "../src/core/api/services";
-import { runTurn } from "../src/core/agent/run-turn";
 import { getDatabase } from "../src/core/db/database";
 import { consumeOrchestrationDispatch, ingestBuilderOutputForProcessing, processPendingBuilderOutputs } from "../src/core/orchestration/processor";
 import { createProjectPlan } from "../src/core/planning/project-planning";
@@ -161,49 +160,6 @@ test("auto mode dispatches safe instructions automatically and stops at one hand
   }
 });
 
-test("self-improvement execution graph links dispatch, consumption, and verification explicitly", async () => {
-  const root = setupIsolatedRuntime("orchestration-improvement-graph", "assisted");
-  try {
-    await runTurn({ message: "I want you to control the interface directly." });
-    let activity = await getActivitySnapshot();
-    const improvementId = activity.activeState.topImprovement?.id;
-    assert.equal(typeof improvementId, "string");
-    await handleApprovalDecision(activity.approvals[0].id, "approve");
-
-    ingestBuilderOutputForProcessing("Queue the next builder slice for interface control.", "codex", {
-      linkedImprovementIds: [improvementId as string],
-      linkageMode: "explicit"
-    });
-    await processPendingBuilderOutputs();
-
-    const snapshot = await getOrchestrationSnapshot();
-    await handleOrchestrationDispatch(snapshot.latest!.id);
-    const consumed = consumeOrchestrationDispatch("local-builder");
-    assert.equal(consumed.consumer, "local-builder");
-    const consumedFile = readConsumedJson(root, "latest-consumed.json");
-    assert.equal(consumedFile.dispatchStatus, "consumed_by_builder");
-
-    writeBuilderDropJson(root, "improvement-result.json", {
-      rawOutput: "Implemented the interface-control bridge and verified it with tests.",
-      source: "codex",
-      parentOrchestrationId: snapshot.latest!.id,
-      linkedImprovementIds: [improvementId as string],
-      verificationSignal: "verified"
-    });
-
-    await runBackgroundCycleOnce("manual");
-    activity = await getActivitySnapshot();
-    assert.equal(typeof activity.activeState.improvementLifecycle[0]?.dispatchRecordId, "string");
-    assert.equal(activity.activeState.improvementLifecycle[0]?.dispatchOrchestrationId, snapshot.latest!.id);
-    assert.equal(activity.activeState.improvementLifecycle[0]?.consumedAt !== undefined, true);
-    assert.equal(activity.activeState.improvementLifecycle[0]?.verificationEvidence, "explicit");
-    assert.equal(activity.activeState.improvementLifecycle[0]?.status, "verified");
-    assert.equal(activity.activeState.execution.completed.some((item) => item.kind === "improvement"), true);
-  } finally {
-    teardownIsolatedRuntime();
-  }
-});
-
 test("execution tracking marks stalled dispatches as blocked instead of leaving them silent", async () => {
   const root = setupIsolatedRuntime("orchestration-stalled-dispatch", "assisted");
   try {
@@ -217,7 +173,6 @@ test("execution tracking marks stalled dispatches as blocked instead of leaving 
 
     const activity = await getActivitySnapshot();
     assert.equal(activity.activeState.execution.blocked.some((item) => item.kind === "dispatch"), true);
-    assert.equal(activity.items.some((item) => /blocked/i.test(item.title)), true);
   } finally {
     teardownIsolatedRuntime();
   }

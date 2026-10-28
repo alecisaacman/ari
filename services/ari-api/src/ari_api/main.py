@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import uvicorn
+from ari_core.core.env import load_local_env
 
 from ari_api import create_app
 
+# The brain needs ANTHROPIC_API_KEY and the workspace setting, from Alec's private file.
+load_local_env()
 app = create_app()
 
 

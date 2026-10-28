@@ -1,3 +1,5 @@
+import { InsideAri } from "@/src/components/ace/inside-ari";
+import { getBrainPanel, type BrainPanel } from "@/src/core/ari-spine/brain-bridge";
 import { getDashboardOverview } from "@/src/core/ari-spine/overview-bridge";
 import type {
   AriOperatingOverview,
@@ -35,7 +37,16 @@ const disabledControls = [
   "external integrations",
 ];
 
+async function loadBrainPanel(): Promise<{ panel: BrainPanel | null; error: string | null }> {
+  try {
+    return { panel: await getBrainPanel(), error: null };
+  } catch (error) {
+    return { panel: null, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export default async function HomePage() {
+  const brain = await loadBrainPanel();
   const result = await getDashboardOverview();
   const overview = result.overview;
   const pendingApprovals = result.pendingApprovals;
@@ -60,9 +71,11 @@ export default async function HomePage() {
 
   return (
     <main className="ace-readonly-shell">
+      <InsideAri panel={brain.panel} error={brain.error} />
+
       <section className="ace-readonly-hero" aria-labelledby="dashboard-title">
         <div>
-          <p className="ace-readonly-kicker">ACE read-only dashboard shell</p>
+          <p className="ace-readonly-kicker">ARI systems, read-only</p>
           <h1 id="dashboard-title">ARI remains the brain. ACE displays state.</h1>
           <p className="ace-readonly-summary">{overview.doctrine_summary}</p>
           {result.source === "static-fallback" ? (

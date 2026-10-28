@@ -438,7 +438,7 @@ def test_brain_requests_are_recorded_through_the_gateway(settings, session_facto
 
 
 def test_local_env_skips_placeholders_and_never_overrides(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from ari_imessage_gateway.config import load_local_env
+    from ari_core.core.env import load_local_env
 
     env_file = tmp_path / "ari.env"
     env_file.write_text("# comment\nARI_TEST_BLANK=\nARI_TEST_SET='value'\nARI_TEST_KEEP=file\n", encoding="utf-8")
@@ -524,7 +524,7 @@ def test_reply_echoed_back_in_binary_form_is_not_answered(settings, session_fact
 
 
 def test_circuit_breaker_pauses_ari_instead_of_looping(settings, session_factory) -> None:
-    from ari_imessage_gateway.gateway import LOOP_MAX_REQUESTS
+    from ari_core.conversation import LOOP_MAX_REQUESTS
 
     for _ in range(LOOP_MAX_REQUESTS):
         spend(session_factory, "claude-haiku-5-5", 10)

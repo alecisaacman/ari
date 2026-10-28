@@ -5,25 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
-
-def ari_home() -> Path:
-    return Path(os.environ.get("ARI_HOME", str(Path.home() / "ARI"))).expanduser()
-
-
-def load_local_env(path: Path) -> None:
-    """Read KEY=VALUE lines from Alec's private env file without overriding the environment.
-
-    Secrets and personal identifiers live here (ARI_HOME/ari.env, mode 600), never
-    in a plist or the repository.
-    """
-    if not path.is_file():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.strip().partition("=")
-        value = value.strip().strip("'\"")
-        # A blank value is a placeholder; loading it would shadow real credentials.
-        if sep and key and value and not key.startswith("#"):
-            os.environ.setdefault(key.strip(), value)
+from ari_core.core.env import ari_home
 
 
 @dataclass(frozen=True, slots=True)

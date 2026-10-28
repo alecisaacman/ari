@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 
 import { stopBackgroundRuntime } from "../src/core/agent/background-runtime";
 import { closeDatabase } from "../src/core/db/database";
-import { resetModelProvider } from "../src/core/models";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CANONICAL_ARI_PROJECT_ROOT = path.resolve(TESTS_DIR, "..", "..", "..");
@@ -42,7 +41,6 @@ function resolveCanonicalPython(): string {
 export function setupIsolatedRuntime(name: string, mode: "manual" | "assisted" | "auto" = "manual"): string {
   stopBackgroundRuntime();
   closeDatabase();
-  resetModelProvider();
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `ari-system-${name}-`));
   fs.mkdirSync(path.join(tempRoot, "runtime"), { recursive: true });
@@ -63,7 +61,6 @@ export function setupIsolatedRuntime(name: string, mode: "manual" | "assisted" |
   delete process.env.ARI_API_BASE_URL;
   process.env.ARI_ORCHESTRATION_MODE = mode;
   process.env.ARI_EXECUTION_STALL_MINUTES = "60";
-  delete process.env.ARI_OPENAI_API_KEY;
 
   return tempRoot;
 }
@@ -105,7 +102,6 @@ export async function setupApiBackedRuntime(
 export function teardownIsolatedRuntime(): void {
   stopBackgroundRuntime();
   closeDatabase();
-  resetModelProvider();
   if (apiServerProcess) {
     apiServerProcess.kill("SIGTERM");
     apiServerProcess = null;

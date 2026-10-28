@@ -1202,3 +1202,79 @@ button {
     flex-direction: column;
   }
 }
+
+/* Inside ARI: the chat box and transcripts */
+.ace-ari-chat {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.ace-ari-transcript {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ace-ari-line {
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ace-ari-line span {
+  margin-right: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ace-ari-line-alec {
+  background: var(--accent-soft);
+}
+
+.ace-ari-compose {
+  display: flex;
+  gap: 8px;
+}
+
+.ace-ari-compose input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--surface-line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+  color: var(--text);
+  font: inherit;
+}
+
+.ace-ari-compose button {
+  padding: 12px 18px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ace-ari-compose button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ace-ari-notes {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}

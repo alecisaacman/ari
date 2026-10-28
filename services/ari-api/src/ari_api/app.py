@@ -143,6 +143,7 @@ from ari_memory import (
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session, sessionmaker
 
+from ari_api.brain_routes import register_brain_routes
 from ari_api.schemas import (
     ActiveOpenLoopsResponse,
     AlertResponse,
@@ -1246,6 +1247,8 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         limit: int = Query(default=6, ge=1, le=50),
     ) -> dict[str, Any]:
         return get_execution_snapshot(limit=limit)
+
+    register_brain_routes(app, resolved_session_factory)
 
     return app
 

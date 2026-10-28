@@ -1,8 +1,9 @@
 # iMessage Surface
 
 ARI has one brain: `ari_core/brain.py`. iMessage is an ACE surface. It relays
-Alec's self-thread to that brain and sends the brain's replies back. It never
-reasons on its own, and neither does any other surface.
+Alec's self-thread to ARI's conversation logic (`ari_core/conversation.py`,
+shared with the hub) and sends the replies back. It never reasons on its own,
+and neither does any other surface.
 
 ## What a conversation can do
 
@@ -172,5 +173,6 @@ message was sent and when ARI was last running.
 - Workspace actions are limited to `write_file`, `patch_file`, and the `ls`,
   `cat`, `pytest`, and `node` command capabilities. Calendar, email, and other
   integrations are future ACE surfaces and tools.
-- The hub keeps its own model path for web chat. It is not wired to this brain
-  yet, so iMessage is the only surface that reaches ARI's brain today.
+- iMessage and the hub are the two surfaces. Both reach this brain through
+  `ari_core/conversation.py`; each keeps its own thread, and they share ARI's
+  records. The hub shows ARI's control panel (`ari_core/panel.py`).

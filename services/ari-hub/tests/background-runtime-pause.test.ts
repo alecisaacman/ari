@@ -1,34 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { listAriEvents } from "../src/core/agent/activity";
 import { runBackgroundCycleOnce } from "../src/core/agent/background-runtime";
 import { pauseCanonical, resumeCanonical } from "../src/core/ari-spine/control-bridge";
-import { createTask } from "../src/core/memory/repository";
-import { setupIsolatedRuntime, teardownIsolatedRuntime } from "./helpers";
+import { getOrchestrationSnapshot } from "../src/core/api/services";
+import { setupIsolatedRuntime, teardownIsolatedRuntime, writeBuilderDrop } from "./helpers";
 
 test("background runtime skips its cycle while ARI is paused", async () => {
-  const tempRoot = setupIsolatedRuntime("background-pause");
-  void tempRoot;
+  const root = setupIsolatedRuntime("background-pause");
 
   try {
-    createTask("Task that should produce background work");
+    writeBuilderDrop(root, "001-pass.txt", "Tests passed. Continue with the next smallest execution slice.");
 
     pauseCanonical("background-runtime test");
     await runBackgroundCycleOnce("manual");
-    assert.equal(
-      listAriEvents().some((event) => event.type === "background_job_started"),
-      false,
-      "background cycle ran work while paused"
-    );
+    assert.equal((await getOrchestrationSnapshot()).latest, null, "background cycle ran work while paused");
 
     resumeCanonical();
     await runBackgroundCycleOnce("manual");
-    assert.equal(
-      listAriEvents().some((event) => event.type === "background_job_started"),
-      true,
-      "background cycle did not run after resume"
-    );
+    assert.notEqual((await getOrchestrationSnapshot()).latest, null, "background cycle did not run after resume");
   } finally {
     teardownIsolatedRuntime();
   }

@@ -2,10 +2,30 @@
 
 ARI v1 is the private local-first ARI runtime. ACE is the browser, phone, voice, and trigger access layer around it.
 
-## Current ACE dashboard shell
+## Inside ARI
 
-The default home page is now the first minimal ACE read-only dashboard shell.
-It reads the ARI-owned `/overview` read model when `ari-api` is available and
+The hub has no brain of its own. The top of the home page is a window into ARI's
+one brain (`ari_core/brain.py`, the same one iMessage reaches), read live from
+ari-api's `/brain/panel`: today's priorities and stress, the week's plan, open
+loops with their history, reminders ARI will text, what is waiting for approval,
+what the signal engine noticed and why, what ARI remembers, notes, the recent
+iMessage conversation, and model spend.
+
+The chat box sends each message to `/brain/messages`, which runs the same
+conversation logic as iMessage (`ari_core/conversation.py`): "ARI stop",
+"ARI spend", "yes"/"no" for proposals, and everything else to the brain, under
+the same budget and loop breaker. The hub keeps its own conversation thread, and
+shares everything else, because memory, loops, and state are ARI's records.
+`/api/trigger` and `/api/voice/input` (with a browser transcript) reach ARI the
+same way. In subprocess bridge mode the hub uses `ari api brain panel` and
+`ari api brain message` instead.
+
+Run ari-api for the hub to see inside ARI. It reads `ANTHROPIC_API_KEY` from
+`~/ARI/ari.env`.
+
+## ARI systems dashboard
+
+Below Inside ARI, the read-only systems dashboard reads the ARI-owned `/overview` read model when `ari-api` is available and
 falls back to a clearly labeled static shell when it is not. It displays ARI
 doctrine, skill status, readiness surfaces, pending authority surfaces,
 coding-loop chain surfaces, memory surfaces, self-documentation surfaces, and
@@ -39,10 +59,8 @@ authority surfaces; this page only establishes the read-only product surface.
 - Concurrent private sessions across devices and browsers
 - Token-protected `/api/trigger` endpoint for iOS Shortcuts
 - Local SQLite memory and task storage
-- Deterministic no-key fallback mode
-- Hosted model upgrade path
-- Workspace-scoped file tools
-- Voice input and output with browser fallbacks
+- Chat with ARI's brain, and a live view inside it
+- Voice input through browser speech recognition
 
 ## Stack
 
@@ -95,10 +113,6 @@ For the most reliable phone demo path, prefer `npm run start:lan` over the devel
 - Logging out clears only the current device session.
 - Future stronger auth can replace this without changing the rest of the runtime.
 
-## Hosted model upgrade
-
-ARI boots without any model key. If `ARI_OPENAI_API_KEY` is set, the runtime upgrades from deterministic fallback mode to hosted text generation. If the transcription and TTS models are available, the voice endpoints upgrade too.
-
 ## iOS Shortcuts
 
 Use `POST /api/trigger` with:
@@ -109,7 +123,7 @@ Use `POST /api/trigger` with:
 
 ```json
 {
-  "text": "Save a note called Grocery list: eggs, limes, coffee"
+  "text": "Remind me at 5 to buy eggs, limes, and coffee"
 }
 ```
 
@@ -117,8 +131,7 @@ Example response:
 
 ```json
 {
-  "reply": "Saved note \"Grocery list\".",
-  "conversationId": "b6b7...",
+  "reply": "I'll text you at 5:00 PM today: buy eggs, limes, and coffee.",
   "status": "ok"
 }
 ```
@@ -134,20 +147,17 @@ Shortcut setup:
 
 ## Voice behavior
 
-- If a hosted speech provider is configured, ARI can transcribe audio server-side and return speech audio.
-- If not, the browser falls back to speech recognition and speech synthesis when available.
+- The browser recognizes speech and sends the transcript to ARI as a message.
+- The hub has no server-side speech provider.
 
-## Workspace file tools
+## Workspace changes
 
-ARI can read, list, and write files only inside:
-
-`services/ari-hub/workspace`
-
-No delete or broader project file access ships in v1.
+The hub doesn't change files itself. ARI's brain proposes a workspace change, ARI
+asks Alec, and an approved change runs once through ARI's execution gateway, in
+the folder set by `ARI_EXECUTION_ROOT`.
 
 ## Future upgrades
 
-- Ollama or other local LLM providers
 - stronger auth and user/device trust
 - HTTPS or tunnel-based remote access
 - broader tool permissions

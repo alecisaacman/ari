@@ -1,79 +1,61 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runBackgroundCycleOnce } from "../src/core/agent/background-runtime";
 import {
-  getActivitySnapshot,
+  getAriPanel,
   getHealthSnapshot,
-  handleApprovalDecision,
   handleChatRequest,
   handleTriggerRequest,
-  handleVoiceInputRequest,
-  handleVoiceOutputRequest
+  handleVoiceInputRequest
 } from "../src/core/api/services";
 import { getDatabase } from "../src/core/db/database";
 import { setupIsolatedRuntime, teardownIsolatedRuntime } from "./helpers";
 
-test("chat, trigger, health, and voice fallback services work end to end", async () => {
+// These messages are commands ARI decides without a model, so no API key is needed
+// and nothing is billed. Anything else would go to ARI's brain the same way.
+
+test("hub chat, trigger, and voice all reach ARI's one conversation", async () => {
   setupIsolatedRuntime("api");
   try {
     const health = await getHealthSnapshot();
-    assert.equal(health.mode, "fallback");
-    assert.equal(health.storage.dbReady, true);
+    assert.equal(health.mode, "ari");
+    assert.equal(health.voice.serverTranscription, false);
 
-    const chat = await handleChatRequest({ message: "Remember that I prefer concise replies", source: "web" });
-    assert.equal(chat.conversationId.length > 0, true);
+    const spend = await handleChatRequest({ message: "ARI spend" });
+    assert.match(spend.reply ?? "", /\$0\.00 of \$10\.00 this month/);
 
-    await handleChatRequest({ message: "My priority is strengthen ARI memory", source: "web" });
-    await handleChatRequest({ message: "I'm working on the active state surface", source: "web" });
-
-    const saveNote = await handleChatRequest({ message: "Save note Bridge proof: canonical notes are now behind ARI", source: "web" });
-    assert.match(saveNote.reply, /Saved note/i);
-
-    const searchNote = await handleChatRequest({ message: "Find notes about Bridge proof", source: "web" });
-    assert.match(searchNote.reply, /Bridge proof/i);
-
-    const trigger = await handleTriggerRequest({ text: "List tasks" });
-    assert.equal(trigger.status, "fallback");
-    assert.equal(trigger.conversationId.length > 0, true);
-
-    const createTask = await handleChatRequest({ message: "Create task review the hub activity model", source: "web" });
-    assert.match(createTask.reply, /Created task/i);
-
-    const localTaskCount = (
-      getDatabase().prepare("SELECT COUNT(*) AS count FROM tasks").get() as {
-        count: number;
-      }
-    ).count;
-    assert.equal(localTaskCount, 0);
-
-    await runBackgroundCycleOnce("manual");
-    const activity = await getActivitySnapshot();
-    assert.equal(activity.items.length > 0, true);
-    assert.equal(activity.approvals.length > 0, true);
-    assert.equal(activity.activeState.currentPriorities[0]?.content.includes("strengthen ARI memory"), true);
-    assert.equal(activity.activeState.activeProjects[0]?.content.includes("active state surface"), true);
-    assert.equal(Boolean(activity.activeState.awareness), true);
-    assert.equal((activity.activeState.awareness?.currentFocus.length || 0) > 0, true);
-    assert.equal(Boolean(activity.activeState.execution), true);
-    assert.equal(Boolean(activity.activeState.projectFocus), true);
-    assert.equal(Boolean(activity.activeState.projectFocus?.nextStep), true);
-    assert.equal(activity.activeState.currentTasks.some((task) => /hub activity model/i.test(task.title)), true);
-
-    const approvalResult = await handleApprovalDecision(activity.approvals[0].id, "approve");
-    assert.equal(approvalResult.ok, true);
-
-    const afterApproval = await getActivitySnapshot();
-    assert.equal(afterApproval.items.some((item) => item.type === "action_executed"), true);
-    assert.equal(afterApproval.items.some((item) => item.type === "approval_requested"), false);
+    const trigger = await handleTriggerRequest({ text: "ARI budget 12" });
+    assert.equal(trigger.status, "ok");
+    assert.match(trigger.reply ?? "", /Monthly budget set to \$12\.00/);
 
     const formData = new FormData();
-    formData.append("transcript", "List files");
-    const voiceInput = await handleVoiceInputRequest(formData);
-    assert.match(voiceInput.reply, /workspace|empty|Listed/i);
+    formData.append("transcript", "ARI stop");
+    const voice = await handleVoiceInputRequest(formData);
+    assert.match(voice.reply ?? "", /^Paused\./);
 
-    const voiceOutput = await handleVoiceOutputRequest("hello");
-    assert.equal("useBrowserTts" in voiceOutput, true);
+    const panel = await getAriPanel();
+    assert.equal(panel.paused.paused, true);
+    assert.equal(panel.spend.budgetUsd, 12);
+    assert.deepEqual(
+      panel.conversations.hub.filter((line) => line.role === "alec").map((line) => line.text),
+      ["ARI spend", "ARI budget 12", "ARI stop"]
+    );
+
+    const resumed = await handleChatRequest({ message: "ARI resume" });
+    assert.match(resumed.reply ?? "", /^Resumed\./);
+
+    // The hub keeps none of it: ARI's records are the only copy.
+    const localMessages = (getDatabase().prepare("SELECT COUNT(*) AS count FROM messages").get() as { count: number }).count;
+    assert.equal(localMessages, 0);
+  } finally {
+    teardownIsolatedRuntime();
+  }
+});
+
+test("voice input needs a transcript from the browser", async () => {
+  setupIsolatedRuntime("api-voice");
+  try {
+    await assert.rejects(handleVoiceInputRequest(new FormData()), /transcript is required/);
   } finally {
     teardownIsolatedRuntime();
   }

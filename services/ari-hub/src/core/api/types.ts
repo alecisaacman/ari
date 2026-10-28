@@ -4,19 +4,15 @@ import type { BuilderOutputRecord, OrchestrationSnapshot } from "@/src/core/orch
 
 export type ChatRequestBody = {
   message: string;
-  conversationId?: string;
-  source?: "web" | "api";
 };
 
 export type TriggerRequestBody = {
   text: string;
-  conversationId?: string;
-  source?: string;
 };
 
 export type HealthSnapshot = {
   appName: string;
-  mode: "hosted" | "fallback";
+  mode: "ari";
   auth: {
     uiPasswordConfigured: boolean;
     triggerTokenConfigured: boolean;
