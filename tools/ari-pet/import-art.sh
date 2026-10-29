@@ -1,10 +1,18 @@
 #!/bin/sh
-# Cut the generated photos of Claude's golden out of their backgrounds and file them as
-# the pet's poses: tools/ari-pet/import-art.sh [FOLDER]   (default: ~/Desktop/Claude Pet)
+# Cut a pet's generated photos out of their backgrounds and file them as its poses:
+#   tools/ari-pet/import-art.sh [claude|ari] [FOLDER]
+# Defaults: the golden from ~/Desktop/Claude Pet; ARI's hummingbird from ~/Desktop/ARI Pet.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-from=${1:-"$HOME/Desktop/Claude Pet"}
-to="$here/art/claude"
+pet=${1:-claude}
+case "$pet" in
+  claude) default="$HOME/Desktop/Claude Pet" ;;
+  ari) default="$HOME/Desktop/ARI Pet" ;;
+  *) echo "usage: import-art.sh [claude|ari] [FOLDER]"; exit 2 ;;
+esac
+from=${2:-$default}
+to="$here/art/$pet"
+mkdir -p "$to"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 swiftc -O "$here/cutout.swift" -o "$work/cutout"
