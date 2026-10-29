@@ -42,3 +42,11 @@ bundles them into Claude Pet. The pet shows the photo for the moment (sitting, p
 while Claude works, alert when Claude waits, asleep, sad at a usage limit, lifted,
 leaping, startled), mirrored to face the way it's dragged, with breathing, bounce, and
 sway on top. Until the photos exist, it draws the dog instead.
+
+### Codex pets from photos
+
+`tools/ari-pet/codex-sheet.swift` turns one cut-out photo per animation into a Codex
+pet sprite sheet: Codex's 8 x 9 grid of 192 x 208 cells (idle, running right and left,
+waving, jumping, failed, waiting, busy, review), with breathing, a trotting bob, a jump
+arc, or a tilt across each row's frames. The result goes in
+`~/.codex/pets/<name>/` with a `pet.json`, and Codex lists it as a pet.
