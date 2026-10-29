@@ -11,6 +11,7 @@ and tests it first, then switches `current`; the previous release stays for roll
   ari-live rollback                                 switch back to the previous release
   ari-live connect-apple                           connect ARI to Reminders (GET DONE) and Calendar
   ari-live connect-mac                             let ARI control this Mac when Alec texts it
+  ari-live connect-gmail                           let ARI read Gmail (asks for an app password)
   ari-live status                                   what's live, and what's running
   ari-live setup                                    point ARI's launchd jobs at `current`
   ari-live hub open | stop                          start the hub on demand and open it
@@ -78,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("rollback")
     commands.add_parser("connect-apple", help="Connect ARI to Apple Reminders (GET DONE) and Calendar.")
     commands.add_parser("connect-mac", help="Let ARI control this Mac when Alec asks it to.")
+    commands.add_parser("connect-gmail", help="Let ARI read Gmail, with an app password you type in.")
     commands.add_parser("status")
     commands.add_parser("setup")
     hub = commands.add_parser("hub")
@@ -91,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         return connect_apple()
     if args.command == "connect-mac":
         return connect_mac()
+    if args.command == "connect-gmail":
+        return connect_gmail()
     if args.command == "rollback":
         return rollback()
     if args.command == "status":
@@ -366,6 +370,36 @@ def connect_mac() -> int:
     _turn_on("ARI_MAC_CONTROL")
     subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{POLL_LABEL}"], check=False)
     print("ARI can control this Mac. Text it \"open Spotify\" or \"what's open on my Mac\".")
+    return 0
+
+
+def connect_gmail() -> int:
+    """Check a Gmail app password by signing in, then keep it in ARI's private env file.
+
+    Alec types the password here himself; it is never shown or logged.
+    """
+    import getpass
+    import imaplib
+
+    address = input("Gmail address: ").strip()
+    password = getpass.getpass("App password (16 letters; it won't show as you type): ").replace(" ", "")
+    if not address or len(password) != 16:
+        print("Not connected: the app password is 16 letters, from myaccount.google.com/apppasswords.")
+        return 1
+    try:
+        client = imaplib.IMAP4_SSL("imap.gmail.com", timeout=20)
+        client.login(address, password)
+        client.logout()
+    except (OSError, imaplib.IMAP4.error) as error:
+        print(f"Not connected: Gmail refused the sign-in ({error}).")
+        return 1
+    existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
+    lines = [line for line in existing.splitlines() if not line.startswith(("ARI_GMAIL_ADDRESS=", "ARI_GMAIL_APP_PASSWORD="))]
+    ENV_FILE.write_text(
+        "\n".join([*lines, f"ARI_GMAIL_ADDRESS={address}", f"ARI_GMAIL_APP_PASSWORD={password}"]) + "\n", encoding="utf-8"
+    )
+    ENV_FILE.chmod(0o600)
+    print(f"ARI can read {address}. Text it \"what's my latest email from ...\".")
     return 0
 
 

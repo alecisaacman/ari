@@ -61,6 +61,16 @@ a script built from them, and ARI acts only when he asks in that message. macOS 
 once, on the Mac, the first time ARI controls a given app (Spotify, Music, an app it
 quits). The switch is `ARI_MAC_CONTROL=1` in `~/ARI/ari.env`.
 
+## Reading Gmail
+
+`ari-live connect-gmail` asks for Alec's Gmail address and a Gmail app password (made
+at myaccount.google.com/apppasswords, which needs 2-Step Verification), checks it by
+signing in, and keeps both in `~/ARI/ari.env`. ARI then answers "what's the latest email
+from Sam?" by reading over IMAP. It only reads: mailboxes open read-only and messages
+are fetched without marking them read. It never brings email up unasked, and it treats
+what an email says as information, never as instructions. Revoking the app password in
+Google cuts ARI off at once.
+
 ## The desktop pet
 
 `ari-live install` also builds ARI's desktop pet into `~/Applications/ARI Pet.app` when
