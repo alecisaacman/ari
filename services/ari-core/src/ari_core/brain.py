@@ -28,6 +28,7 @@ from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
 from sqlalchemy.orm import Session
 
 from ari_core.apple import AppleDesk, AppleError
+from ari_core.mac import MacDesk, MacError
 from ari_core.brain_usage import ModelCall
 from ari_core.builds import decide_build, list_builds, propose_build
 from ari_core.core import paths as core_paths
@@ -160,6 +161,12 @@ and complete_get_done checks something off. ARI only ever writes to GET DONE.
 - His calendars are Apple Calendar. Check get_calendar before answering anything about \
 his schedule. add_calendar_event puts an event on a calendar (the ARI calendar unless \
 he names another); confirm the title, day, and time back to him.
+- ARI can control the Mac it runs on, so Alec can use his phone as a remote. Use the \
+mac_ tools only when he asks for that action in this message, never on your own \
+initiative: mac_open opens an app or a web link, mac_quit quits an app, mac_shortcut \
+runs one of his Shortcuts by name (mac_shortcuts lists them), mac_volume and mac_media \
+handle sound and music, mac_lock turns the display off, mac_keep_awake keeps the Mac \
+up for a while, and mac_status says what's open. Confirm what you did in a few words.
 - If Alec says he applied to, submitted an application to, or sent his resume to a \
 company, file it with create_open_loop using kind="job_application" and the company \
 name in the company field — not kind="task". Filing it this way automatically \
@@ -450,6 +457,74 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "mac_status",
+        "description": "What's open on Alec's Mac, the app in front, the volume, and the battery.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "mac_shortcuts",
+        "description": "The names of Alec's Shortcuts on the Mac.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "mac_shortcut",
+        "description": "Run one of Alec's Shortcuts on the Mac, by name. Only when he asks.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "mac_open",
+        "description": "Open an app (by name, e.g. 'Spotify') or a web link (https://...) on the Mac.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"target": {"type": "string"}},
+            "required": ["target"],
+        },
+    },
+    {
+        "name": "mac_quit",
+        "description": "Quit an app on the Mac the normal way (it can still ask to save).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"app": {"type": "string"}},
+            "required": ["app"],
+        },
+    },
+    {
+        "name": "mac_volume",
+        "description": "Set the Mac's volume (0 to 100), or mute or unmute it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"level": {"type": "integer"}, "muted": {"type": "boolean"}},
+        },
+    },
+    {
+        "name": "mac_media",
+        "description": "Play/pause, next, or previous track, in Spotify if it's open, otherwise Music.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"command": {"type": "string", "enum": ["play_pause", "next", "previous"]}},
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "mac_lock",
+        "description": "Turn the Mac's display off, which locks it.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "mac_keep_awake",
+        "description": "Keep the Mac (and ARI) awake for some minutes, up to 8 hours.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"minutes": {"type": "integer"}},
+            "required": ["minutes"],
+        },
+    },
+    {
         "name": "remember",
         "description": "Keep a lasting fact about Alec, his people, or his work in ARI's memory.",
         "input_schema": {
@@ -588,6 +663,7 @@ def make_tool_dispatcher(
     spine_db_path: Path | None = None,
     dry_run: bool = False,
     apple: AppleDesk | None = None,
+    mac: MacDesk | None = None,
 ) -> Callable[[str, dict[str, Any]], dict[str, Any]]:
     """Build a tool dispatcher bound to a session factory and a save-for-later sink.
 
@@ -598,7 +674,7 @@ def make_tool_dispatcher(
     real state. Without a propose_action sink, proposals are refused.
 
     GET DONE and calendar tools go through `apple`; without it they say Apple
-    Reminders and Calendar aren't connected.
+    Reminders and Calendar aren't connected. Mac tools go through `mac` the same way.
 
     Open loops, daily and weekly state, and signals live in the session's
     database. Memory, notes, and hub tasks live in ARI's canonical spine
@@ -628,12 +704,21 @@ def make_tool_dispatcher(
             "decide_build", "propose_build",
         }:
             return {"recorded": {"tool": name, "dry_run": True}}
+        if dry_run and name in MAC_TOOL_NAMES - MAC_READ_TOOLS:
+            return {"done": {"tool": name, "input": tool_input, "dry_run": True}}
 
         if name == "remember":
             row = remember_ari_memory(
                 str(tool_input["kind"]), str(tool_input["title"]), str(tool_input["content"]), db_path=spine()
             )
             return {"remembered": {"id": row["id"], "kind": row["type"], "title": row["title"]}}
+        if name in MAC_TOOL_NAMES:
+            if mac is None:
+                return {"error": "Control of the Mac isn't turned on for ARI."}
+            try:
+                return _mac_tool(mac, name, tool_input)
+            except MacError as error:
+                return {"error": str(error)}
         if name in APPLE_TOOL_NAMES:
             if apple is None:
                 return {"error": "Apple Reminders and Calendar aren't connected to ARI."}
@@ -810,6 +895,11 @@ def make_tool_dispatcher(
     return dispatch
 
 
+MAC_TOOL_NAMES = {
+    "mac_status", "mac_shortcuts", "mac_shortcut", "mac_open", "mac_quit",
+    "mac_volume", "mac_media", "mac_lock", "mac_keep_awake",
+}
+MAC_READ_TOOLS = {"mac_status", "mac_shortcuts"}
 FAST_TOOL_NAMES = {
     "get_open_loops",
     "get_daily_state",
@@ -835,6 +925,7 @@ FAST_TOOL_NAMES = {
     "complete_get_done",
     "get_calendar",
     "add_calendar_event",
+    *MAC_TOOL_NAMES,
 }
 FAST_TOOLS: list[dict[str, Any]] = [tool for tool in TOOLS if tool["name"] in FAST_TOOL_NAMES] + [ESCALATE_TOOL]
 
@@ -871,6 +962,27 @@ def _apple_tool(apple: AppleDesk, name: str, tool_input: dict[str, Any]) -> dict
             location=tool_input.get("location"),
         )
     }
+
+
+def _mac_tool(mac: MacDesk, name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    if name == "mac_status":
+        return mac.status()
+    if name == "mac_shortcuts":
+        return {"shortcuts": mac.shortcuts()}
+    if name == "mac_shortcut":
+        return mac.run_shortcut(str(tool_input["name"]))
+    if name == "mac_open":
+        return mac.open(str(tool_input["target"]))
+    if name == "mac_quit":
+        return mac.quit(str(tool_input["app"]))
+    if name == "mac_volume":
+        level = tool_input.get("level")
+        return mac.volume(int(level) if level is not None else None, muted=tool_input.get("muted"))
+    if name == "mac_media":
+        return mac.media(str(tool_input["command"]))
+    if name == "mac_lock":
+        return mac.lock()
+    return mac.keep_awake(int(tool_input["minutes"]))
 
 
 RECALL_LIMIT = 8

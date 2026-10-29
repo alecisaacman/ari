@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ari_core.action_desk import ActionDesk
 from ari_core.apple import AppleDesk
+from ari_core.mac import MacDesk
 from ari_core.core.env import ari_home, load_local_env
 from ari_core.core.pause import get_pause_state
 from ari_core.pet_status import status_path
@@ -79,6 +80,7 @@ def _gateway(settings: ImessageSettings, *, dry_run: bool) -> ImessageGateway:
         action_desk=desk,
         dry_run=dry_run,
         apple=AppleDesk.connected(),
+        mac=MacDesk.connected(),
         review_writer=write_with_model,
         pet_status_path=status_path(),
     )

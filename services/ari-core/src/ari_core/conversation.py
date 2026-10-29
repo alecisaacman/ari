@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ari_core.action_desk import ActionDesk, PendingProposal, describe_result
 from ari_core.apple import AppleDesk
+from ari_core.mac import MacDesk
 from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message, roll_history
 from ari_core.brain_usage import (
     ModelCall,
@@ -103,9 +104,11 @@ class Conversation:
         dry_run: bool = False,
         apple: AppleDesk | None = None,
         review_writer: ReviewWriter | None = None,
+        mac: MacDesk | None = None,
     ) -> None:
         self.channel = channel
         self.apple = apple
+        self.mac = mac
         self.review_writer = review_writer
         self.session_factory = session_factory
         self.action_desk = action_desk
@@ -190,6 +193,7 @@ class Conversation:
             propose_action=self._propose if self.action_desk else None,
             dry_run=self.dry_run,
             apple=self.apple,
+            mac=self.mac,
         )
         try:
             response = self.respond(

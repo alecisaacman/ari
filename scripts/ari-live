@@ -10,6 +10,7 @@ and tests it first, then switches `current`; the previous release stays for roll
   ari-live install [--commit REF] [--skip-tests]   build, test, and switch to a release
   ari-live rollback                                 switch back to the previous release
   ari-live connect-apple                           connect ARI to Reminders (GET DONE) and Calendar
+  ari-live connect-mac                             let ARI control this Mac when Alec texts it
   ari-live status                                   what's live, and what's running
   ari-live setup                                    point ARI's launchd jobs at `current`
   ari-live hub open | stop                          start the hub on demand and open it
@@ -76,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--skip-tests", action="store_true")
     commands.add_parser("rollback")
     commands.add_parser("connect-apple", help="Connect ARI to Apple Reminders (GET DONE) and Calendar.")
+    commands.add_parser("connect-mac", help="Let ARI control this Mac when Alec asks it to.")
     commands.add_parser("status")
     commands.add_parser("setup")
     hub = commands.add_parser("hub")
@@ -87,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         return install_release(args.repo, args.commit, run_tests=not args.skip_tests)
     if args.command == "connect-apple":
         return connect_apple()
+    if args.command == "connect-mac":
+        return connect_mac()
     if args.command == "rollback":
         return rollback()
     if args.command == "status":
@@ -349,13 +353,28 @@ def connect_apple() -> int:
             print(f"Not connected: {result.stdout.strip() or result.stderr.strip()}")
             print("Allow ARI in System Settings > Privacy & Security > Reminders and Calendars, then run this again.")
             return 1
-    existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
-    if "ARI_APPLE_CONNECTED=1" not in existing.splitlines():
-        lines = [line for line in existing.splitlines() if not line.startswith("ARI_APPLE_CONNECTED=")]
-        ENV_FILE.write_text("\n".join([*lines, "ARI_APPLE_CONNECTED=1"]) + "\n", encoding="utf-8")
-        ENV_FILE.chmod(0o600)
+    _turn_on("ARI_APPLE_CONNECTED")
     print("ARI is connected to Reminders (GET DONE) and Calendar.")
     return 0
+
+
+def connect_mac() -> int:
+    """Let ARI open and quit apps, run Shortcuts, and set sound on this Mac when Alec asks.
+
+    macOS asks once per app the first time ARI controls it (Spotify, Music, an app it quits).
+    """
+    _turn_on("ARI_MAC_CONTROL")
+    subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{POLL_LABEL}"], check=False)
+    print("ARI can control this Mac. Text it \"open Spotify\" or \"what's open on my Mac\".")
+    return 0
+
+
+def _turn_on(flag: str) -> None:
+    existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
+    if f"{flag}=1" not in existing.splitlines():
+        lines = [line for line in existing.splitlines() if not line.startswith(f"{flag}=")]
+        ENV_FILE.write_text("\n".join([*lines, f"{flag}=1"]) + "\n", encoding="utf-8")
+        ENV_FILE.chmod(0o600)
 
 
 def _ensure_hub_secrets() -> None:

@@ -30,6 +30,7 @@ from ari_core.conversation import Conversation, Respond
 from ari_core.core.pause import get_pause_state
 from ari_core.get_done_watch import describe as describe_get_done
 from ari_core.get_done_watch import mark_seen, new_from_alec
+from ari_core.mac import MacDesk
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orchestration
 from ari_core.pet_status import build_pet_status, write_pet_status
@@ -102,6 +103,7 @@ class ImessageGateway:
         apple: AppleDesk | None = None,
         review_writer: ReviewWriter | None = None,
         pet_status_path: Path | None = None,
+        mac: MacDesk | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
@@ -126,6 +128,7 @@ class ImessageGateway:
             dry_run=dry_run,
             apple=apple,
             review_writer=review_writer,
+            mac=mac,
         )
 
     def poll_once(self) -> PollReport:

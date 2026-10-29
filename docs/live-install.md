@@ -51,6 +51,16 @@ while the Mac sleeps, ARI notices within a minute of running and texts him the n
 asking whether to act on them now. It never asks about items it wrote itself (it keeps
 their ids in `~/ARI/state/get-done-own.json`) and holds the question through quiet hours.
 
+## Controlling the Mac from the phone
+
+`ari-live connect-mac` lets ARI act on this Mac when Alec texts it: open an app or a
+web link, quit an app, run one of his Shortcuts by name, set the volume, play or skip
+music, turn the display off (which locks it), keep the Mac awake for a while, and say
+what's open. Each action is a fixed command with Alec's words passed as arguments, never
+a script built from them, and ARI acts only when he asks in that message. macOS asks
+once, on the Mac, the first time ARI controls a given app (Spotify, Music, an app it
+quits). The switch is `ARI_MAC_CONTROL=1` in `~/ARI/ari.env`.
+
 ## The desktop pet
 
 `ari-live install` also builds ARI's desktop pet into `~/Applications/ARI Pet.app` when
