@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ari_core.core.env import ari_home
+from ari_core.get_done_watch import record_own
 
 GET_DONE = "GET DONE"
 DEFAULT_CALENDAR = "ARI"
@@ -65,6 +66,8 @@ class AppleDesk:
     run: Runner = run_helper
     reminders_list: str = GET_DONE
     default_calendar: str = DEFAULT_CALENDAR
+    # Where ARI records the GET DONE items it wrote itself, so the watcher only asks about Alec's.
+    own_log: Path | None = None
 
     @classmethod
     def connected(cls) -> AppleDesk | None:
@@ -73,6 +76,7 @@ class AppleDesk:
         return cls(
             reminders_list=os.environ.get("ARI_REMINDERS_LIST") or GET_DONE,
             default_calendar=os.environ.get("ARI_CALENDAR") or DEFAULT_CALENDAR,
+            own_log=ari_home() / "state" / "get-done-own.json",
         )
 
     def get_done(self) -> list[dict[str, Any]]:
@@ -90,7 +94,10 @@ class AppleDesk:
             payload["due"] = _iso(due)
         if notes:
             payload["notes"] = notes
-        return self.run("add-reminder", payload)["reminder"]
+        reminder = self.run("add-reminder", payload)["reminder"]
+        if self.own_log is not None:
+            record_own(self.own_log, reminder["id"])
+        return reminder
 
     def complete_reminder(self, reminder_id: str) -> dict[str, Any]:
         return self.run("complete-reminder", {"id": reminder_id})["reminder"]

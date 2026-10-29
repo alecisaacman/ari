@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -869,3 +870,66 @@ def test_the_pet_knows_when_ari_is_out_of_credits(settings, session_factory, led
     gateway.poll_once()
 
     assert json.loads(path.read_text())["outOfCredits"] is True
+
+
+class FakeGetDone:
+    """GET DONE as the EventKit helper reports it."""
+
+    def __init__(self, *titles: str) -> None:
+        self.items = [{"id": f"r{n}", "title": title, "completed": False} for n, title in enumerate(titles)]
+
+    def add(self, title: str) -> None:
+        self.items.append({"id": f"r{len(self.items)}", "title": title, "completed": False})
+
+    def __call__(self, command: str, payload: dict) -> dict:
+        if command == "reminders":
+            return {"reminders": list(self.items)}
+        if command == "add-reminder":
+            self.add(payload["title"])
+            return {"reminder": self.items[-1]}
+        raise AssertionError(command)
+
+
+def test_ari_asks_about_what_alec_added_to_get_done_once(settings, session_factory, ledger_dir) -> None:
+    from ari_core.apple import AppleDesk
+
+    get_done = FakeGetDone("Buy milk")
+    apple = AppleDesk(run=get_done, own_log=ledger_dir / "own.json")
+    clock = {"now": datetime(2026, 10, 28, 15, 0, tzinfo=UTC)}
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: clock["now"], apple=apple)
+    seed(gateway, settings)
+
+    gateway.poll_once()  # first look only remembers the list
+    assert messages.sent == []
+
+    get_done.add("Email the landlord")  # added on his phone, offline
+    apple.add_reminder("Call Sam")  # ARI's own item is never asked about
+    clock["now"] += timedelta(minutes=2)
+    assert gateway.poll_once().get_done_noticed == 1
+    assert len(messages.sent) == 1
+    assert "Email the landlord" in messages.sent[0][1] and "Call Sam" not in messages.sent[0][1]
+
+    clock["now"] += timedelta(minutes=2)
+    assert gateway.poll_once().get_done_noticed == 0
+
+
+def test_get_done_question_waits_for_quiet_hours_to_end(settings, session_factory, ledger_dir) -> None:
+    from ari_core.apple import AppleDesk
+
+    get_done = FakeGetDone()
+    apple = AppleDesk(run=get_done)
+    local = datetime(2026, 10, 28, 23, 0).astimezone()
+    clock = {"now": local}
+    quiet = replace(settings, quiet_hours=(22, 7))
+    messages = FakeMessages()
+    gateway = make_gateway(quiet, session_factory, messages=messages, now=lambda: clock["now"], apple=apple)
+    seed(gateway, quiet)
+    clock["now"] = local.replace(hour=21)
+    gateway.poll_once()  # remembers the empty list
+
+    clock["now"] = local
+    get_done.add("Renew passport")
+    assert gateway.poll_once().get_done_noticed == 0
+    clock["now"] = local + timedelta(hours=9)  # 8 AM
+    assert gateway.poll_once().get_done_noticed == 1

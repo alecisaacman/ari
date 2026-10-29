@@ -24,10 +24,12 @@ from pathlib import Path
 from typing import Any
 
 from ari_core.action_desk import ActionDesk
-from ari_core.apple import AppleDesk
+from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain import respond_to_message, roll_history
 from ari_core.conversation import Conversation, Respond
 from ari_core.core.pause import get_pause_state
+from ari_core.get_done_watch import describe as describe_get_done
+from ari_core.get_done_watch import mark_seen, new_from_alec
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orchestration
 from ari_core.pet_status import build_pet_status, write_pet_status
@@ -51,6 +53,8 @@ LATE_AFTER = timedelta(minutes=3)
 SENT_LOG_SIZE = 50
 # ARI's signal engine is deterministic and free; it runs this often while ARI is awake.
 ORCHESTRATE_EVERY = timedelta(minutes=30)
+# GET DONE is read through the EventKit helper, so ARI looks once a minute, not every poll.
+GET_DONE_LOOK_EVERY = timedelta(minutes=1)
 NOTIFY_LEVELS = {
     AlertEscalationLevel.ELEVATED.value,
     AlertEscalationLevel.INTERRUPTIVE.value,
@@ -67,6 +71,7 @@ class PollReport:
     signals_raised: int = 0
     reminders_sent: int = 0
     reviews_sent: int = 0
+    get_done_noticed: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +83,7 @@ class PollReport:
             "signalsRaised": self.signals_raised,
             "remindersSent": self.reminders_sent,
             "reviewsSent": self.reviews_sent,
+            "getDoneNoticed": self.get_done_noticed,
         }
 
 
@@ -160,6 +166,7 @@ class ImessageGateway:
             history = self._send_alerts(history, report)
             history = self._send_reminders(history, report)
             history = self._send_reviews(history, report)
+            history = self._notice_get_done(history, report)
             self._save(cursor, history)
             self._update_pet(thinking=False)
         return report
@@ -293,6 +300,39 @@ class ImessageGateway:
                 if history:
                     history = [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}]
         return history
+
+    def _notice_get_done(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
+        """Ask about what Alec added to GET DONE himself, e.g. offline or while the Mac slept.
+
+        Quiet hours hold the question, and the items stay unseen until ARI can ask.
+        """
+        now = self.now()
+        if self.apple is None or self.dry_run or get_pause_state()["paused"] or self._quiet(now):
+            return history
+        marker = self.settings.state_dir / "last-get-done-look"
+        try:
+            last = datetime.fromisoformat(marker.read_text().strip())
+        except (OSError, ValueError):
+            last = None
+        if last is not None and now - last < GET_DONE_LOOK_EVERY:
+            return history
+        marker.write_text(now.isoformat())
+        seen_path = self.settings.state_dir / "get-done-seen.json"
+        try:
+            items, ids = new_from_alec(self.apple, seen_path)
+        except AppleError as error:
+            report.detail = f"GET DONE couldn't be read: {error}"
+            return history
+        if not items:
+            mark_seen(seen_path, ids)
+            return history
+        body = describe_get_done(items)
+        if not self._send(self.settings.reply_to or "", body, report):
+            return history  # still unseen, so ARI asks again next look
+        mark_seen(seen_path, ids)
+        report.get_done_noticed += len(items)
+        # Kept in the conversation so "yes" or "do the second one" has context.
+        return [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
 
     def _quiet(self, now: datetime) -> bool:
         if self.settings.quiet_hours is None:

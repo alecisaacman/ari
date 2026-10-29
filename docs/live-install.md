@@ -46,6 +46,11 @@ otherwise. Both sync through iCloud, so a timed reminder goes off on the iPhone 
 while the Mac sleeps. The connection is off until `ari-live connect-apple` succeeds,
 which keeps tests and development checkouts away from the real lists.
 
+GET DONE also works as an inbox. Whatever Alec adds there himself, with no connection or
+while the Mac sleeps, ARI notices within a minute of running and texts him the new items,
+asking whether to act on them now. It never asks about items it wrote itself (it keeps
+their ids in `~/ARI/state/get-done-own.json`) and holds the question through quiet hours.
+
 ## The desktop pet
 
 `ari-live install` also builds ARI's desktop pet into `~/Applications/ARI Pet.app` when
