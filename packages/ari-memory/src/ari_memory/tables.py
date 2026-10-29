@@ -286,8 +286,33 @@ class BuildProposalRow(Base):
     why: Mapped[str] = mapped_column(Text)
     brief: Mapped[str] = mapped_column(Text)
     skill_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # proposed, approved, held, declined, or done
+    # proposed, approved, held, declined, building, built, stuck, shipping, or done
     status: Mapped[str] = mapped_column(String(32), default="proposed")
     source: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set by ARI's builder: the branch it built on, what happened, and when.
+    branch: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The last status Alec was told about, so each change is texted once.
+    announced_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class BuildLogRow(Base):
+    """One release that went live: what changed and why, in the commits' own words.
+
+    ARI's self-documentation. Reviews read it to judge what was built and whether it is
+    used; it is also the raw material for telling the story of building ARI.
+    """
+
+    __tablename__ = "build_log"
+    __table_args__ = (Index("ix_build_log_shipped_at", "shipped_at"),)
+
+    id: Mapped[UUID] = mapped_column(SQLUUID(as_uuid=True), primary_key=True)
+    release: Mapped[str] = mapped_column(String(64), unique=True)
+    commit: Mapped[str] = mapped_column(String(64))
+    shipped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # [{"sha", "subject", "body"}], oldest first
+    commits: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    files: Mapped[list[str]] = mapped_column(JSON, default=list)

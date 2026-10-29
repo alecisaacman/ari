@@ -16,13 +16,40 @@ one off). Each review is kept as an ARI note.
 
 ARI gathers facts deterministically from its own records and Apple's: open loops,
 state, reminders, GET DONE, the calendar, what was checked off, today's conversation,
-tool errors, the skills it doesn't have yet, and its build list. Only the writing calls
+tool errors, the skills it doesn't have yet, its build list, what shipped in the last
+day (the build log), and how often each of its tools was used this week. Only the writing calls
 a model (about 2 cents a review), and the model may use only those facts.
 
 ## The build list
 
 A review may propose one build: something ARI should be able to do and can't. It goes
 on the build list (`build_proposals`), which the hub shows. I answer "yes" or "hold" in
-the conversation, and ARI records it. An approved build is a brief for a coding agent.
-ARI never starts building on its own. When I ask for something it can't do, ARI offers
+the conversation, and ARI records it. When I ask for something it can't do, ARI offers
 to add it to the list.
+
+## Approved builds build themselves
+
+With the builder on (`ari-live connect-builds`, then `ari-live setup`), launchd runs
+`ari_core.builder` hourly. At most every 5 hours (`ARI_BUILD_EVERY_HOURS`) it takes the
+oldest approved build and:
+
+1. makes a fresh worktree on branch `ari/build-<id>` from GitHub's main, under
+   `~/ARI/builds`;
+2. runs Claude Code unattended with the build's brief. Claude can read and edit inside
+   that worktree, run the tests, and commit there, and nothing else: no push, no network
+   tools, nothing outside the folder;
+3. runs the tests itself. New commits and passing tests make the build `built`;
+   anything else makes it `stuck`, with the reason.
+
+If Claude is out of credits, the build goes back to `approved` and the next hourly run
+tries again, so it starts when the credits refresh. ARI texts me each result once.
+Nothing goes live until I say "ship it": ARI then brings the branch up to date with
+main, tests it again, pushes it to main, and installs it as the live release.
+
+## The build log
+
+Every release `ari-live install` puts live is recorded in ARI's build log (`build_log`):
+the commits it shipped since the release before, in their own words, and the files
+they touched. Reviews read it beside tool use, so ARI can judge what was worth building
+and what to build next, and "what did we build this week?" answers from it. It is also
+the raw material for telling the story of building ARI.

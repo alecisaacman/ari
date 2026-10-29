@@ -19,8 +19,13 @@ APPROVED = "approved"
 HELD = "held"
 DECLINED = "declined"
 DONE = "done"
+# Set by ARI's builder (ari_core.builder), never by a decision.
+BUILDING = "building"
+BUILT = "built"
+STUCK = "stuck"
+SHIPPING = "shipping"
 DECISIONS = {"approve": APPROVED, "hold": HELD, "decline": DECLINED, "done": DONE}
-STILL_OPEN = (PROPOSED, APPROVED, HELD)
+STILL_OPEN = (PROPOSED, APPROVED, HELD, BUILDING, BUILT, STUCK, SHIPPING)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +37,8 @@ class Build:
     skill_id: str | None
     status: str
     created_at: datetime
+    branch: str | None = None
+    result: str | None = None
 
     def describe(self) -> dict[str, str | None]:
         return {
@@ -42,6 +49,8 @@ class Build:
             "skill_id": self.skill_id,
             "status": self.status,
             "proposed_at": self.created_at.isoformat(),
+            "branch": self.branch,
+            "result": self.result,
         }
 
 
@@ -102,4 +111,6 @@ def _to_model(row: BuildProposalRow) -> Build:
         skill_id=row.skill_id,
         status=row.status,
         created_at=row.created_at,
+        branch=row.branch,
+        result=row.result,
     )

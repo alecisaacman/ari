@@ -12,6 +12,7 @@ and tests it first, then switches `current`; the previous release stays for roll
   ari-live connect-apple                           connect ARI to Reminders (GET DONE) and Calendar
   ari-live connect-mac                             let ARI control this Mac when Alec texts it
   ari-live connect-gmail                           let ARI read Gmail (asks for an app password)
+  ari-live connect-builds                          let ARI build approved builds on a schedule
   ari-live status                                   what's live, and what's running
   ari-live setup                                    point ARI's launchd jobs at `current`
   ari-live hub open | stop                          start the hub on demand and open it
@@ -49,6 +50,7 @@ PREFIX = f"com.{getpass.getuser()}.ari"
 API_LABEL = f"{PREFIX}.api"
 HUB_LABEL = f"{PREFIX}.hub"
 POLL_LABEL = f"{PREFIX}.imessage-poll"
+BUILDER_LABEL = f"{PREFIX}.builder"
 # Desktop pets, one app per character, all built from tools/ari-pet.
 PETS = {
     "ARI Pet": {"label": f"{PREFIX}.pet", "plist": "Info.plist", "id": "com.alecisaacman.ari.pet"},
@@ -80,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("connect-apple", help="Connect ARI to Apple Reminders (GET DONE) and Calendar.")
     commands.add_parser("connect-mac", help="Let ARI control this Mac when Alec asks it to.")
     commands.add_parser("connect-gmail", help="Let ARI read Gmail, with an app password you type in.")
+    commands.add_parser("connect-builds", help="Let ARI build what Alec approves, on a schedule.")
     commands.add_parser("status")
     commands.add_parser("setup")
     hub = commands.add_parser("hub")
@@ -95,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         return connect_mac()
     if args.command == "connect-gmail":
         return connect_gmail()
+    if args.command == "connect-builds":
+        return connect_builds()
     if args.command == "rollback":
         return rollback()
     if args.command == "status":
@@ -166,10 +171,30 @@ def install_release(repo: Path, commit: str, *, run_tests: bool) -> int:
         print(f"Release {name} failed; the live ARI is unchanged. ({error})")
         shutil.rmtree(release, ignore_errors=True)
         return 1
+    previous = _live_commit()
     _switch_to(release)
     _prune()
+    _log_build(release, name, sha, previous)
     print(f"Live: {name}")
     return 0
+
+
+def _live_commit() -> str | None:
+    try:
+        return json.loads((CURRENT / "RELEASE.json").read_text())["commit"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _log_build(release: Path, name: str, sha: str, previous: str | None) -> None:
+    """Record what this release shipped in ARI's build log. A failure never undoes the release."""
+    command = [str(release / ".venv" / "bin" / "python"), "-m", "ari_core.build_log", "record",
+               "--release", name, "--repo", str(release), "--to", sha]
+    if previous and previous != sha:
+        command += ["--since", previous]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    lines = (result.stdout if result.returncode == 0 else result.stderr).strip().splitlines()
+    print(lines[-1] if lines else "Build log: nothing recorded.")
 
 
 def rollback() -> int:
@@ -221,7 +246,7 @@ def status() -> int:
         info = json.loads((live / "RELEASE.json").read_text())
         print(f"Live: {live.name}\n  {info['subject']}\n  built {info['built_at']}, tests {info['tests']}")
     print("Releases kept: " + (", ".join(release.name for release in _releases()) or "none"))
-    for label in (POLL_LABEL, API_LABEL, HUB_LABEL, *(pet["label"] for pet in PETS.values())):
+    for label in (POLL_LABEL, BUILDER_LABEL, API_LABEL, HUB_LABEL, *(pet["label"] for pet in PETS.values())):
         print(f"{label}: {'running' if _running(label) else 'loaded, idle' if _loaded(label) else 'not loaded'}")
     return 0
 
@@ -261,6 +286,21 @@ def setup() -> int:
             "StandardOutPath": str(LOGS / "pets.log"),
             "StandardErrorPath": str(LOGS / "pets.log"),
         }
+    plists[BUILDER_LABEL] = {
+        "Label": BUILDER_LABEL,
+        "ProgramArguments": [str(python), "-m", "ari_core.builder", "run"],
+        "WorkingDirectory": str(CURRENT),
+        # Checks hourly; the builder itself keeps to its pace and does nothing while off.
+        "StartInterval": 3600,
+        "RunAtLoad": False,
+        "Umask": 0o077,
+        "EnvironmentVariables": {
+            "ARI_HOME": str(ARI_HOME),
+            "PATH": f"{Path.home() / '.local' / 'bin'}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+        },
+        "StandardOutPath": str(LOGS / "builder.log"),
+        "StandardErrorPath": str(LOGS / "builder.log"),
+    }
     for label, command in ((API_LABEL, "serve-api"), (HUB_LABEL, "serve-hub")):
         plists[label] = {
             "Label": label,
@@ -371,6 +411,38 @@ def connect_mac() -> int:
     subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{POLL_LABEL}"], check=False)
     print("ARI can control this Mac. Text it \"open Spotify\" or \"what's open on my Mac\".")
     return 0
+
+
+def connect_builds() -> int:
+    """Turn on ARI's builder: approved builds get built on a branch, about every 5 hours.
+
+    It builds from the repository releases come from (the live release's origin), whose
+    own origin is GitHub. Nothing goes live until Alec says "ship it".
+    """
+    if _live() is None:
+        print("Install a release first: ari-live install")
+        return 1
+    source = _run(["git", "-C", str(CURRENT), "remote", "get-url", "origin"]).strip()
+    if not Path(source).is_dir():
+        print(f"Not connected: the live release came from {source}, not a folder on this Mac.")
+        return 1
+    claude = shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+    if not Path(claude).exists():
+        print("Not connected: Claude Code isn't installed (claude).")
+        return 1
+    _turn_on("ARI_AUTOBUILD")
+    _set_env("ARI_SOURCE_REPO", source)
+    _set_env("ARI_CLAUDE", claude)
+    print(f"ARI's builder is on. It builds approved builds from {source}, at most every 5 hours.")
+    print("Run `ari-live setup` once so launchd checks every hour.")
+    return 0
+
+
+def _set_env(key: str, value: str) -> None:
+    existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
+    lines = [line for line in existing.splitlines() if not line.startswith(f"{key}=")]
+    ENV_FILE.write_text("\n".join([*lines, f"{key}={value}"]) + "\n", encoding="utf-8")
+    ENV_FILE.chmod(0o600)
 
 
 def connect_gmail() -> int:

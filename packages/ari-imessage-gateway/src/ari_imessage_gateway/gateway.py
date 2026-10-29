@@ -26,6 +26,7 @@ from typing import Any
 from ari_core.action_desk import ActionDesk
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain import respond_to_message, roll_history
+from ari_core.builder import announcement, unannounced
 from ari_core.conversation import Conversation, Respond
 from ari_core.core.pause import get_pause_state
 from ari_core.get_done_watch import describe as describe_get_done
@@ -74,6 +75,7 @@ class PollReport:
     reminders_sent: int = 0
     reviews_sent: int = 0
     get_done_noticed: int = 0
+    builds_announced: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +88,7 @@ class PollReport:
             "remindersSent": self.reminders_sent,
             "reviewsSent": self.reviews_sent,
             "getDoneNoticed": self.get_done_noticed,
+            "buildsAnnounced": self.builds_announced,
         }
 
 
@@ -173,6 +176,7 @@ class ImessageGateway:
             history = self._send_reminders(history, report)
             history = self._send_reviews(history, report)
             history = self._notice_get_done(history, report)
+            history = self._announce_builds(history, report)
             self._save(cursor, history)
             self._update_pet(thinking=False)
         return report
@@ -339,6 +343,22 @@ class ImessageGateway:
         report.get_done_noticed += len(items)
         # Kept in the conversation so "yes" or "do the second one" has context.
         return [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
+
+    def _announce_builds(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
+        """Tell Alec once when ARI's builder finishes, gets stuck on, or ships a build."""
+        if self.dry_run or get_pause_state()["paused"] or self._quiet(self.now()):
+            return history
+        with self.session_factory() as session:
+            for row in unannounced(session):
+                body = announcement(row)
+                if not self._send(self.settings.reply_to or "", body, report):
+                    break
+                row.announced_status = row.status
+                session.commit()
+                report.builds_announced += 1
+                if history:
+                    history = [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}]
+        return history
 
     def _quiet(self, now: datetime) -> bool:
         if self.settings.quiet_hours is None:

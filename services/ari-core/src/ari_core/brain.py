@@ -28,6 +28,8 @@ from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
 from sqlalchemy.orm import Session
 
 from ari_core.apple import AppleDesk, AppleError
+from ari_core.build_log import recent_builds, tool_use
+from ari_core.builder import start_ship
 from ari_core.email_reader import EmailDesk, EmailError
 from ari_core.mac import MacDesk, MacError
 from ari_core.brain_usage import ModelCall
@@ -155,7 +157,12 @@ and cancel_reminder handle "what reminders do I have" and "cancel that".
 - ARI keeps a build list: things ARI wants to build for itself. Its morning and night \
 reviews may propose one. When Alec answers a proposal ("yes", "build it", "hold off", \
 "not now", "no"), record it with decide_build. When he asks for something ARI can't do, \
-say so plainly and offer to add it with propose_build. ARI never starts a build itself.
+say so plainly and offer to add it with propose_build. A build he approves is built by \
+ARI's builder on its own schedule, on a branch, and ARI texts him when it's ready. Only \
+when he says to ship a built build ("ship it") call ship_build; it goes live after the \
+tests pass again. Never ship a build he hasn't asked you to.
+- ARI keeps a build log of every release that went live, with what changed and why. \
+"What did we build this week?" or "what's new in ARI" is get_build_log.
 - GET DONE is Alec's to-do list in Apple Reminders, on his phone. "Add X to my list" or \
 "put X on GET DONE" goes there with add_to_get_done; get_done_list shows what's on it \
 and complete_get_done checks something off. ARI only ever writes to GET DONE.
@@ -383,6 +390,23 @@ TOOLS: list[dict[str, Any]] = [
         "name": "get_build_list",
         "description": "Builds ARI has proposed for itself that aren't done or declined, with their status.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ship_build",
+        "description": "Put a built build live: test it again, push it to main, install it. Only when Alec says ship it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"build_id": {"type": "string"}},
+            "required": ["build_id"],
+        },
+    },
+    {
+        "name": "get_build_log",
+        "description": "ARI's build log: what shipped to the live ARI recently, what changed and why.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"days": {"type": "integer", "description": "How far back, 1 to 90. Default 7."}},
+        },
     },
     {
         "name": "decide_build",
@@ -730,7 +754,7 @@ def make_tool_dispatcher(
             "remember", "save_note", "set_daily_state", "set_weekly_plan",
             "update_open_loop", "set_reminder", "cancel_reminder",
             "add_to_get_done", "complete_get_done", "add_calendar_event",
-            "decide_build", "propose_build",
+            "decide_build", "propose_build", "ship_build",
         }:
             return {"recorded": {"tool": name, "dry_run": True}}
         if dry_run and name in MAC_TOOL_NAMES - MAC_READ_TOOLS:
@@ -905,6 +929,20 @@ def make_tool_dispatcher(
             if name == "get_build_list":
                 return {"builds": [build.describe() for build in list_builds(session)]}
 
+            if name == "ship_build":
+                if os.environ.get("ARI_AUTOBUILD") != "1":
+                    return {"error": "ARI's builder isn't turned on."}
+                try:
+                    build_id = UUID(str(tool_input["build_id"]))
+                except ValueError:
+                    return {"error": "That isn't a build id; get_build_list has them."}
+                return start_ship(session, build_id)
+
+            if name == "get_build_log":
+                days = max(1, min(int(tool_input.get("days") or 7), 90))
+                since = datetime.now(tz=UTC) - timedelta(days=days)
+                return {"shipped": recent_builds(session, since=since), "tool_use": tool_use(session, since=since)}
+
             if name == "decide_build":
                 decided = decide_build(
                     session, UUID(tool_input["build_id"]), str(tool_input["decision"]), now=datetime.now(tz=UTC)
@@ -957,6 +995,8 @@ FAST_TOOL_NAMES = {
     "list_reminders",
     "cancel_reminder",
     "get_build_list",
+    "get_build_log",
+    "ship_build",
     "decide_build",
     "propose_build",
     "get_done_list",
