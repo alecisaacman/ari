@@ -10,13 +10,13 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    statusBarStyle: "black-translucent",
     title: "ARI"
   }
 };
 
 export const viewport: Viewport = {
-  themeColor: "#efeee9",
+  themeColor: "#0e0f12",
   viewportFit: "cover"
 };
 

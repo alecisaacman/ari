@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { Freshness, LiveHello, LiveRefresh } from "@/src/components/hub/live";
+import { Freshness, LiveRefresh } from "@/src/components/hub/live";
 import { Inside } from "@/src/components/hub/inside";
 import { Today } from "@/src/components/hub/today";
 import { TouchIdButton } from "@/src/components/hub/touch-id";
@@ -65,36 +65,41 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   return (
     <main className="hub">
       <header className="hub-top">
-        <LiveHello name="Alec" />
+        <Link href="/" className="hub-mark" aria-label="ARI, Today">
+          <span className={`hub-dot ${!brain.panel ? "is-down" : brain.panel.paused.paused ? "is-paused" : ""}`} aria-hidden="true" />
+          ARI
+        </Link>
         <nav className="hub-tabs" aria-label="Hub">
           <Link href="/" className={tab === "today" ? "is-on" : ""} aria-current={tab === "today" ? "page" : undefined}>
             Today
           </Link>
           <Link href="/?tab=ari" className={tab === "ari" ? "is-on" : ""} aria-current={tab === "ari" ? "page" : undefined}>
-            ARI{creator ? "" : " 🔒"}
+            Inside ARI
+            {creator ? null : (
+              <svg viewBox="0 0 24 24" width="13" height="13" aria-label="locked" role="img">
+                <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+                <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" strokeWidth="2" />
+              </svg>
+            )}
           </Link>
         </nav>
-        {brain.panel ? (
-          <span className={`hub-status ${brain.panel.paused.paused ? "is-paused" : ""}`}>
-            <span aria-hidden="true" />
-            {brain.panel.paused.paused ? "Paused" : "Running"}
-            <Freshness generatedAt={brain.panel.generatedAt} />
-          </span>
-        ) : null}
+        <span className="hub-status">
+          {!brain.panel ? "Not answering" : brain.panel.paused.paused ? "Paused" : <Freshness generatedAt={brain.panel.generatedAt} />}
+        </span>
       </header>
       <LiveRefresh />
 
       {!brain.panel ? (
-        <section className="hub-card hub-down">
+        <section className="hub-panel hub-down">
           <h2>ARI's brain isn't answering</h2>
           <p className="hub-quiet">{brain.error ?? "Unknown error."}. The hub starts ARI's API on demand, so try again in a moment.</p>
         </section>
       ) : tab === "today" ? (
-        <Today panel={brain.panel} />
+        <Today panel={brain.panel} name="Alec" />
       ) : creator ? (
         <InsidePage panel={brain.panel} />
       ) : (
-        <section className="hub-card hub-locked">
+        <section className="hub-panel hub-locked">
           <h2>Inside ARI is for its creator</h2>
           <p className="hub-quiet">
             {hasPasskeys()

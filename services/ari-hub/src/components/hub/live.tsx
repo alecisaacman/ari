@@ -3,8 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { greeting } from "./format";
-
 // The hub stays current while it's on screen: ARI's panel is re-read every 30 seconds
 // and whenever the window comes back into view. Reading the panel calls no model, so
 // it costs nothing; nothing is read while the hub is hidden.
@@ -40,30 +38,6 @@ function useNow(everyMs: number): Date | null {
     return () => window.clearInterval(timer);
   }, [everyMs]);
   return now;
-}
-
-// The greeting, date, and time, ticking in the browser.
-export function LiveHello({ name }: { name: string }) {
-  const now = useNow(1_000);
-  if (!now) {
-    return (
-      <div className="hub-hello">
-        <p className="hub-date">&nbsp;</p>
-        <h1>Hello, {name}</h1>
-      </div>
-    );
-  }
-  return (
-    <div className="hub-hello">
-      <p className="hub-date">
-        {now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-        <span className="hub-clock">{now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
-      </p>
-      <h1>
-        {greeting(now)}, {name}
-      </h1>
-    </div>
-  );
 }
 
 // How fresh the view is: "Live" just after a read, then the seconds since.

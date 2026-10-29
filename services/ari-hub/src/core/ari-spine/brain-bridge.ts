@@ -34,7 +34,7 @@ export type BrainPanel = {
     delivered_by?: string;
   }>;
   apple?: { connected: boolean; error: string | null };
-  builds?: Array<{ id: string; title: string; why: string; brief: string; skill_id: string | null; status: string; proposed_at: string }>;
+  builds?: Array<{ id: string; title: string; why: string; brief: string; skill_id: string | null; status: string; proposed_at: string; branch?: string | null; result?: string | null }>;
   getDone?: Array<{ id: string; title: string; due?: string; notes?: string }>;
   calendarToday?: Array<{ id: string; title: string; calendar: string; start: string; end: string; all_day: boolean; location?: string }>;
   alerts: Array<{

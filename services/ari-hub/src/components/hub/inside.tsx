@@ -7,7 +7,7 @@ import { when } from "./format";
 
 type Skill = { skill_id: string; name: string; lifecycle_status: string };
 
-const BUILD_ORDER: Record<string, number> = { approved: 0, proposed: 1, held: 2 };
+const BUILD_ORDER: Record<string, number> = { building: 0, built: 1, stuck: 2, shipping: 3, approved: 4, proposed: 5, held: 6 };
 
 // The ARI side: what ARI is working toward, how it reviews itself, and what it knows.
 export function Inside({ panel, skills, underTheHood }: { panel: BrainPanel; skills: Skill[]; underTheHood: ReactNode }) {
@@ -22,15 +22,16 @@ export function Inside({ panel, skills, underTheHood }: { panel: BrainPanel; ski
       <section className="hub-builds" aria-labelledby="builds-title">
         <header className="hub-section-head">
           <h2 id="builds-title">What ARI wants to build</h2>
-          <p>ARI proposes; you say yes or hold. It never starts on its own.</p>
+          <p>ARI proposes; you say yes or hold. A yes gets built on its own branch, and nothing goes live until you say ship it.</p>
         </header>
         {builds.length ? (
           <div className="hub-build-grid">
             {builds.map((build) => (
               <article key={build.id} className={`hub-build hub-build-${build.status}`}>
                 <span className="hub-chip">{build.status}</span>
+                {build.branch ? <span className="hub-branch">{build.branch}</span> : null}
                 <h3>{build.title}</h3>
-                <p>{build.why}</p>
+                <p>{build.result || build.why}</p>
                 <details>
                   <summary>Brief</summary>
                   <p>{build.brief}</p>
