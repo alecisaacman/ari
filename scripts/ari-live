@@ -53,7 +53,13 @@ POLL_LABEL = f"{PREFIX}.imessage-poll"
 BUILDER_LABEL = f"{PREFIX}.builder"
 # Desktop pets, one app per character, all built from tools/ari-pet.
 PETS = {
-    "ARI Pet": {"label": f"{PREFIX}.pet", "plist": "Info.plist", "id": "com.alecisaacman.ari.pet"},
+    "ARI Pet": {
+        "label": f"{PREFIX}.pet",
+        "plist": "Info.plist",
+        "id": "com.alecisaacman.ari.pet",
+        # A photorealistic hummingbird, cut out the same way.
+        "art": "art/ari",
+    },
     "Claude Pet": {
         "label": f"{PREFIX}.claude-pet",
         "plist": "Claude-Info.plist",

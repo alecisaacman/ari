@@ -326,11 +326,11 @@ struct Owl: View {
 }
 
 
-// MARK: - The golden retriever, from photos
+// MARK: - Photo pets: Claude's golden and ARI's hummingbird
 
-// Photo poses ship inside Claude Pet.app (Contents/Resources/poses), cut out of their
-// backgrounds by tools/ari-pet/cutout.swift. When they're there, the retriever is the
-// photo of the pose that fits, with live motion on top; otherwise it's drawn.
+// Photo poses ship inside each pet's app (Contents/Resources/poses), cut out of their
+// backgrounds by tools/ari-pet/cutout.swift. When they're there, the pet is the photo of
+// the pose that fits, with live motion on top; otherwise it's drawn (the owl, the dog).
 let photoPoses: [String: NSImage] = {
     guard let folder = Bundle.main.resourceURL?.appendingPathComponent("poses"),
           let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return [:] }
@@ -341,10 +341,14 @@ let photoPoses: [String: NSImage] = {
     return poses
 }()
 
-// All poses were cut at one scale, so one factor sizes them all: the sitting dog is 100 points tall.
-let photoScale: CGFloat = 100 / max(photoPoses["sit"]?.size.height ?? 100, 1)
+// ARI's photos are a hummingbird; Claude's are the golden. (`character` is set later.)
+let photoIsBird = !((Bundle.main.bundleIdentifier ?? "").contains("claude") || CommandLine.arguments.contains("claude"))
 
-struct PhotoRetriever: View {
+// All poses were cut at one scale, so one factor sizes them all: the sitting dog is 100
+// points tall, the hovering hummingbird 80.
+let photoScale: CGFloat = (photoIsBird ? 80 : 100) / max(photoPoses["sit"]?.size.height ?? 100, 1)
+
+struct PhotoPet: View {
     @ObservedObject var model: PetModel
 
     // The photo for the moment, and whether to mirror it (the leap faces right).
@@ -374,16 +378,24 @@ struct PhotoRetriever: View {
             let mood = model.mood
             let drag = model.drag
             let current = photo()
-            let panting = current.name == "panting"
-            let breathe = 1 + (panting ? 0.022 * sin(t * 9) : 0.012 * sin(t * (mood == .asleep ? 1.0 : 1.8)))
-            let hop: Double = mood == .alert && drag == .none && sin(t * 3) > 0.8 ? -3 : 0
+            let panting = current.name == "panting" && !photoIsBird
+            // A hummingbird hovers: it floats up and down off the ground, except perched.
+            let perched = current.name == "asleep" || current.name == "sad"
+            let hovering = photoIsBird && !perched
+            let breathe: Double = hovering
+                ? 1 + 0.008 * sin(t * 3)
+                : 1 + (panting ? 0.022 * sin(t * 9) : 0.012 * sin(t * (mood == .asleep ? 1.0 : 1.8)))
+            let hop: Double = hovering
+                ? -8 + sin(t * 2.2) * 3 + (mood == .alert && drag == .none ? sin(t * 9) * 1.5 : 0)
+                : (mood == .alert && drag == .none && sin(t * 3) > 0.8 ? -3 : 0)
+            let swing: Double = photoIsBird ? 0.5 : 1
             let sway: Double = {
                 switch drag {
-                case .left: return -5 + sin(t * 10) * 1.5
-                case .right: return 5 + sin(t * 10) * 1.5
-                case .up: return sin(t * 6) * 6
+                case .left: return (-5 + sin(t * 10) * 1.5) * swing
+                case .right: return (5 + sin(t * 10) * 1.5) * swing
+                case .up: return sin(t * 6) * 6 * swing
                 case .down: return sin(t * 30) * 1.5
-                case .none: return 0
+                case .none: return hovering ? sin(t * 1.3) * 1.5 : 0
                 }
             }()
             ZStack {
@@ -795,10 +807,10 @@ struct PetView: View {
                     .frame(maxWidth: 230)
                     .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottom)))
             }
-            if model.character == .owl {
+            if photoPoses["sit"] != nil {
+                PhotoPet(model: model)
+            } else if model.character == .owl {
                 Owl(model: model)
-            } else if photoPoses["sit"] != nil {
-                PhotoRetriever(model: model)
             } else {
                 Retriever(model: model)
             }
@@ -908,7 +920,7 @@ let appURL = character == .owl
     : URL(fileURLWithPath: "/Applications/Claude.app")
 let appName = character == .owl ? "ARI Hub" : "Claude"
 let petBox: CGSize = {
-    guard character == .retriever, photoPoses["sit"] != nil else { return CGSize(width: 84, height: 92) }
+    guard photoPoses["sit"] != nil else { return CGSize(width: 84, height: 92) }
     let widest = photoPoses.values.map { $0.size.width }.max() ?? 0
     let tallest = photoPoses.values.map { $0.size.height }.max() ?? 0
     return CGSize(width: max(110, widest * photoScale), height: max(104, tallest * photoScale))
