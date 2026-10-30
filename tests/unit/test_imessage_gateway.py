@@ -933,3 +933,15 @@ def test_get_done_question_waits_for_quiet_hours_to_end(settings, session_factor
     assert gateway.poll_once().get_done_noticed == 0
     clock["now"] = local + timedelta(hours=9)  # 8 AM
     assert gateway.poll_once().get_done_noticed == 1
+
+
+def test_a_review_that_comes_back_empty_is_reported_not_swallowed(settings, session_factory) -> None:
+    local = datetime(2026, 10, 28, 8, 30).astimezone()
+    messages = FakeMessages()
+    gateway = make_gateway(
+        settings, session_factory, messages=messages, now=lambda: local,
+        review_writer=lambda kind, facts: ({"message": "", "build": None}, None),
+    )
+    seed(gateway, settings)
+    report = gateway.poll_once()
+    assert report.reviews_sent == 0 and "morning review didn't get written" in report.detail

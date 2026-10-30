@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.build_log import recent_builds, tool_use
-from ari_core.builder import start_ship
 from ari_core.email_reader import EmailDesk, EmailError
 from ari_core.mac import MacDesk, MacError
 from ari_core.brain_usage import ModelCall
@@ -936,6 +935,9 @@ def make_tool_dispatcher(
                     build_id = UUID(str(tool_input["build_id"]))
                 except ValueError:
                     return {"error": "That isn't a build id; get_build_list has them."}
+                # Imported here so `python -m ari_core.builder` doesn't load itself twice.
+                from ari_core.builder import start_ship
+
                 return start_ship(session, build_id)
 
             if name == "get_build_log":

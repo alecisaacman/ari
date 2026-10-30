@@ -38,7 +38,9 @@ from ari_core.state import get_daily_state, get_weekly_state, list_open_loops
 
 Kind = Literal["morning", "night"]
 CHANNEL = "review"
-MAX_REVIEW_TOKENS = 1200
+# Thinking counts against this. At 1200 the model spent it all thinking and wrote nothing.
+MAX_REVIEW_TOKENS = 8000
+REVIEW_EFFORT = "low"
 
 REVIEW_PROMPT = """You are ARI, Alec's personal AI operating system, writing his {kind} \
 review. It is sent as one iMessage: plain text, no markdown, no emoji, no exclamation \
@@ -148,10 +150,12 @@ def gather(
         "get_done": lambda: [{"title": item["title"], "due": item.get("due")} for item in apple.get_done()],
     }
     if kind == "morning":
-        reads["calendar_today"] = lambda: apple.events(midnight, midnight + timedelta(days=1))
+        reads["calendar_today"] = lambda: _local_events(apple.events(midnight, midnight + timedelta(days=1)))
     else:
         reads["checked_off_today"] = lambda: [item["title"] for item in apple.completed(midnight, now)]
-        reads["calendar_tomorrow"] = lambda: apple.events(midnight + timedelta(days=1), midnight + timedelta(days=2))
+        reads["calendar_tomorrow"] = lambda: _local_events(
+            apple.events(midnight + timedelta(days=1), midnight + timedelta(days=2))
+        )
     # Each read stands alone, so one failure doesn't hide the rest.
     for key, read in reads.items():
         try:
@@ -159,6 +163,21 @@ def gather(
         except AppleError as error:
             facts[key] = f"Couldn't read this from Apple: {error}"
     return facts
+
+
+def _local_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Calendar times as Alec reads them: local clock times, not UTC timestamps."""
+
+    def clock(value: Any) -> Any:
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone().strftime("%-I:%M %p")
+        except ValueError:
+            return value
+
+    return [
+        {**event, "start": clock(event.get("start")), "end": clock(event.get("end"))} if not event.get("all_day") else event
+        for event in events
+    ]
 
 
 def write_with_model(kind: str, facts: dict[str, Any]) -> tuple[dict[str, Any], ModelCall | None]:
@@ -170,6 +189,8 @@ def write_with_model(kind: str, facts: dict[str, Any]) -> tuple[dict[str, Any], 
         messages=[{"role": "user", "content": json.dumps(facts, default=str)}],
         tools=[SEND_REVIEW_TOOL],
         tool_choice={"type": "auto"},
+        thinking={"type": "adaptive"},
+        output_config={"effort": REVIEW_EFFORT},
     )
     for block in response.content:
         if getattr(block, "type", "") == "tool_use" and isinstance(getattr(block, "input", None), dict):

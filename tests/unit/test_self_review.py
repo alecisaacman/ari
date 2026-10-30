@@ -78,3 +78,16 @@ def test_a_reply_that_isnt_json_is_still_sent_without_a_build(tmp_path) -> None:
 
     assert _parse("Quiet day. Nothing due.") == {"message": "Quiet day. Nothing due.", "build": None}
     assert _parse('Here: {"message": "Hi", "build": null}')["message"] == "Hi"
+
+
+def test_calendar_times_reach_the_review_as_local_clock_times(tmp_path) -> None:
+    from datetime import datetime as dt
+
+    from ari_core.self_review import _local_events
+
+    utc = "2026-10-29T00:30:00Z"
+    [event] = _local_events([{"title": "ECON 442", "start": utc, "end": utc, "all_day": False}])
+    expected = dt.fromisoformat("2026-10-29T00:30:00+00:00").astimezone().strftime("%-I:%M %p")
+    assert event["start"] == expected and "T" not in event["start"]
+    all_day = {"title": "Holiday", "start": utc, "all_day": True}
+    assert _local_events([all_day]) == [all_day]
