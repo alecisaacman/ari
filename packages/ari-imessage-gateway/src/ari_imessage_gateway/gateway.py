@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -56,6 +57,8 @@ LATE_AFTER = timedelta(minutes=3)
 SENT_LOG_SIZE = 50
 # ARI's signal engine is deterministic and free; it runs this often while ARI is awake.
 ORCHESTRATE_EVERY = timedelta(minutes=30)
+# How long a poll waits for a fresh dump it asked for.
+DUMP_REFRESH_WAIT_SECONDS = 5.0
 # GET DONE is read through the EventKit helper, so ARI looks once a minute, not every poll.
 GET_DONE_LOOK_EVERY = timedelta(minutes=1)
 NOTIFY_LEVELS = {
@@ -107,6 +110,7 @@ class ImessageGateway:
         apple: AppleDesk | None = None,
         review_writer: ReviewWriter | None = None,
         pet_status_path: Path | None = None,
+        refresh_dump: Callable[[], None] | None = None,
         mac: MacDesk | None = None,
         mail: EmailDesk | None = None,
     ) -> None:
@@ -123,6 +127,8 @@ class ImessageGateway:
         self.review_writer = review_writer
         # Where the desktop pet reads ARI's status; None leaves it alone (tests).
         self.pet_status_path = pet_status_path
+        # Asks launchd to run the dump job now; used when the snapshot is stale.
+        self.refresh_dump = refresh_dump
         self.conversation = Conversation(
             channel=CHANNEL,
             session_factory=session_factory,
@@ -145,7 +151,7 @@ class ImessageGateway:
             if not acquired:
                 return PollReport(status="busy", detail="Another poll is running.")
             try:
-                rows = read_dump(self.settings.dump_path, stale_after=self.settings.stale_after)
+                rows = self._read_dump()
             except DumpUnavailable as error:
                 return PollReport(status="dump_unavailable", detail=str(error))
             # When ARI last ran, recorded before this run, explains any late reply.
@@ -180,6 +186,27 @@ class ImessageGateway:
             self._save(cursor, history)
             self._update_pet(thinking=False)
         return report
+
+    def _read_dump(self) -> list[DumpRow]:
+        """The snapshot, refreshed first if it's stale.
+
+        After the Mac wakes, launchd can run the poll before the dump catches up. ARI asks
+        for a fresh dump and waits a moment, instead of skipping this poll.
+        """
+        try:
+            return read_dump(self.settings.dump_path, stale_after=self.settings.stale_after)
+        except DumpUnavailable:
+            if self.refresh_dump is None:
+                raise
+        self.refresh_dump()
+        deadline = time.monotonic() + DUMP_REFRESH_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            time.sleep(0.25)
+            try:
+                return read_dump(self.settings.dump_path, stale_after=self.settings.stale_after)
+            except DumpUnavailable:
+                continue
+        return read_dump(self.settings.dump_path, stale_after=self.settings.stale_after)
 
     def _update_pet(self, *, thinking: bool) -> None:
         """Keep the desktop pet's status file current. A failure here never stops messaging."""

@@ -945,3 +945,37 @@ def test_a_review_that_comes_back_empty_is_reported_not_swallowed(settings, sess
     seed(gateway, settings)
     report = gateway.poll_once()
     assert report.reviews_sent == 0 and "morning review didn't get written" in report.detail
+
+
+def test_a_stale_dump_after_sleep_is_refreshed_instead_of_skipping_the_poll(settings, session_factory) -> None:
+    import os
+    import time
+
+    brain = FakeBrain()
+    refreshed: list[bool] = []
+
+    def refresh() -> None:  # launchd running the dump job: a fresh snapshot appears
+        refreshed.append(True)
+        write_dump(settings, (1, "old message"), (2, "are you there?"))
+
+    gateway = make_gateway(settings, session_factory, brain=brain, refresh_dump=refresh)
+    seed(gateway, settings)
+    old = time.time() - 600  # the Mac slept; the snapshot is ten minutes old
+    os.utime(settings.dump_path, (old, old))
+
+    report = gateway.poll_once()
+    assert refreshed and report.status == "ok" and report.handled == 1
+
+
+def test_the_jobs_wake_on_new_messages_not_only_on_a_timer(settings) -> None:
+    import plistlib
+
+    from ari_imessage_gateway.launchd import render_plists
+
+    plists = render_plists(settings, label_prefix="com.test.ari", source_root=Path("/tmp/ari"))
+    dump = plistlib.loads(plists["com.test.ari.imessage-dump.plist"])
+    poll = plistlib.loads(plists["com.test.ari.imessage-poll.plist"])
+    assert dump["ProgramArguments"][0] == "/usr/bin/sqlite3"  # still launchd's direct child
+    assert any(path.endswith("chat.db-wal") for path in dump["WatchPaths"])
+    assert poll["WatchPaths"] == [str(settings.dump_path)]
+    assert dump["ThrottleInterval"] == poll["ThrottleInterval"] == 1

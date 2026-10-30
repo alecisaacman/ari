@@ -7,6 +7,12 @@ launchd -> sqlite3 succeeded). So the dump job runs `/usr/bin/sqlite3` as
 launchd's direct child, read-only, and only that Apple binary ever needs Full
 Disk Access. The poll job only reads the file it writes.
 
+Both jobs also run the moment something changes, so a text is answered in seconds,
+not on the next 10-second tick: the dump job watches Messages' database (a new message
+anywhere writes to it), and the poll job watches the snapshot the dump writes. The
+interval stays as a fallback and for ARI's scheduled work (reminders, reviews).
+launchd's default 10-second throttle would undo that, so both lower it.
+
 These are rendered for Alec to review and install; ARI never installs them.
 """
 
@@ -20,6 +26,8 @@ from .config import ImessageSettings
 
 DUMP_INTERVAL_SECONDS = 10
 POLL_INTERVAL_SECONDS = 10
+# How soon launchd may start a job again after it ran; its default is 10 seconds.
+THROTTLE_SECONDS = 1
 DUMP_ROW_LIMIT = 500
 OWNER_ONLY_UMASK = 0o077
 
@@ -47,6 +55,7 @@ def render_plists(
     python: Path | None = None,
 ) -> dict[str, bytes]:
     home = Path.home()
+    messages_db = home / "Library" / "Messages" / "chat.db"
     logs = settings.state_dir / "logs"
     dump = {
         "Label": f"{label_prefix}.imessage-dump",
@@ -55,9 +64,11 @@ def render_plists(
             "-readonly",
             "-cmd",
             f".output '{settings.dump_path}'",
-            f"file:{home / 'Library' / 'Messages' / 'chat.db'}?mode=ro",
+            f"file:{messages_db}?mode=ro",
             dump_query(settings.self_identifiers),
         ],
+        "WatchPaths": [str(messages_db), f"{messages_db}-wal"],
+        "ThrottleInterval": THROTTLE_SECONDS,
         "StartInterval": DUMP_INTERVAL_SECONDS,
         "RunAtLoad": True,
         # The snapshot holds Alec's messages: owner-only, not launchd's default 022.
@@ -69,6 +80,8 @@ def render_plists(
         "Label": f"{label_prefix}.imessage-poll",
         "ProgramArguments": [str(python or sys.executable), "-m", "ari_imessage_gateway", "poll"],
         "WorkingDirectory": str(source_root),
+        "WatchPaths": [str(settings.dump_path)],
+        "ThrottleInterval": THROTTLE_SECONDS,
         "StartInterval": POLL_INTERVAL_SECONDS,
         "RunAtLoad": True,
         "Umask": OWNER_ONLY_UMASK,

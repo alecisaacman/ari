@@ -6,6 +6,7 @@ import argparse
 import getpass
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -85,7 +86,14 @@ def _gateway(settings: ImessageSettings, *, dry_run: bool) -> ImessageGateway:
         mail=EmailDesk.connected(),
         review_writer=write_with_model,
         pet_status_path=status_path(),
+        refresh_dump=None if dry_run else _refresh_dump,
     )
+
+
+def _refresh_dump() -> None:
+    """Run the dump job now (launchd's, so it keeps its Full Disk Access)."""
+    label = f"gui/{os.getuid()}/com.{getpass.getuser()}.ari.imessage-dump"
+    subprocess.run(["launchctl", "kickstart", label], capture_output=True, check=False, timeout=10)
 
 
 def _poll(settings: ImessageSettings, *, dry_run: bool, loop: int | None) -> int:
