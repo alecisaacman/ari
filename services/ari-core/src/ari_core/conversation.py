@@ -42,6 +42,8 @@ from ari_core.core import paths as core_paths
 from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.pet_status import note_credits
+from ari_core.build_story import Write as StoryWriter
+from ari_core.build_story import run_story
 from ari_core.self_review import Write as ReviewWriter
 from ari_core.self_review import run_review
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
@@ -57,6 +59,7 @@ APPROVE_RE = re.compile(r"^(yes|y|yep|yeah|approve|approved|do it|go ahead)(?:\s
 SPEND_RE = re.compile(r"^ari,?\s+(spend|spending|cost|costs|usage)\??$")
 BUDGET_RE = re.compile(r"^ari,?\s+budget\s+\$?(\d+(?:\.\d+)?)$")
 REVIEW_RE = re.compile(r"^ari,?\s+(review|morning review|night review)$")
+STORY_RE = re.compile(r"^ari,?\s+(story|build story)$")
 DECLINE_RE = re.compile(r"^(no|n|nope|cancel|decline|don't|dont)(?:\s+(\d+))?$")
 
 OUT_OF_CREDITS = (
@@ -107,11 +110,14 @@ class Conversation:
         review_writer: ReviewWriter | None = None,
         mac: MacDesk | None = None,
         mail: EmailDesk | None = None,
+        story_writer: StoryWriter | None = None,
     ) -> None:
         self.channel = channel
         self.apple = apple
         self.mac = mac
         self.mail = mail
+        # The weekly build story calls a model; without a writer it is off.
+        self.story_writer = story_writer
         self.review_writer = review_writer
         self.session_factory = session_factory
         self.action_desk = action_desk
@@ -163,6 +169,9 @@ class Conversation:
         review = REVIEW_RE.match(command)
         if review:
             return self._said(history, text, self._review(review.group(1)))
+
+        if STORY_RE.match(command):
+            return self._said(history, text, self._story())
 
         approval = APPROVE_RE.match(command) or DECLINE_RE.match(command)
         pending = self.action_desk.pending() if self.action_desk else []
@@ -228,6 +237,13 @@ class Conversation:
         with self.session_factory() as session:
             review = run_review(session, kind=kind, now=self.now(), apple=self.apple, write=self.review_writer)
         return review.message if review else "I couldn't write a review right now: the budget is used up or the model didn't answer."
+
+    def _story(self) -> str:
+        if self.story_writer is None or self.dry_run:
+            return "Build stories aren't set up on this surface."
+        with self.session_factory() as session:
+            story = run_story(session, now=self.now(), write=self.story_writer)
+        return story.message() if story else "Nothing shipped in the last week, so there's no story yet."
 
     def _said(self, history: list[dict[str, Any]], text: str, reply: str) -> Turn:
         # Appended, never edited, so the brain's earlier thinking stays valid.

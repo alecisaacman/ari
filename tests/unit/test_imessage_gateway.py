@@ -979,3 +979,29 @@ def test_the_jobs_wake_on_new_messages_not_only_on_a_timer(settings) -> None:
     assert any(path.endswith("chat.db-wal") for path in dump["WatchPaths"])
     assert poll["WatchPaths"] == [str(settings.dump_path)]
     assert dump["ThrottleInterval"] == poll["ThrottleInterval"] == 1
+
+
+def test_the_build_story_goes_out_once_on_sunday_evening(settings, session_factory, monkeypatch) -> None:
+    from ari_core import build_story
+    from ari_core.build_story import Story
+
+    calls: list[str] = []
+
+    def fake_run_story(session, *, now, write):
+        calls.append("story")
+        return Story(title="Build story", lessons=["x"], story="ARI learned to run the Mac.", scripts=[])
+
+    monkeypatch.setattr("ari_imessage_gateway.gateway.run_story", fake_run_story)
+    sunday = datetime(2026, 11, 1, 17, 0).astimezone()
+    clock = {"now": sunday}
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: clock["now"],
+                           story_writer=build_story.write_with_model)
+    seed(gateway, settings)
+    gateway.poll_once()
+    assert calls == []  # before 6 PM
+    clock["now"] = sunday.replace(hour=19)
+    assert gateway.poll_once().stories_sent == 1
+    assert "ARI learned to run the Mac." in messages.sent[-1][1]
+    clock["now"] = sunday.replace(hour=20)
+    assert gateway.poll_once().stories_sent == 0

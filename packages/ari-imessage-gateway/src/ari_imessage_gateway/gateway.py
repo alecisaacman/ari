@@ -27,6 +27,8 @@ from typing import Any
 from ari_core.action_desk import ActionDesk
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain import respond_to_message, roll_history
+from ari_core.build_story import Write as StoryWriter
+from ari_core.build_story import run_story
 from ari_core.builder import announcement, unannounced
 from ari_core.conversation import Conversation, Respond
 from ari_core.core.pause import get_pause_state
@@ -57,6 +59,10 @@ LATE_AFTER = timedelta(minutes=3)
 SENT_LOG_SIZE = 50
 # ARI's signal engine is deterministic and free; it runs this often while ARI is awake.
 ORCHESTRATE_EVERY = timedelta(minutes=30)
+# The build story goes out Sunday evening (weekday 6), until it would be stale.
+STORY_WEEKDAY = 6
+STORY_FROM = (18, 0)
+STORY_UNTIL = (23, 59)
 # How long a poll waits for a fresh dump it asked for.
 DUMP_REFRESH_WAIT_SECONDS = 5.0
 # GET DONE is read through the EventKit helper, so ARI looks once a minute, not every poll.
@@ -79,6 +85,7 @@ class PollReport:
     reviews_sent: int = 0
     get_done_noticed: int = 0
     builds_announced: int = 0
+    stories_sent: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +99,7 @@ class PollReport:
             "reviewsSent": self.reviews_sent,
             "getDoneNoticed": self.get_done_noticed,
             "buildsAnnounced": self.builds_announced,
+            "storiesSent": self.stories_sent,
         }
 
 
@@ -113,6 +121,7 @@ class ImessageGateway:
         refresh_dump: Callable[[], None] | None = None,
         mac: MacDesk | None = None,
         mail: EmailDesk | None = None,
+        story_writer: StoryWriter | None = None,
     ) -> None:
         self.settings = settings
         self.session_factory = session_factory
@@ -129,6 +138,7 @@ class ImessageGateway:
         self.pet_status_path = pet_status_path
         # Asks launchd to run the dump job now; used when the snapshot is stale.
         self.refresh_dump = refresh_dump
+        self.story_writer = story_writer
         self.conversation = Conversation(
             channel=CHANNEL,
             session_factory=session_factory,
@@ -141,6 +151,7 @@ class ImessageGateway:
             review_writer=review_writer,
             mac=mac,
             mail=mail,
+            story_writer=story_writer,
         )
 
     def poll_once(self) -> PollReport:
@@ -183,6 +194,7 @@ class ImessageGateway:
             history = self._send_reviews(history, report)
             history = self._notice_get_done(history, report)
             history = self._announce_builds(history, report)
+            history = self._send_story(history, report)
             self._save(cursor, history)
             self._update_pet(thinking=False)
         return report
@@ -390,6 +402,31 @@ class ImessageGateway:
                 if history:
                     history = [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}]
         return history
+
+    def _send_story(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
+        """Send the week's build story once, Sunday evening or when ARI next runs that night."""
+        if self.story_writer is None or self.dry_run or get_pause_state()["paused"]:
+            return history
+        local = self.now().astimezone()
+        if local.weekday() != STORY_WEEKDAY or not STORY_FROM <= (local.hour, local.minute) <= STORY_UNTIL:
+            return history
+        marker = self.settings.state_dir / "last-story"
+        try:
+            if marker.read_text().strip() == local.date().isoformat():
+                return history
+        except OSError:
+            pass
+        marker.write_text(local.date().isoformat())  # once a week, even if writing fails
+        with self.session_factory() as session:
+            story = run_story(session, now=self.now(), write=self.story_writer)
+        if story is None:
+            report.detail = "No build story this week: nothing shipped, or it didn't get written."
+            return history
+        body = story.message()
+        if not self._send(self.settings.reply_to or "", body, report):
+            return history
+        report.stories_sent += 1
+        return [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
 
     def _quiet(self, now: datetime) -> bool:
         if self.settings.quiet_hours is None:

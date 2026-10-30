@@ -51,3 +51,14 @@ the commits it shipped since the release before, in their own words, and the fil
 they touched. Reviews read it beside tool use, so ARI can judge what was worth building
 and what to build next, and "what did we build this week?" answers from it. It is also
 the raw material for telling the story of building ARI.
+
+## The build story (the content engine)
+
+Every Sunday evening, or when I text "ARI story", ARI turns the week's build log into a
+story (`ari_core.build_story`): two to four lessons about what was worth building, what
+isn't used yet, and what broke; the week told in 150 to 300 words; and one or two
+short-form video outlines (hook, beats, caption). The lessons come first because ARI's
+next reviews read them, so the story feeds its self-improvement before it feeds any post.
+ARI texts me the story and keeps all of it as an ARI note. It never posts anything. Like
+the reviews, only the writing calls a model, and only with facts from ARI's records.
+

@@ -28,6 +28,7 @@ from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain import DEEP_MODEL, make_client
 from ari_core.brain_usage import ModelCall, month_spend, record_model_call
 from ari_core.build_log import recent_builds, tool_use
+from ari_core.build_story import latest_lessons
 from ari_core.builds import STILL_OPEN, propose_build
 from ari_core.builds import list_builds as _list_builds
 from ari_core.modules.notes.db import save_ari_note
@@ -51,7 +52,8 @@ points. Calm and direct.
 Use only the facts given. Never invent a task, event, or result. Keep it under 120 \
 words. Lead with what matters most.
 
-Then look at ARI itself: what shipped recently (shipped_recently, from ARI's build log) \
+Then look at ARI itself: what shipped recently (shipped_recently, from ARI's build log), \
+the lessons from its last build story, \
 and whether ARI's tools are actually being used (tool_use_last_week), the skills it \
 doesn't have yet, tool errors, things Alec asked for that it couldn't do, and the builds \
 already on its list. If one build would clearly \
@@ -136,6 +138,7 @@ def gather(
         "build_list": [build.describe() for build in _list_builds(session, statuses=STILL_OPEN)],
         "shipped_recently": recent_builds(session, since=now - timedelta(days=1)),
         "tool_use_last_week": tool_use(session, since=now - timedelta(days=7)),
+        "lessons_from_last_build_story": latest_lessons(),
         "skills_not_built": [
             {"skill_id": manifest.skill_id, "name": manifest.name, "purpose": manifest.purpose}
             for manifest in list_skill_manifests()
