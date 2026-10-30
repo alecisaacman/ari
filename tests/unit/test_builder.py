@@ -88,7 +88,7 @@ def test_failing_tests_or_no_commits_leave_the_build_stuck_with_the_reason(tmp_p
         with factory() as session:
             assert builder.run_once(session, now=NOW).startswith("stuck")
             row = session.get(BuildProposalRow, build_id)
-            assert row.status == STUCK and reason in row.result
+            assert row.status == STUCK and reason in row.result.lower()
             assert "couldn't finish" in announcement(row)
 
 
@@ -107,3 +107,31 @@ def test_ship_only_starts_for_a_built_build_then_pushes_and_installs(tmp_path: P
         assert any("install" in call for call in shell.calls)
         assert session.get(BuildProposalRow, build_id).status == DONE
         assert list_builds(session) == []
+
+
+def test_a_session_here_claims_builds_finishes_and_can_give_one_back(tmp_path: Path) -> None:
+    from uuid import UUID
+
+    shell = FakeShell()
+    factory, builder, build_id = _setup(tmp_path, shell)
+    with factory() as session:
+        claimed = builder.claim(session, now=NOW)
+        assert claimed["id"] == str(build_id) and "Summarize email." in claimed["instructions"]
+        assert claimed["worktree"].endswith(f"build-{str(build_id)[:8]}")
+        assert builder.claim(session, now=NOW) == "nothing approved"  # it's being built
+
+        assert builder.give_back(session, build_id, reason="Out of credits") .startswith("back on the list")
+        assert session.get(BuildProposalRow, build_id).status == APPROVED
+
+        claimed = builder.claim(session, now=NOW)
+        assert builder.finish(session, UUID(claimed["id"]), summary="Added the digest.", now=NOW).startswith("built")
+        row = session.get(BuildProposalRow, build_id)
+        assert row.status == BUILT and row.result == "Added the digest."
+
+
+def test_a_build_left_building_by_a_session_that_died_is_tried_again(tmp_path: Path) -> None:
+    factory, builder, build_id = _setup(tmp_path, FakeShell())
+    with factory() as session:
+        builder.claim(session, now=NOW)
+        assert builder.claim(session, now=NOW + timedelta(hours=1)) == "nothing approved"
+        assert builder.claim(session, now=NOW + timedelta(hours=4))["id"] == str(build_id)

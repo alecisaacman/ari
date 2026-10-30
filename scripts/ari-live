@@ -253,7 +253,7 @@ def status() -> int:
         info = json.loads((live / "RELEASE.json").read_text())
         print(f"Live: {live.name}\n  {info['subject']}\n  built {info['built_at']}, tests {info['tests']}")
     print("Releases kept: " + (", ".join(release.name for release in _releases()) or "none"))
-    for label in (POLL_LABEL, BUILDER_LABEL, API_LABEL, HUB_LABEL, *(pet["label"] for pet in PETS.values())):
+    for label in (POLL_LABEL, API_LABEL, HUB_LABEL, *(pet["label"] for pet in PETS.values())):
         print(f"{label}: {'running' if _running(label) else 'loaded, idle' if _loaded(label) else 'not loaded'}")
     return 0
 
@@ -295,21 +295,8 @@ def setup() -> int:
             "StandardOutPath": str(LOGS / "pets.log"),
             "StandardErrorPath": str(LOGS / "pets.log"),
         }
-    plists[BUILDER_LABEL] = {
-        "Label": BUILDER_LABEL,
-        "ProgramArguments": [str(python), "-m", "ari_core.builder", "run"],
-        "WorkingDirectory": str(CURRENT),
-        # Checks hourly; the builder itself keeps to its pace and does nothing while off.
-        "StartInterval": 3600,
-        "RunAtLoad": False,
-        "Umask": 0o077,
-        "EnvironmentVariables": {
-            "ARI_HOME": str(ARI_HOME),
-            "PATH": f"{Path.home() / '.local' / 'bin'}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-        },
-        "StandardOutPath": str(LOGS / "builder.log"),
-        "StandardErrorPath": str(LOGS / "builder.log"),
-    }
+    # Builds run in Claude app sessions now (a scheduled task), not a background job.
+    _retire(BUILDER_LABEL)
     for label, command in ((API_LABEL, "serve-api"), (HUB_LABEL, "serve-hub")):
         plists[label] = {
             "Label": label,
@@ -422,6 +409,15 @@ def connect_mac() -> int:
     return 0
 
 
+def _retire(label: str) -> None:
+    """Unload and remove a LaunchAgent ARI no longer uses."""
+    path = LAUNCH_AGENTS / f"{label}.plist"
+    if path.exists():
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], check=False, capture_output=True)
+        path.unlink()
+        print(f"Removed {label}")
+
+
 def connect_builds() -> int:
     """Turn on ARI's builder: approved builds get built on a branch, about every 5 hours.
 
@@ -442,8 +438,8 @@ def connect_builds() -> int:
     _turn_on("ARI_AUTOBUILD")
     _set_env("ARI_SOURCE_REPO", source)
     _set_env("ARI_CLAUDE", claude)
-    print(f"ARI's builder is on. It builds approved builds from {source}, at most every 5 hours.")
-    print("Run `ari-live setup` once so launchd checks every hour.")
+    print(f"ARI's builder is on. Approved builds are built from {source}, at most every 5 hours,")
+    print("by the hourly \"ARI builds\" scheduled task in the Claude app.")
     return 0
 
 

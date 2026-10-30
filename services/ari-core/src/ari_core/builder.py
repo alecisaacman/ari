@@ -1,21 +1,19 @@
-"""ARI builds what Alec approved, on its own schedule, and ships it when he says so.
+"""ARI builds what Alec approved, in a Claude session he can watch, and ships it when he says so.
 
 A build Alec approves ("yes" to a review's proposal) waits on the build list. Once an
-hour launchd runs `python -m ari_core.builder run`. When the last build finished long
-enough ago (ARI_BUILD_EVERY_HOURS, 5 by default) it takes the oldest approved build:
-
-1. A fresh git worktree on a new branch, from GitHub's main, under ~/ARI/builds.
-2. Claude Code, unattended, with the build's brief. It may read and edit files in that
-   worktree, run the tests, and commit there. It can't push or reach anything else.
-3. ARI runs the tests itself. The build is `built` only if there are new commits and
-   the tests pass; otherwise it is `stuck`, with the reason.
-
-Out of Claude credits, the build goes back to `approved` and the next hourly run tries
-again, so it starts once the credits refresh. The poller texts Alec each result once.
+hour a scheduled task in the Claude app starts a session that runs
+`python -m ari_core.builder claim`. When the last build finished long enough ago
+(ARI_BUILD_EVERY_HOURS, 5 by default), claim takes the oldest approved build, makes a
+fresh git worktree on a new branch from GitHub's main under ~/ARI/builds, and prints the
+brief. The session builds it there and runs `finish`, where ARI runs the tests itself:
+new commits and passing tests make it `built`; otherwise it is `stuck`, with the reason.
+A session that runs out of credits runs `give-back`, and the build waits for the next
+hourly run. The poller texts Alec each result once.
 
 Nothing goes live until Alec says "ship it". Then `python -m ari_core.builder ship ID`
 brings the branch up to date with main, tests it again, pushes it to main, and installs
-it as the live release, so it lands in ARI's build log like any other release.
+it as the live release, so it lands in ARI's build log like any other release. (`run`
+still builds headlessly with `claude -p`, for manual use.)
 
 Off unless ARI_AUTOBUILD=1 (set by `ari-live connect-builds`).
 """
@@ -45,6 +43,8 @@ from ari_core.core.env import ari_home
 CLAUDE_TIMEOUT_SECONDS = 2 * 60 * 60
 TEST_TIMEOUT_SECONDS = 20 * 60
 DEFAULT_EVERY_HOURS = 5.0
+# A build still `building` after this long was left by a session that stopped.
+ABANDONED_AFTER = timedelta(hours=3)
 RESULT_CHARS = 700
 TEST_COMMAND = ("uv", "run", "--quiet", "--extra", "dev", "python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-x")
 # Claude may read and edit inside the worktree, run the tests, and commit. Nothing else:
@@ -120,10 +120,18 @@ class Builder:
             live_script=ari_home() / "runtime" / "current" / "scripts" / "ari-live",
         )
 
-    def run_once(self, session: Session, *, now: datetime) -> str:
-        """Build the oldest approved build, if it's time. Returns what happened, for the log."""
-        state = self._state()
-        last = state.get("last_built_at")
+    def claim(self, session: Session, *, now: datetime) -> dict[str, Any] | str:
+        """Take the oldest approved build, if it's time: mark it building and make its worktree.
+
+        Returns the brief to build from, or why there's nothing to build. A build left
+        `building` for hours (a session that died) goes back to approved first.
+        """
+        for stale in session.scalars(select(BuildProposalRow).where(BuildProposalRow.status == BUILDING)):
+            started = stale.built_at or stale.decided_at
+            if started is None or now - _utc(started) > ABANDONED_AFTER:
+                stale.status, stale.result = APPROVED, "The last attempt stopped partway; trying again."
+        session.commit()
+        last = self._state().get("last_built_at")
         if last and now - datetime.fromisoformat(last) < self.every:
             return "waiting: built recently"
         row = session.scalars(
@@ -132,27 +140,66 @@ class Builder:
         if row is None:
             return "nothing approved"
         branch = f"ari/build-{str(row.id)[:8]}"
-        row.status, row.branch, row.result = BUILDING, branch, None
-        session.commit()
         try:
             worktree = self._worktree(branch)
-            summary = self._claude(worktree, row, branch)
+        except (BuildError, subprocess.TimeoutExpired) as error:
+            return f"couldn't start: {error}"
+        # built_at marks when building started until it finishes.
+        row.status, row.branch, row.result, row.built_at = BUILDING, branch, None, now
+        session.commit()
+        return {
+            "id": str(row.id),
+            "title": row.title,
+            "why": row.why,
+            "brief": row.brief or row.title,
+            "branch": branch,
+            "worktree": str(worktree),
+            "instructions": BRIEF.format(branch=branch, title=row.title, why=row.why or "-", brief=row.brief or row.title),
+        }
+
+    def finish(self, session: Session, build_id: UUID, *, summary: str, now: datetime) -> str:
+        """Check a claimed build: new commits and passing tests make it built, else stuck."""
+        row = session.get(BuildProposalRow, build_id)
+        if row is None or row.status != BUILDING or row.branch is None:
+            return "that build isn't being built"
+        worktree = self.builds_dir / row.branch.removeprefix("ari/")
+        try:
             if self._git(worktree, "rev-list", "--count", "origin/main..HEAD").strip() == "0":
-                raise BuildError(f"Claude made no commits. It said: {summary}")
+                raise BuildError(f"No commits were made. The summary said: {summary}")
             self._tests(worktree)
-        except OutOfCredits as error:
-            row.status, row.result = APPROVED, f"Waiting for Claude credits: {error}"[:RESULT_CHARS]
-            session.commit()
-            return "waiting: out of credits"
         except (BuildError, subprocess.TimeoutExpired) as error:
             row.status, row.result, row.built_at = STUCK, str(error)[:RESULT_CHARS], now
             session.commit()
             self._save_state(last_built_at=now.isoformat())
             return f"stuck: {row.title}"
-        row.status, row.result, row.built_at = BUILT, summary[:RESULT_CHARS], now
+        row.status, row.result, row.built_at = BUILT, (summary.strip() or "Built.")[:RESULT_CHARS], now
         session.commit()
         self._save_state(last_built_at=now.isoformat())
-        return f"built: {row.title} on {branch}"
+        return f"built: {row.title} on {row.branch}"
+
+    def give_back(self, session: Session, build_id: UUID, *, reason: str) -> str:
+        """Put a claimed build back on the list, e.g. out of credits, to try again later."""
+        row = session.get(BuildProposalRow, build_id)
+        if row is None or row.status != BUILDING:
+            return "that build isn't being built"
+        row.status, row.result = APPROVED, reason[:RESULT_CHARS]
+        session.commit()
+        return f"back on the list: {row.title}"
+
+    def run_once(self, session: Session, *, now: datetime) -> str:
+        """Claim a build and have headless Claude Code build it (`run`, kept for manual use)."""
+        claimed = self.claim(session, now=now)
+        if isinstance(claimed, str):
+            return claimed
+        build_id = UUID(claimed["id"])
+        try:
+            summary = self._claude(Path(claimed["worktree"]), claimed["instructions"])
+        except OutOfCredits as error:
+            self.give_back(session, build_id, reason=f"Waiting for Claude credits: {error}")
+            return "waiting: out of credits"
+        except (BuildError, subprocess.TimeoutExpired) as error:
+            summary = f"Claude stopped: {error}"
+        return self.finish(session, build_id, summary=summary, now=now)
 
     def ship(self, session: Session, build_id: UUID, *, now: datetime) -> str:
         """Bring the branch up to date with main, test it, push it to main, and install it."""
@@ -192,8 +239,7 @@ class Builder:
         self._git(self.source, "worktree", "add", "--quiet", "-b", branch, str(path), "origin/main")
         return path
 
-    def _claude(self, worktree: Path, row: BuildProposalRow, branch: str) -> str:
-        prompt = BRIEF.format(branch=branch, title=row.title, why=row.why or "-", brief=row.brief or row.title)
+    def _claude(self, worktree: Path, prompt: str) -> str:
         completed = self.run(
             [self.claude, "-p", prompt, "--output-format", "json", "--permission-mode", "acceptEdits",
              "--allowedTools", *ALLOWED_TOOLS],
@@ -274,6 +320,10 @@ def _spawn_detached(command: list[str]) -> None:
         subprocess.Popen(command, stdout=out, stderr=out, start_new_session=True)
 
 
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
 def _tail(completed: subprocess.CompletedProcess[str]) -> str:
     return " ".join((completed.stderr or completed.stdout or "").strip().splitlines()[-3:])[:300]
 
@@ -289,7 +339,14 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="ari_core.builder")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("run")
+    commands.add_parser("claim", help="Take the next approved build; prints its brief as JSON.")
+    finish = commands.add_parser("finish", help="Check a claimed build and hand it back to ARI.")
+    finish.add_argument("build_id", type=UUID)
+    finish.add_argument("--summary", required=True)
+    give_back = commands.add_parser("give-back", help="Put a claimed build back on the list.")
+    give_back.add_argument("build_id", type=UUID)
+    give_back.add_argument("--reason", required=True)
+    commands.add_parser("run", help="Claim and build headlessly (manual use).")
     ship = commands.add_parser("ship")
     ship.add_argument("build_id", type=UUID)
     args = parser.parse_args(argv)
@@ -300,7 +357,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     now = datetime.now(tz=UTC)
     with _session_factory()() as session:
-        outcome = builder.run_once(session, now=now) if args.command == "run" else builder.ship(session, args.build_id, now=now)
+        if args.command == "claim":
+            claimed = builder.claim(session, now=now)
+            print(json.dumps(claimed if isinstance(claimed, dict) else {"nothing": claimed}, indent=2))
+            return 0
+        if args.command == "finish":
+            outcome = builder.finish(session, args.build_id, summary=args.summary, now=now)
+        elif args.command == "give-back":
+            outcome = builder.give_back(session, args.build_id, reason=args.reason)
+        elif args.command == "run":
+            outcome = builder.run_once(session, now=now)
+        else:
+            outcome = builder.ship(session, args.build_id, now=now)
     print(f"{now.isoformat()} {outcome}")
     return 0
 

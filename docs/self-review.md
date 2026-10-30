@@ -29,22 +29,20 @@ to add it to the list.
 
 ## Approved builds build themselves
 
-With the builder on (`ari-live connect-builds`, then `ari-live setup`), launchd runs
-`ari_core.builder` hourly. At most every 5 hours (`ARI_BUILD_EVERY_HOURS`) it takes the
-oldest approved build and:
+With the builder on (`ari-live connect-builds`), an hourly scheduled task in the Claude
+app, "ARI builds", starts a session I can watch, steer, or stop. The session runs
+`python -m ari_core.builder claim`. At most every 5 hours (`ARI_BUILD_EVERY_HOURS`) that
+takes the oldest approved build, makes a fresh worktree on branch `ari/build-<id>` from
+GitHub's main under `~/ARI/builds`, and prints the brief. The session builds it there,
+commits, and runs `finish`, where ARI runs the tests itself: new commits and passing
+tests make the build `built`; anything else makes it `stuck`, with the reason. A session
+out of credits runs `give-back`, and the next hourly run tries again, so the build starts
+when the credits refresh. A build left half-done for 3 hours goes back on the list.
 
-1. makes a fresh worktree on branch `ari/build-<id>` from GitHub's main, under
-   `~/ARI/builds`;
-2. runs Claude Code unattended with the build's brief. Claude can read and edit inside
-   that worktree, run the tests, and commit there, and nothing else: no push, no network
-   tools, nothing outside the folder;
-3. runs the tests itself. New commits and passing tests make the build `built`;
-   anything else makes it `stuck`, with the reason.
-
-If Claude is out of credits, the build goes back to `approved` and the next hourly run
-tries again, so it starts when the credits refresh. ARI texts me each result once.
-Nothing goes live until I say "ship it": ARI then brings the branch up to date with
-main, tests it again, pushes it to main, and installs it as the live release.
+ARI texts me each result once. Nothing goes live until I say "ship it": ARI then brings
+the branch up to date with main, tests it again, pushes it to main, and installs it as
+the live release. Scheduled tasks run while the Claude app is open; one that was due
+while it was closed runs when it opens.
 
 ## The build log
 
