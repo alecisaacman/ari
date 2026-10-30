@@ -1,60 +1,71 @@
-"""ARI's content engine: the week's builds, told as a story.
+"""ARI's content engine: each day of building ARI, told as a story.
 
-Once a week (Sunday evening, or "ARI story" any time) ARI turns its build log into a
-short story of what was built and why, what it taught ARI about what's actually useful,
-and outlines for short-form videos. The lessons come first: they are what ARI's reviews
-read next, so the story feeds its self-improvement. The scripts are raw material for
-Alec's own posts; ARI never posts anything.
+The series counts building days: Day 1 is the first day ARI's repository has commits
+(April 10, 2026), and each later day with commits is the next day in the series, so it
+reads as one continuous "Day N of building ARI". At night, on a day with work (or when
+Alec texts "ARI story"), ARI turns that day's commits into lessons about what was worth
+building, the day as a short story, and short-form video outlines. `backfill` writes
+every day so far.
 
-The facts are gathered deterministically from ARI's records; only the writing calls a
-model, and it may use only those facts. Each story is kept as an ARI note.
+The lessons come first: ARI's reviews read the latest ones, so the story feeds its
+self-improvement before it feeds any post. ARI never posts anything. The facts come
+from git, in the commits' own words; only the writing calls a model, and it may use
+only those facts. Each day is kept as an ARI note.
+
+    python -m ari_core.build_story backfill --repo PATH [--from-day N]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 import anthropic
-from ari_memory.tables import BuildProposalRow
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ari_core.brain import DEEP_MODEL, make_client
 from ari_core.brain_usage import ModelCall, month_spend, record_model_call
-from ari_core.build_log import recent_builds, tool_use
 from ari_core.modules.notes.db import save_ari_note, search_ari_notes
 
 CHANNEL = "story"
 TITLE_PREFIX = "Build story"
-WEEK = timedelta(days=7)
 MAX_STORY_TOKENS = 8000
 STORY_EFFORT = "low"
 LESSONS_HEADING = "What ARI learned"
+MAX_COMMITS = 40
+BODY_CHARS = 400
+# Separators git won't find in a commit message.
+FIELD, RECORD = "\x1f", "\x1e"
 
 STORY_PROMPT = """You are ARI, Alec's personal AI operating system. Alec is building you, \
-with Claude, in the open. Write this week's build story from the facts given: ARI's build \
-log (each release, with what changed and why, in the commits' own words), how often each \
-of ARI's tools was actually used, and the builds that were proposed, approved, or shipped.
+with Claude and Codex, in the open, and posts short-form videos as "Day N of building ARI". \
+Write Day {day} from the facts given: that day's commits, each with what changed and why, \
+in their own words.
 
-Use only those facts. Never invent a feature, a number, or a result. Plain words, no \
-hype, no emoji, no exclamation points. Write about ARI in the third person and Alec by name.
+Use only those facts. Never invent a feature, a number, or a result; when the commits are \
+thin, keep it short. Plain words, no hype, no emoji, no exclamation points. Write about ARI \
+in the third person and Alec by name. A viewer knows nothing about the code: say what ARI \
+can do now that it couldn't, or what went wrong, in everyday terms.
 
 Give it with send_story:
-- lessons: two to four short, specific lessons for ARI's own self-improvement. What was \
-worth building, what isn't being used yet, what broke and why. These matter most.
-- story: the week as a story, 150 to 300 words. Start with the problem that started it, \
-then what was built, then what changed for Alec.
+- lessons: one to three short, specific lessons for ARI's own self-improvement: what was \
+worth building, what broke and why, what to do differently.
+- story: the day in 80 to 160 words. The problem that started it, what was built, what it \
+changed.
 - scripts: one or two short-form video outlines (30 to 60 seconds), each with a hook (one \
-line that makes someone stop scrolling), three to five beats, and a caption."""
+line that makes someone stop scrolling, true to the facts), three to five beats, and a \
+caption that starts with "Day {day} of building ARI." """
 
 SEND_STORY_TOOL: dict[str, Any] = {
     "name": "send_story",
-    "description": "Keep this week's build story.",
+    "description": "Keep this day's build story.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -96,30 +107,53 @@ class Story:
         return "\n".join(parts)
 
     def message(self) -> str:
-        """The iMessage: the story itself, then the first hook. The rest is in the hub."""
+        """The iMessage: the hook, then the story. Lessons and scripts are in the hub."""
         hook = self.scripts[0]["hook"] if self.scripts else ""
-        tail = f"\n\nVideo hook: {hook}" if hook else ""
-        return f"This week's build story.\n\n{self.story}{tail}\n\nLessons and scripts are in the hub, under Notes."
+        lead = f"{self.title}\nHook: {hook}" if hook else self.title
+        return f"{lead}\n\n{self.story}\n\nLessons and video outlines are in the hub, under Notes."
 
 
-def gather(session: Session, *, now: datetime) -> dict[str, Any]:
-    since = now - WEEK
-    decided = session.scalars(
-        select(BuildProposalRow).where(BuildProposalRow.created_at >= since)
-    ).all()
-    return {
-        "week_ending": now.astimezone().strftime("%A %B %-d"),
-        "shipped": recent_builds(session, since=since),
-        "tool_use": tool_use(session, since=since),
-        "builds": [{"title": row.title, "why": row.why, "status": row.status} for row in decided],
-    }
+def story_repo() -> Path | None:
+    """ARI's repository, where the days come from (ARI_SOURCE_REPO, set by ari-live)."""
+    value = os.environ.get("ARI_SOURCE_REPO")
+    return Path(value) if value and Path(value).is_dir() else None
+
+
+def building_days(repo: Path) -> list[date]:
+    """Every day ARI's repository has commits, oldest first: Day 1 is the first."""
+    dates = _git(repo, "log", "--all", "--format=%ad", "--date=short").split()
+    return sorted({date.fromisoformat(value) for value in dates})
+
+
+def day_number(repo: Path, day: date) -> int | None:
+    days = building_days(repo)
+    return days.index(day) + 1 if day in days else None
+
+
+def gather(repo: Path, day: date) -> dict[str, Any] | None:
+    """That day's commits in their own words, or None if nothing was committed."""
+    number = day_number(repo, day)
+    if number is None:
+        return None
+    log = _git(repo, "log", "--all", "--reverse", "--date=short", f"--format=%ad{FIELD}%s{FIELD}%b{RECORD}")
+    commits, seen = [], set()
+    for record in log.split(RECORD):
+        parts = record.strip("\n").split(FIELD)
+        if len(parts) != 3 or parts[0] != day.isoformat():
+            continue
+        subject = parts[1].strip()
+        if subject in seen:  # the same commit on several branches
+            continue
+        seen.add(subject)
+        commits.append({"what": subject, "why": _without_trailers(parts[2])[:BODY_CHARS]})
+    return {"day": number, "date": day.strftime("%A %B %-d, %Y"), "commits": commits[:MAX_COMMITS]}
 
 
 def write_with_model(facts: dict[str, Any]) -> tuple[dict[str, Any], ModelCall | None]:
     response = make_client().messages.create(
         model=DEEP_MODEL,
         max_tokens=MAX_STORY_TOKENS,
-        system=STORY_PROMPT,
+        system=STORY_PROMPT.format(day=facts["day"]),
         messages=[{"role": "user", "content": json.dumps(facts, default=str)}],
         tools=[SEND_STORY_TOOL],
         tool_choice={"type": "auto"},
@@ -135,14 +169,16 @@ def write_with_model(facts: dict[str, Any]) -> tuple[dict[str, Any], ModelCall |
 def run_story(
     session: Session,
     *,
+    repo: Path,
+    day: date,
     now: datetime | None = None,
     write: Write = write_with_model,
     spine_db_path: Path | None = None,
 ) -> Story | None:
-    """Gather, write, and keep the week's story. None when nothing shipped or there's no budget."""
+    """Gather, write, and keep one day's story. None with no commits that day, or no budget."""
     current = now or datetime.now(tz=UTC)
-    facts = gather(session, now=current)
-    if not facts["shipped"] or month_spend(session, now=current).exhausted:
+    facts = gather(repo, day)
+    if facts is None or not facts["commits"] or month_spend(session, now=current).exhausted:
         return None
     try:
         written, call = write(facts)
@@ -153,9 +189,8 @@ def run_story(
     story_text = str(written.get("story") or "").strip()
     if not story_text:
         return None
-    start = (current - WEEK + timedelta(days=1)).astimezone()
     story = Story(
-        title=f"{TITLE_PREFIX}, week of {start.strftime('%b %-d')}",
+        title=f"{TITLE_PREFIX}, Day {facts['day']} ({day.strftime('%b %-d')})",
         lessons=[str(lesson).strip() for lesson in written.get("lessons") or [] if str(lesson).strip()],
         story=story_text,
         scripts=[script for script in written.get("scripts") or [] if isinstance(script, dict)],
@@ -175,3 +210,38 @@ def latest_lessons(spine_db_path: Path | None = None) -> list[str]:
         return [line[2:].strip() for line in section.splitlines() if line.startswith("- ")]
     return []
 
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout
+
+
+def _without_trailers(body: str) -> str:
+    lines = [line for line in body.strip().splitlines() if not line.startswith(("Co-Authored-By:", "Signed-off-by:"))]
+    return "\n".join(lines).strip()
+
+
+def main(argv: list[str] | None = None) -> int:
+    from ari_memory import DatabaseSettings, create_engine, create_session_factory
+
+    from ari_core.core.env import load_local_env
+
+    parser = argparse.ArgumentParser(prog="ari_core.build_story")
+    commands = parser.add_subparsers(dest="command", required=True)
+    backfill = commands.add_parser("backfill", help="Write a story for every building day so far.")
+    backfill.add_argument("--repo", type=Path, required=True)
+    backfill.add_argument("--from-day", type=int, default=1)
+    args = parser.parse_args(argv)
+    load_local_env()
+    factory = create_session_factory(create_engine(DatabaseSettings().database_url))
+    for number, day in enumerate(building_days(args.repo), start=1):
+        if number < args.from_day:
+            continue
+        with factory() as session:
+            story = run_story(session, repo=args.repo, day=day)
+        hook = story.scripts[0]["hook"] if story and story.scripts else ""
+        print(f"Day {number} ({day}): {story.title + ' | ' + hook if story else 'not written'}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

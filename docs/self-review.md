@@ -54,11 +54,13 @@ the raw material for telling the story of building ARI.
 
 ## The build story (the content engine)
 
-Every Sunday evening, or when I text "ARI story", ARI turns the week's build log into a
-story (`ari_core.build_story`): two to four lessons about what was worth building, what
-isn't used yet, and what broke; the week told in 150 to 300 words; and one or two
-short-form video outlines (hook, beats, caption). The lessons come first because ARI's
-next reviews read them, so the story feeds its self-improvement before it feeds any post.
-ARI texts me the story and keeps all of it as an ARI note. It never posts anything. Like
-the reviews, only the writing calls a model, and only with facts from ARI's records.
-
+The series is "Day N of building ARI": Day 1 is the first day ARI's repository has
+commits (April 10, 2026), and each later day with commits is the next day. At 9:30 PM on
+a day with work, or when I text "ARI story", ARI turns that day's commits into a story
+(`ari_core.build_story`): one to three lessons about what was worth building and what
+broke; the day in 80 to 160 words; and one or two short-form video outlines (hook, beats,
+caption). The lessons come first because ARI's next reviews read them, so the story feeds
+its self-improvement before it feeds any post. ARI texts me the story and keeps all of it
+as an ARI note; it never posts anything. `python -m ari_core.build_story backfill --repo
+PATH` writes every day so far. Only the writing calls a model, and only with the commits'
+own words.

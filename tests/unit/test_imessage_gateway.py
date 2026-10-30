@@ -981,27 +981,29 @@ def test_the_jobs_wake_on_new_messages_not_only_on_a_timer(settings) -> None:
     assert dump["ThrottleInterval"] == poll["ThrottleInterval"] == 1
 
 
-def test_the_build_story_goes_out_once_on_sunday_evening(settings, session_factory, monkeypatch) -> None:
+def test_the_build_story_goes_out_once_at_night_on_a_day_with_work(settings, session_factory, monkeypatch, tmp_path) -> None:
     from ari_core import build_story
     from ari_core.build_story import Story
 
-    calls: list[str] = []
+    calls: list[object] = []
+    today = datetime(2026, 10, 29, 20, 0).astimezone()
 
-    def fake_run_story(session, *, now, write):
-        calls.append("story")
-        return Story(title="Build story", lessons=["x"], story="ARI learned to run the Mac.", scripts=[])
+    def fake_run_story(session, *, repo, day, now, write):
+        calls.append(day)
+        return Story(title="Build story, Day 24 (Oct 29)", lessons=["x"], story="ARI learned to run the Mac.", scripts=[])
 
+    monkeypatch.setattr("ari_imessage_gateway.gateway.story_repo", lambda: tmp_path)
+    monkeypatch.setattr("ari_imessage_gateway.gateway.building_days", lambda repo: [today.date()])
     monkeypatch.setattr("ari_imessage_gateway.gateway.run_story", fake_run_story)
-    sunday = datetime(2026, 11, 1, 17, 0).astimezone()
-    clock = {"now": sunday}
+    clock = {"now": today}
     messages = FakeMessages()
     gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: clock["now"],
                            story_writer=build_story.write_with_model)
     seed(gateway, settings)
     gateway.poll_once()
-    assert calls == []  # before 6 PM
-    clock["now"] = sunday.replace(hour=19)
+    assert calls == []  # before 9:30 PM
+    clock["now"] = today.replace(hour=21, minute=45)
     assert gateway.poll_once().stories_sent == 1
-    assert "ARI learned to run the Mac." in messages.sent[-1][1]
-    clock["now"] = sunday.replace(hour=20)
+    assert calls == [today.date()] and "ARI learned to run the Mac." in messages.sent[-1][1]
+    clock["now"] = today.replace(hour=22, minute=30)
     assert gateway.poll_once().stories_sent == 0

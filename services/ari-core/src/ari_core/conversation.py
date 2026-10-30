@@ -43,7 +43,7 @@ from ari_core.core.pause import get_pause_state, pause, resume
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.pet_status import note_credits
 from ari_core.build_story import Write as StoryWriter
-from ari_core.build_story import run_story
+from ari_core.build_story import building_days, run_story, story_repo
 from ari_core.self_review import Write as ReviewWriter
 from ari_core.self_review import run_review
 from ari_core.skills import build_mcp_request_args, record_skill_invocation
@@ -239,11 +239,15 @@ class Conversation:
         return review.message if review else "I couldn't write a review right now: the budget is used up or the model didn't answer."
 
     def _story(self) -> str:
-        if self.story_writer is None or self.dry_run:
+        repo = story_repo()
+        if self.story_writer is None or self.dry_run or repo is None:
             return "Build stories aren't set up on this surface."
+        days = building_days(repo)
+        if not days:
+            return "There's no building day to tell yet."
         with self.session_factory() as session:
-            story = run_story(session, now=self.now(), write=self.story_writer)
-        return story.message() if story else "Nothing shipped in the last week, so there's no story yet."
+            story = run_story(session, repo=repo, day=days[-1], now=self.now(), write=self.story_writer)
+        return story.message() if story else "I couldn't write the story right now: the budget is used up or the model didn't answer."
 
     def _said(self, history: list[dict[str, Any]], text: str, reply: str) -> Turn:
         # Appended, never edited, so the brain's earlier thinking stays valid.

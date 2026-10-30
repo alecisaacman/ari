@@ -28,7 +28,7 @@ from ari_core.action_desk import ActionDesk
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain import respond_to_message, roll_history
 from ari_core.build_story import Write as StoryWriter
-from ari_core.build_story import run_story
+from ari_core.build_story import building_days, run_story, story_repo
 from ari_core.builder import announcement, unannounced
 from ari_core.conversation import Conversation, Respond
 from ari_core.core.pause import get_pause_state
@@ -59,9 +59,8 @@ LATE_AFTER = timedelta(minutes=3)
 SENT_LOG_SIZE = 50
 # ARI's signal engine is deterministic and free; it runs this often while ARI is awake.
 ORCHESTRATE_EVERY = timedelta(minutes=30)
-# The build story goes out Sunday evening (weekday 6), until it would be stale.
-STORY_WEEKDAY = 6
-STORY_FROM = (18, 0)
+# A day's build story goes out at night, after the night review.
+STORY_FROM = (21, 30)
 STORY_UNTIL = (23, 59)
 # How long a poll waits for a fresh dump it asked for.
 DUMP_REFRESH_WAIT_SECONDS = 5.0
@@ -404,11 +403,12 @@ class ImessageGateway:
         return history
 
     def _send_story(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
-        """Send the week's build story once, Sunday evening or when ARI next runs that night."""
-        if self.story_writer is None or self.dry_run or get_pause_state()["paused"]:
+        """Each night, on a day ARI was worked on, send that day's build story once."""
+        repo = story_repo()
+        if self.story_writer is None or self.dry_run or repo is None or get_pause_state()["paused"]:
             return history
         local = self.now().astimezone()
-        if local.weekday() != STORY_WEEKDAY or not STORY_FROM <= (local.hour, local.minute) <= STORY_UNTIL:
+        if not STORY_FROM <= (local.hour, local.minute) <= STORY_UNTIL:
             return history
         marker = self.settings.state_dir / "last-story"
         try:
@@ -416,11 +416,13 @@ class ImessageGateway:
                 return history
         except OSError:
             pass
-        marker.write_text(local.date().isoformat())  # once a week, even if writing fails
+        marker.write_text(local.date().isoformat())  # once a night, even if writing fails
+        if local.date() not in building_days(repo):
+            return history  # nothing was built today, so there's no day to tell
         with self.session_factory() as session:
-            story = run_story(session, now=self.now(), write=self.story_writer)
+            story = run_story(session, repo=repo, day=local.date(), now=self.now(), write=self.story_writer)
         if story is None:
-            report.detail = "No build story this week: nothing shipped, or it didn't get written."
+            report.detail = "Today's build story didn't get written."
             return history
         body = story.message()
         if not self._send(self.settings.reply_to or "", body, report):
