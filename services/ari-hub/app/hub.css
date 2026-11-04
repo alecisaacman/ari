@@ -676,6 +676,19 @@ body:has(.login-shell) {
   font-weight: 500;
 }
 
+.content-video {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.content-video video {
+  width: min(100%, 320px);
+  aspect-ratio: 9 / 16;
+  border-radius: 16px;
+  background: #000;
+}
+
 .content-script + .content-script {
   padding-top: 18px;
   border-top: 1px dashed var(--line);

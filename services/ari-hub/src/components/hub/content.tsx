@@ -10,7 +10,7 @@ const PIPELINE = ["idea", "script", "production", "ready", "posted"] as const;
 const STAGE: Record<string, { label: string; hint: string }> = {
   idea: { label: "Idea", hint: "ARI wrote it from the day's commits. Check the hook against what really happened." },
   script: { label: "Script", hint: "Approved. The script is set and waiting to be made." },
-  production: { label: "Production", hint: "Being recorded, voiced, and edited." },
+  production: { label: "Production", hint: "ARI's studio is voicing and cutting the video. Watch it, then mark it ready." },
   ready: { label: "Ready to post", hint: "The finished video exists and can go out." },
   posted: { label: "Posted", hint: "Out in the world." },
   skipped: { label: "Skipped", hint: "Set aside. Bring one back any time." },
@@ -162,6 +162,16 @@ function ContentCard({
         </summary>
 
         <div className="content-body">
+          {item.video ? (
+            <section className="content-video" aria-label="The video">
+              <video controls playsInline preload="metadata" src={`/api/content/${encodeURIComponent(item.id)}/video`} />
+              <p className="hub-quiet">
+                Made {shortDate(item.video.producedAt)}, narrated by {item.video.voice}.
+              </p>
+            </section>
+          ) : item.status === "production" ? (
+            <p className="hub-quiet">ARI&apos;s studio is making this video. It shows up here when it&apos;s done.</p>
+          ) : null}
           {item.scripts.map((script, index) => (
             <section key={index} className="content-script" aria-label={`Video ${index + 1}`}>
               {index > 0 ? <p className="content-alt">{script.hook}</p> : null}

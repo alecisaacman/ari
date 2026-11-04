@@ -9,6 +9,7 @@ from .brain_cli import (
     handle_api_brain_panel,
     handle_api_content_list,
     handle_api_content_status,
+    handle_api_content_video,
 )
 from .core.paths import DB_PATH
 from .core.pause import handle_pause, handle_paused, handle_resume
@@ -1881,6 +1882,10 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     content_status_parser.add_argument("--id", required=True, help="The item, e.g. day-19.")
     content_status_parser.add_argument("--status", required=True, help="draft, ready, posted, or skipped.")
     content_status_parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
+    content_video_parser = content_subparsers.add_parser("video", help="Attach a finished video to an item.")
+    content_video_parser.add_argument("--id", required=True, help="The item, e.g. day-19.")
+    content_video_parser.add_argument("--path", required=True, help="The finished MP4.")
+    content_video_parser.add_argument("--voice", required=True, help="Whose voice narrates it.")
 
     tasks_parser = api_subparsers.add_parser("tasks", help="Canonical ARI tasks API commands.")
     tasks_subparsers = tasks_parser.add_subparsers(dest="api_tasks_command", required=True)
@@ -2835,6 +2840,8 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_content_list(args, db_path=db_path)
         if args.api_command == "content" and args.api_content_command == "status":
             return handle_api_content_status(args, db_path=db_path)
+        if args.api_command == "content" and args.api_content_command == "video":
+            return handle_api_content_video(args, db_path=db_path)
         if args.api_command == "tasks" and args.api_tasks_command == "create":
             return handle_api_tasks_create(args, db_path=db_path)
         if args.api_command == "tasks" and args.api_tasks_command == "list":

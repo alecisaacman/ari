@@ -88,6 +88,9 @@ export type ContentItem = {
   story: string;
   scripts: ContentScript[];
   format: string;
+  // The finished video, once ARI's studio made it.
+  video: { path: string; voice: string; producedAt: string } | null;
+  producing?: boolean;
   updatedAt: string;
   postedAt: string | null;
 };

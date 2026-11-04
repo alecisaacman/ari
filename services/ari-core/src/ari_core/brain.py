@@ -31,7 +31,7 @@ from ari_core.apple import AppleDesk, AppleError
 from ari_core.build_log import recent_builds, tool_use
 from ari_core.email_reader import EmailDesk, EmailError
 from ari_core.modules.self_documentation.library import build_day_id, list_content_items
-from ari_core.modules.self_documentation.library import set_status as set_content_status
+from ari_core.content_production import move as move_content
 from ari_core.mac import MacDesk, MacError
 from ari_core.brain_usage import ModelCall
 from ari_core.builds import decide_build, list_builds, propose_build
@@ -171,7 +171,8 @@ ready (the finished video exists), posted; or skipped. get_content_library lists
 (by stage if he asks, e.g. "what's in production"); set_content_status moves one a \
 stage ("approve day 19's script", "day 19 is filmed and edited", "mark day 19 posted"). \
 A day can't be ready before production or posted before it's ready; if he asks for \
-that, say which stage it's at and what comes next.
+that, say which stage it's at and what comes next. Starting production has ARI's studio \
+make the video in his voice (studio_started); tell him it'll be on the Content page.
 - GET DONE is Alec's to-do list in Apple Reminders, on his phone. "Add X to my list" or \
 "put X on GET DONE" goes there with add_to_get_done; get_done_list shows what's on it \
 and complete_get_done checks something off. ARI only ever writes to GET DONE.
@@ -829,10 +830,12 @@ def make_tool_dispatcher(
             return {"content": [item.describe() for item in items]}
         if name == "set_content_status":
             try:
-                item = set_content_status(build_day_id(int(tool_input["day"])), str(tool_input["status"]), db_path=spine())
+                item, producing = move_content(build_day_id(int(tool_input["day"])), str(tool_input["status"]), db_path=spine())
             except ValueError as error:
                 return {"error": str(error)}
-            return {"updated": item.describe()} if item else {"error": f"There's no Day {tool_input['day']} in the library."}
+            if item is None:
+                return {"error": f"There's no Day {tool_input['day']} in the library."}
+            return {"updated": item.describe(), "studio_started": producing}
         if name == "recall":
             return {"found": recall(str(tool_input.get("query") or ""), spine())}
         if name == "save_note":

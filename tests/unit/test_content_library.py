@@ -19,6 +19,14 @@ def _day(spine: Path, number: int, hook_prefix: str = "") -> None:
                     lessons=["A lesson."], story="The story.", scripts=scripts, commit_count=3, db_path=spine)
 
 
+def _finished_video(spine: Path, item_id: str, folder: Path) -> None:
+    from ari_core.modules.self_documentation.library import attach_video
+
+    video = folder / f"{item_id}.mp4"
+    video.write_bytes(b"mp4")
+    attach_video(item_id, str(video), voice="Alec (cloned)", db_path=spine)
+
+
 def _walk(spine: Path, item_id: str, *stages: str) -> None:
     for stage in stages:
         set_status(item_id, stage, db_path=spine)
@@ -32,7 +40,9 @@ def test_days_go_through_production_before_they_can_be_ready_or_posted(tmp_path:
     assert list_content_items(db_path=spine)[1].status == "idea"
     with pytest.raises(ValueError, match="can go to script or skipped"):
         set_status("day-16", "ready", db_path=spine)  # no finished video yet
-    _walk(spine, "day-16", "script", "production", "ready")
+    _walk(spine, "day-16", "script", "production")
+    _finished_video(spine, "day-16", tmp_path)
+    _walk(spine, "day-16", "ready")
     with pytest.raises(ValueError):
         set_status("day-16", "idea", db_path=spine)  # only one stage back at a time
     posted = set_status("day-16", "posted", db_path=spine)
@@ -100,3 +110,40 @@ def test_the_api_lists_the_library_and_moves_items(tmp_path: Path) -> None:
     assert client.post("/content/day-16/status", json={"status": "posted"}).status_code == 400
     assert client.post("/content/day-16/status", json={"status": "published"}).status_code == 400
     assert client.post("/content/day-99/status", json={"status": "ready"}).status_code == 404
+
+
+def test_a_day_is_only_ready_once_its_video_exists(tmp_path: Path) -> None:
+    from ari_core.modules.self_documentation.library import attach_video
+
+    spine = tmp_path / "spine.db"
+    _day(spine, 16)
+    _walk(spine, "day-16", "script", "production")
+    with pytest.raises(ValueError, match="no finished video"):
+        set_status("day-16", "ready", db_path=spine)
+    video = tmp_path / "day-16.mp4"
+    video.write_bytes(b"mp4")
+    attached = attach_video("day-16", str(video), voice="Alec (cloned)", db_path=spine)
+    assert attached.video["voice"] == "Alec (cloned)"
+    assert set_status("day-16", "ready", db_path=spine).status == "ready"
+
+
+def test_starting_production_starts_the_studio_once(tmp_path: Path, monkeypatch) -> None:
+    from ari_core import content_production
+
+    spine = tmp_path / "spine.db"
+    _day(spine, 16)
+    started: list[list[str]] = []
+    monkeypatch.setattr(content_production, "studio_command", lambda item: ["studio", "produce", "--day", str(item.day_number)])
+
+    set_status("day-16", "script", db_path=spine)
+    item, producing = content_production.move("day-16", "production", db_path=spine, spawn=started.append)
+    assert producing and item.status == "production" and started == [["studio", "produce", "--day", "16"]]
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"mp4")
+    from ari_core.modules.self_documentation.library import attach_video
+
+    attach_video("day-16", str(video), voice="x", db_path=spine)
+    content_production.move("day-16", "ready", db_path=spine, spawn=started.append)
+    _, producing = content_production.move("day-16", "production", db_path=spine, spawn=started.append)
+    assert not producing and len(started) == 1  # stepping back from ready keeps the video

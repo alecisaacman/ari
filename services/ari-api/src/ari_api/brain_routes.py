@@ -15,7 +15,9 @@ from ari_core.apple import AppleDesk
 from ari_core.brain import respond_to_message
 from ari_core.conversation import Conversation, Respond
 from ari_core.core import paths as core_paths
-from ari_core.modules.self_documentation.library import content_view, set_status
+from ari_core.content_production import move
+from ari_core.modules.self_documentation.library import content_view, get_content_item
+from fastapi.responses import FileResponse
 from ari_core.panel import HUB_CHANNEL, build_panel, recent_exchange
 from ari_core.self_review import Write as ReviewWriter
 from fastapi import FastAPI, HTTPException
@@ -80,9 +82,17 @@ def register_brain_routes(
     @app.post("/content/{item_id}/status")
     def post_content_status(item_id: str, payload: ContentStatusRequest) -> dict[str, Any]:
         try:
-            item = set_status(item_id, payload.status, db_path=spine_db_path())
+            item, producing = move(item_id, payload.status, db_path=spine_db_path())
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         if item is None:
             raise HTTPException(status_code=404, detail="No such content item.")
-        return item.to_dict()
+        return {**item.to_dict(), "producing": producing}
+
+    @app.get("/content/{item_id}/video")
+    def get_content_video(item_id: str) -> FileResponse:
+        item = get_content_item(item_id, db_path=spine_db_path())
+        path = Path(str((item.video or {}).get("path", ""))) if item else None
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="No video for that item yet.")
+        return FileResponse(path, media_type="video/mp4")

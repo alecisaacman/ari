@@ -77,3 +77,32 @@ stage. `python -m ari_core.build_story import-notes` moved the days first writte
 ARI notes into the library. `python -m ari_core.build_story backfill --repo
 PATH` writes every day so far. Only the writing calls a model, and only with the commits'
 own words.
+
+## Production: ARI's studio
+
+Starting production on a day ("Start production" on the Content page, or telling ARI)
+has ARI's studio (`tools/ari-studio/studio.py`, through `ari_core.content_production`)
+make the video in the background, free and on this Mac:
+
+1. **Narration** in my voice: Chatterbox, an open-source voice-cloning model, speaks
+   each line of the approved script (the hook, each beat, a sign-off) from my one-minute
+   sample at `~/ARI/media/voice/alec-sample.wav` (recorded once with
+   `~/ARI/media/voice/record.sh`). Without the sample it uses the model's default voice.
+   Chatterbox normally adds an inaudible AI-generated watermark; I chose to leave it
+   off (`ARI_STUDIO_WATERMARK=1` in `~/ARI/ari.env` turns it on). Posts get the
+   platform's own AI-generated label either way.
+2. **Footage** from that day: real diffs from the day's commits in the public
+   repository, title cards with the hook, and ARI's hummingbird. Nothing personal goes
+   in (no texts, calendar, or to-dos), because the video is public.
+3. **Captions** a few words at a time, timed across each spoken line.
+4. **The cut**: ffmpeg pushes slowly into each shot, lays the captions over it, and
+   joins it all with the narration into a 1080 x 1920 MP4 in `~/ARI/media/out`.
+
+Cards and captions are drawn by headless Chrome, because this Mac's ffmpeg has no text
+drawing. The model and its dependencies live in their own environment
+(`~/ARI/media/venv`), never in ARI's runtime. When the video is done the studio
+attaches it to the day (`ari api content video`), and it plays on the Content page. A
+day can't be marked ready to post until it has a video; that step stays mine. A
+floating-head narrator (an open-source lip-sync model) is the next layer, once the base
+video is right.
+

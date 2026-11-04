@@ -67,6 +67,8 @@ class ContentItem:
     scripts: tuple[dict[str, Any], ...] = ()
     commit_count: int = 0
     content_format: str = FORMATS[0]
+    # The finished video, once ARI's studio has made it: {"path", "voice", "producedAt"}.
+    video: dict[str, Any] | None = None
     created_at: str = field(default_factory=lambda: _now_iso())
     updated_at: str = field(default_factory=lambda: _now_iso())
     posted_at: str | None = None
@@ -97,6 +99,7 @@ class ContentItem:
             "story": self.story,
             "scripts": list(self.scripts),
             "format": self.content_format,
+            "video": self.video,
             "updatedAt": self.updated_at,
             "postedAt": self.posted_at,
         }
@@ -160,8 +163,23 @@ def set_status(item_id: str, status: str, *, db_path: Path = DB_PATH) -> Content
     if status != item.status and status not in MOVES[item.status]:
         allowed = " or ".join(MOVES[item.status])
         raise ValueError(f"{item.title} is at {item.status}; from there it can go to {allowed}.")
+    if status == "ready" and not _video_exists(item):
+        raise ValueError(f"{item.title} has no finished video yet, so it can't be ready to post.")
     posted_at = item.posted_at if status == "posted" and item.posted_at else (_now_iso() if status == "posted" else None)
     return _put(_replace(item, status=status, posted_at=posted_at), db_path=db_path)
+
+
+def attach_video(item_id: str, path: str, *, voice: str, db_path: Path = DB_PATH) -> ContentItem | None:
+    """Record the finished video ARI's studio made for an item."""
+    item = get_content_item(item_id, db_path=db_path)
+    if item is None:
+        return None
+    video = {"path": path, "voice": voice, "producedAt": _now_iso()}
+    return _put(_replace(item, video=video), db_path=db_path)
+
+
+def _video_exists(item: ContentItem) -> bool:
+    return bool(item.video and Path(str(item.video.get("path", ""))).is_file())
 
 
 def get_content_item(item_id: str, *, db_path: Path = DB_PATH) -> ContentItem | None:
@@ -191,6 +209,7 @@ def _put(item: ContentItem, *, db_path: Path) -> ContentItem:
         "scripts": list(item.scripts),
         "commit_count": item.commit_count,
         "format": item.content_format,
+        "video": item.video,
     }
     row = put_coordination_entity(
         CONTENT_ITEM_ENTITY,
@@ -227,6 +246,7 @@ def _from_row(row: Any) -> ContentItem:
         scripts=tuple(payload.get("scripts") or ()),
         commit_count=int(payload.get("commit_count") or 0),
         content_format=payload.get("format") or FORMATS[0],
+        video=payload.get("video"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         posted_at=row["posted_at"],
