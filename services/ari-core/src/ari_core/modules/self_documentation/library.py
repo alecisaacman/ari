@@ -61,6 +61,31 @@ class ContentItem:
         }
 
 
+    def to_dict(self) -> dict[str, Any]:
+        """Everything about the item, for the hub's Content tab."""
+        return {
+            "id": self.item_id,
+            "kind": self.kind,
+            "title": self.title,
+            "hook": self.hook,
+            "status": self.status,
+            "dayNumber": self.day_number,
+            "date": self.day_date,
+            "lessons": list(self.lessons),
+            "story": self.story,
+            "scripts": list(self.scripts),
+            "updatedAt": self.updated_at,
+            "postedAt": self.posted_at,
+        }
+
+
+def content_view(*, db_path: Path = DB_PATH) -> dict[str, Any]:
+    """The whole library, newest first, with how many items are at each status."""
+    items = list_content_items(db_path=db_path)
+    counts = {status: sum(1 for item in items if item.status == status) for status in STATUSES}
+    return {"items": [item.to_dict() for item in items], "counts": counts, "statuses": list(STATUSES)}
+
+
 def build_day_id(day_number: int) -> str:
     return f"day-{day_number}"
 

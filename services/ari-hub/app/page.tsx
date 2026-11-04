@@ -2,12 +2,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Freshness, LiveRefresh } from "@/src/components/hub/live";
+import { Content } from "@/src/components/hub/content";
 import { Inside } from "@/src/components/hub/inside";
 import { Today } from "@/src/components/hub/today";
 import { TouchIdButton } from "@/src/components/hub/touch-id";
 import { getUiSession } from "@/src/core/auth/guard";
 import { hasPasskeys } from "@/src/core/auth/passkeys";
-import { getBrainPanel, type BrainPanel } from "@/src/core/ari-spine/brain-bridge";
+import { getBrainPanel, getContentLibrary, type BrainPanel } from "@/src/core/ari-spine/brain-bridge";
 import { getDashboardOverview } from "@/src/core/ari-spine/overview-bridge";
 import type {
   AriOperatingOverview,
@@ -59,7 +60,8 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     redirect("/login");
   }
   const creator = session.role === "creator";
-  const tab = (await searchParams).tab === "ari" ? "ari" : "today";
+  const asked = (await searchParams).tab;
+  const tab = asked === "ari" || asked === "content" ? asked : "today";
   const brain = await loadBrainPanel();
 
   return (
@@ -73,14 +75,13 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
           <Link href="/" className={tab === "today" ? "is-on" : ""} aria-current={tab === "today" ? "page" : undefined}>
             Today
           </Link>
+          <Link href="/?tab=content" className={tab === "content" ? "is-on" : ""} aria-current={tab === "content" ? "page" : undefined}>
+            Content
+            {creator ? null : <Lock />}
+          </Link>
           <Link href="/?tab=ari" className={tab === "ari" ? "is-on" : ""} aria-current={tab === "ari" ? "page" : undefined}>
             Inside ARI
-            {creator ? null : (
-              <svg viewBox="0 0 24 24" width="13" height="13" aria-label="locked" role="img">
-                <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
-                <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" strokeWidth="2" />
-              </svg>
-            )}
+            {creator ? null : <Lock />}
           </Link>
         </nav>
         <span className="hub-status">
@@ -96,11 +97,13 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         </section>
       ) : tab === "today" ? (
         <Today panel={brain.panel} name="Alec" />
+      ) : creator && tab === "content" ? (
+        <ContentPage />
       ) : creator ? (
         <InsidePage panel={brain.panel} />
       ) : (
         <section className="hub-panel hub-locked">
-          <h2>Inside ARI is for its creator</h2>
+          <h2>{tab === "content" ? "Content" : "Inside ARI"} is for its creator</h2>
           <p className="hub-quiet">
             {hasPasskeys()
               ? "Unlock with Touch ID to see what ARI is building, its reviews, and what it knows."
@@ -111,6 +114,28 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
       )}
     </main>
   );
+}
+
+function Lock() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" aria-label="locked" role="img">
+      <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+async function ContentPage() {
+  try {
+    return <Content library={await getContentLibrary()} />;
+  } catch (error) {
+    return (
+      <section className="hub-panel hub-down">
+        <h2>The content library didn&apos;t load</h2>
+        <p className="hub-quiet">{error instanceof Error ? error.message : "ARI didn't answer."}</p>
+      </section>
+    );
+  }
 }
 
 async function InsidePage({ panel }: { panel: BrainPanel }) {

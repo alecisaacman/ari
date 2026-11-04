@@ -15,6 +15,7 @@ from ari_core.apple import AppleDesk
 from ari_core.brain import respond_to_message
 from ari_core.conversation import Conversation, Respond
 from ari_core.core import paths as core_paths
+from ari_core.modules.self_documentation.library import content_view, set_status
 from ari_core.panel import HUB_CHANNEL, build_panel, recent_exchange
 from ari_core.self_review import Write as ReviewWriter
 from fastapi import FastAPI, HTTPException
@@ -24,6 +25,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 class BrainMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
+
+
+class ContentStatusRequest(BaseModel):
+    status: str = Field(min_length=1, max_length=32)
 
 
 def default_action_desk() -> ActionDesk | None:
@@ -67,3 +72,17 @@ def register_brain_routes(
         with session_factory() as session:
             exchange = recent_exchange(session, channel=HUB_CHANNEL)
         return {"reply": turn.reply, "conversation": exchange}
+
+    @app.get("/content")
+    def get_content() -> dict[str, Any]:
+        return content_view(db_path=spine_db_path())
+
+    @app.post("/content/{item_id}/status")
+    def post_content_status(item_id: str, payload: ContentStatusRequest) -> dict[str, Any]:
+        try:
+            item = set_status(item_id, payload.status, db_path=spine_db_path())
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        if item is None:
+            raise HTTPException(status_code=404, detail="No such content item.")
+        return item.to_dict()

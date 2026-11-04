@@ -73,3 +73,40 @@ export async function sendToAri(text: string): Promise<BrainReply> {
   }
   return requestAriApi<BrainReply>("POST", "/brain/messages", { body: { text }, timeoutMs: REPLY_TIMEOUT_MS });
 }
+
+export type ContentScript = { hook: string; beats: string[]; caption: string };
+
+export type ContentItem = {
+  id: string;
+  kind: string;
+  title: string;
+  hook: string;
+  status: string;
+  dayNumber: number | null;
+  date: string | null;
+  lessons: string[];
+  story: string;
+  scripts: ContentScript[];
+  updatedAt: string;
+  postedAt: string | null;
+};
+
+export type ContentLibrary = { items: ContentItem[]; counts: Record<string, number>; statuses: string[] };
+
+// ARI's content library: every building day, with where it stands.
+export async function getContentLibrary(): Promise<ContentLibrary> {
+  if (isSubprocessBridgeMode()) {
+    return runCanonicalJsonCommand<ContentLibrary>(["api", "content", "list", "--json"]);
+  }
+  return requestAriApi<ContentLibrary>("GET", "/content", { timeoutMs: PANEL_TIMEOUT_MS });
+}
+
+export async function setContentStatus(itemId: string, status: string): Promise<ContentItem> {
+  if (isSubprocessBridgeMode()) {
+    return runCanonicalJsonCommand<ContentItem>(["api", "content", "status", "--id", itemId, "--status", status, "--json"]);
+  }
+  return requestAriApi<ContentItem>("POST", `/content/${encodeURIComponent(itemId)}/status`, {
+    body: { status },
+    timeoutMs: PANEL_TIMEOUT_MS,
+  });
+}

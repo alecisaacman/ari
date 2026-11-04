@@ -4,7 +4,12 @@ import json
 import sys
 from pathlib import Path
 
-from .brain_cli import handle_api_brain_message, handle_api_brain_panel
+from .brain_cli import (
+    handle_api_brain_message,
+    handle_api_brain_panel,
+    handle_api_content_list,
+    handle_api_content_status,
+)
 from .core.paths import DB_PATH
 from .core.pause import handle_pause, handle_paused, handle_resume
 from .modules.career.api import (
@@ -1868,6 +1873,15 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
         "--json", dest="as_json", action="store_true", help="Render JSON output."
     )
 
+    content_parser = api_subparsers.add_parser("content", help="ARI's content library.")
+    content_subparsers = content_parser.add_subparsers(dest="api_content_command", required=True)
+    content_list_parser = content_subparsers.add_parser("list", help="Every item and its status.")
+    content_list_parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
+    content_status_parser = content_subparsers.add_parser("status", help="Move an item to a status.")
+    content_status_parser.add_argument("--id", required=True, help="The item, e.g. day-19.")
+    content_status_parser.add_argument("--status", required=True, help="draft, ready, posted, or skipped.")
+    content_status_parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
+
     tasks_parser = api_subparsers.add_parser("tasks", help="Canonical ARI tasks API commands.")
     tasks_subparsers = tasks_parser.add_subparsers(dest="api_tasks_command", required=True)
 
@@ -2817,6 +2831,10 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_brain_panel(args, db_path=db_path)
         if args.api_command == "brain" and args.api_brain_command == "message":
             return handle_api_brain_message(args, db_path=db_path)
+        if args.api_command == "content" and args.api_content_command == "list":
+            return handle_api_content_list(args, db_path=db_path)
+        if args.api_command == "content" and args.api_content_command == "status":
+            return handle_api_content_status(args, db_path=db_path)
         if args.api_command == "tasks" and args.api_tasks_command == "create":
             return handle_api_tasks_create(args, db_path=db_path)
         if args.api_command == "tasks" and args.api_tasks_command == "list":

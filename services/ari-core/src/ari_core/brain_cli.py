@@ -1,7 +1,7 @@
 """`ari api brain ...`: ARI's control panel and conversation from the command line.
 
-The hub uses these in its subprocess bridge mode; they match /brain/panel and
-/brain/messages in ari-api.
+The hub uses these in its subprocess bridge mode; they match /brain/panel,
+/brain/messages, /content, and /content/{id}/status in ari-api.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from .apple import AppleDesk
 from .conversation import Conversation
 from .core.env import load_local_env
 from .core.paths import DB_PATH
+from .modules.self_documentation.library import content_view, set_status
 from .panel import HUB_CHANNEL, build_panel, recent_exchange
 from .self_review import write_with_model
 
@@ -53,4 +54,23 @@ def handle_api_brain_message(args, db_path: Path = DB_PATH) -> int:  # type: ign
     with session_factory() as session:
         payload = {"reply": turn.reply, "conversation": recent_exchange(session, channel=HUB_CHANNEL)}
     print(json.dumps(payload) if getattr(args, "as_json", False) else (turn.reply or ""))
+    return 0
+
+
+def handle_api_content_list(args, db_path: Path = DB_PATH) -> int:  # type: ignore[no-untyped-def]
+    del args
+    print(json.dumps(content_view(db_path=db_path)))
+    return 0
+
+
+def handle_api_content_status(args, db_path: Path = DB_PATH) -> int:  # type: ignore[no-untyped-def]
+    try:
+        item = set_status(args.id, args.status, db_path=db_path)
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    if item is None:
+        print(json.dumps({"error": "No such content item."}))
+        return 1
+    print(json.dumps(item.to_dict()))
     return 0

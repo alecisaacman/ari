@@ -55,3 +55,24 @@ def test_ari_lists_and_marks_days_by_text(tmp_path: Path) -> None:
     assert dispatch("get_content_library", {})["content"][0]["status"] == "draft"
     assert dispatch("set_content_status", {"day": 16, "status": "posted"})["updated"]["status"] == "posted"
     assert "no Day 3" in dispatch("set_content_status", {"day": 3, "status": "posted"})["error"]
+
+
+def test_the_api_lists_the_library_and_moves_items(tmp_path: Path) -> None:
+    from ari_memory import create_engine, create_session_factory
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ari_api.brain_routes import register_brain_routes
+
+    spine = tmp_path / "spine.db"
+    _day(spine, 16)
+    app = FastAPI()
+    factory = create_session_factory(create_engine(f"sqlite+pysqlite:///{tmp_path / 'ari.db'}"))
+    register_brain_routes(app, factory, action_desk=lambda: None, spine_db_path=lambda: spine, apple=lambda: None)
+    client = TestClient(app)
+
+    view = client.get("/content").json()
+    assert view["counts"]["draft"] == 1 and view["items"][0]["scripts"][0]["beats"] == ["Crash", "Fix"]
+    assert client.post("/content/day-16/status", json={"status": "ready"}).json()["status"] == "ready"
+    assert client.post("/content/day-16/status", json={"status": "published"}).status_code == 400
+    assert client.post("/content/day-99/status", json={"status": "ready"}).status_code == 404
