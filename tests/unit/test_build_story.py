@@ -66,8 +66,9 @@ def test_a_day_becomes_a_story_with_lessons_first_and_is_kept_as_a_note(tmp_path
     from ari_core.modules.self_documentation.library import get_content_item, set_status
 
     day = get_content_item("day-2", db_path=spine)
-    assert day.status == "draft" and day.day_date == "2026-10-28" and day.hook == "I text my laptop and it obeys."
-    set_status("day-2", "posted", db_path=spine)
+    assert day.status == "idea" and day.day_date == "2026-10-28" and day.hook == "I text my laptop and it obeys."
+    for stage in ("script", "production", "ready", "posted"):
+        set_status("day-2", stage, db_path=spine)
     with factory() as session:  # rewriting a posted day keeps it posted
         run_story(session, repo=repo, day=date(2026, 10, 28), now=NOW, write=write, spine_db_path=spine)
     assert get_content_item("day-2", db_path=spine).status == "posted"

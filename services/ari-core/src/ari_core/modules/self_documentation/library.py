@@ -1,9 +1,18 @@
 """ARI's content library: every piece of content in one place, with where it stands.
 
-Each item moves idea -> draft -> ready -> posted, or is skipped. Build days ("Day N of
-building ARI", written by ari_core.build_story from that day's commits) are the first
-kind: the lessons for ARI's reviews, the day as a story, and short-form outlines. The
-idea bank, the hub, and ARI's tools all read from here, so there is one source.
+Each item goes through the content process in order:
+
+    idea -> script -> production -> ready -> posted   (or skipped)
+
+An idea is what ARI wrote. A script is one Alec has checked and approved. Production is
+recording, voice, and editing. Ready means the finished piece (a short-form video, or
+long-form) exists and can be posted, so nothing reaches ready without production, and
+nothing is posted that wasn't ready. Items can step back one stage.
+
+Build days ("Day N of building ARI", written by ari_core.build_story from that day's
+commits) are the first kind: the lessons for ARI's reviews, the day as a story, and
+short-form outlines. The idea bank, the hub, and ARI's tools all read from here, so
+there is one source.
 
 A day that is written again keeps its status: rewriting Day 12's script doesn't make a
 posted day look unposted.
@@ -26,9 +35,21 @@ from ari_core.modules.coordination.db import (
 
 CONTENT_ITEM_ENTITY = "content_item"
 BUILD_DAY = "build_day"
-STATUSES = ("idea", "draft", "ready", "posted", "skipped")
-# A build day starts as a draft: ARI wrote it, Alec hasn't checked it.
-NEW_BUILD_DAY_STATUS = "draft"
+STATUSES = ("idea", "script", "production", "ready", "posted", "skipped")
+# Where an item can go from each stage: forward one, back one, or set aside.
+MOVES: dict[str, tuple[str, ...]] = {
+    "idea": ("script", "skipped"),
+    "script": ("production", "idea", "skipped"),
+    "production": ("ready", "script"),
+    "ready": ("posted", "production"),
+    "posted": ("ready",),
+    "skipped": ("idea",),
+}
+# Stages from before the content process had production in it.
+LEGACY_STATUSES = {"draft": "idea"}
+# A build day starts as an idea: ARI wrote it, Alec hasn't checked it.
+NEW_BUILD_DAY_STATUS = "idea"
+FORMATS = ("short-form", "long-form")
 MAX_ITEMS = 500
 
 
@@ -45,6 +66,7 @@ class ContentItem:
     story: str = ""
     scripts: tuple[dict[str, Any], ...] = ()
     commit_count: int = 0
+    content_format: str = FORMATS[0]
     created_at: str = field(default_factory=lambda: _now_iso())
     updated_at: str = field(default_factory=lambda: _now_iso())
     posted_at: str | None = None
@@ -74,6 +96,7 @@ class ContentItem:
             "lessons": list(self.lessons),
             "story": self.story,
             "scripts": list(self.scripts),
+            "format": self.content_format,
             "updatedAt": self.updated_at,
             "postedAt": self.posted_at,
         }
@@ -83,7 +106,12 @@ def content_view(*, db_path: Path = DB_PATH) -> dict[str, Any]:
     """The whole library, newest first, with how many items are at each status."""
     items = list_content_items(db_path=db_path)
     counts = {status: sum(1 for item in items if item.status == status) for status in STATUSES}
-    return {"items": [item.to_dict() for item in items], "counts": counts, "statuses": list(STATUSES)}
+    return {
+        "items": [item.to_dict() for item in items],
+        "counts": counts,
+        "statuses": list(STATUSES),
+        "moves": {status: list(targets) for status, targets in MOVES.items()},
+    }
 
 
 def build_day_id(day_number: int) -> str:
@@ -123,12 +151,15 @@ def store_build_day(
 
 
 def set_status(item_id: str, status: str, *, db_path: Path = DB_PATH) -> ContentItem | None:
-    """Move an item along: draft, ready, posted, skipped (or back to idea)."""
+    """Move an item one stage along the content process (or back one, or aside)."""
     if status not in STATUSES:
-        raise ValueError(f"Status is one of {', '.join(STATUSES)}.")
+        raise ValueError(f"The stages are {', '.join(STATUSES)}.")
     item = get_content_item(item_id, db_path=db_path)
     if item is None:
         return None
+    if status != item.status and status not in MOVES[item.status]:
+        allowed = " or ".join(MOVES[item.status])
+        raise ValueError(f"{item.title} is at {item.status}; from there it can go to {allowed}.")
     posted_at = item.posted_at if status == "posted" and item.posted_at else (_now_iso() if status == "posted" else None)
     return _put(_replace(item, status=status, posted_at=posted_at), db_path=db_path)
 
@@ -159,6 +190,7 @@ def _put(item: ContentItem, *, db_path: Path) -> ContentItem:
         "story": item.story,
         "scripts": list(item.scripts),
         "commit_count": item.commit_count,
+        "format": item.content_format,
     }
     row = put_coordination_entity(
         CONTENT_ITEM_ENTITY,
@@ -187,13 +219,14 @@ def _from_row(row: Any) -> ContentItem:
         kind=row["kind"],
         title=row["title"],
         hook=row["hook"],
-        status=row["status"],
+        status=LEGACY_STATUSES.get(row["status"], row["status"]),
         day_number=row["day_number"],
         day_date=row["day_date"],
         lessons=tuple(payload.get("lessons") or ()),
         story=payload.get("story") or "",
         scripts=tuple(payload.get("scripts") or ()),
         commit_count=int(payload.get("commit_count") or 0),
+        content_format=payload.get("format") or FORMATS[0],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         posted_at=row["posted_at"],

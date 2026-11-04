@@ -19,24 +19,45 @@ def _day(spine: Path, number: int, hook_prefix: str = "") -> None:
                     lessons=["A lesson."], story="The story.", scripts=scripts, commit_count=3, db_path=spine)
 
 
-def test_days_move_from_draft_to_posted_and_list_newest_first(tmp_path: Path) -> None:
+def _walk(spine: Path, item_id: str, *stages: str) -> None:
+    for stage in stages:
+        set_status(item_id, stage, db_path=spine)
+
+
+def test_days_go_through_production_before_they_can_be_ready_or_posted(tmp_path: Path) -> None:
     spine = tmp_path / "spine.db"
     _day(spine, 16)
     _day(spine, 19)
     assert [item.item_id for item in list_content_items(db_path=spine)] == ["day-19", "day-16"]
-    assert set_status("day-16", "ready", db_path=spine).status == "ready"
+    assert list_content_items(db_path=spine)[1].status == "idea"
+    with pytest.raises(ValueError, match="can go to script or skipped"):
+        set_status("day-16", "ready", db_path=spine)  # no finished video yet
+    _walk(spine, "day-16", "script", "production", "ready")
+    with pytest.raises(ValueError):
+        set_status("day-16", "idea", db_path=spine)  # only one stage back at a time
     posted = set_status("day-16", "posted", db_path=spine)
     assert posted.status == "posted" and posted.posted_at
-    assert [item.item_id for item in list_content_items(status="draft", db_path=spine)] == ["day-19"]
+    assert [item.item_id for item in list_content_items(status="idea", db_path=spine)] == ["day-19"]
     with pytest.raises(ValueError):
         set_status("day-19", "published", db_path=spine)
+
+
+def test_days_saved_as_drafts_before_production_existed_read_as_ideas(tmp_path: Path) -> None:
+    from ari_core.modules.coordination.db import get_coordination_entity, put_coordination_entity
+
+    spine = tmp_path / "spine.db"
+    _day(spine, 16)
+    row = dict(get_coordination_entity("content_item", "day-16", db_path=spine))
+    put_coordination_entity("content_item", {**row, "status": "draft"}, db_path=spine)
+    assert list_content_items(db_path=spine)[0].status == "idea"
+    assert set_status("day-16", "script", db_path=spine).status == "script"
 
 
 def test_the_idea_bank_reads_the_library_and_leaves_out_posted_days(tmp_path: Path) -> None:
     spine = tmp_path / "spine.db"
     _day(spine, 16)
     _day(spine, 19)
-    set_status("day-19", "posted", db_path=spine)
+    set_status("day-19", "skipped", db_path=spine)
     bank = generate_content_idea_bank(db_path=spine)
     assert [idea.idea_id for idea in bank.ideas] == ["day-16-1", "day-16-2"]
     assert bank.ideas[0].suggested_shot_list == ("Crash", "Fix")
@@ -52,9 +73,10 @@ def test_ari_lists_and_marks_days_by_text(tmp_path: Path) -> None:
         raise AssertionError
 
     dispatch = make_tool_dispatcher(no_session, save_for_later=lambda link, note: None, spine_db_path=spine)
-    assert dispatch("get_content_library", {})["content"][0]["status"] == "draft"
-    assert dispatch("set_content_status", {"day": 16, "status": "posted"})["updated"]["status"] == "posted"
-    assert "no Day 3" in dispatch("set_content_status", {"day": 3, "status": "posted"})["error"]
+    assert dispatch("get_content_library", {})["content"][0]["status"] == "idea"
+    assert dispatch("set_content_status", {"day": 16, "status": "script"})["updated"]["status"] == "script"
+    assert "can go to production" in dispatch("set_content_status", {"day": 16, "status": "posted"})["error"]
+    assert "no Day 3" in dispatch("set_content_status", {"day": 3, "status": "script"})["error"]
 
 
 def test_the_api_lists_the_library_and_moves_items(tmp_path: Path) -> None:
@@ -72,7 +94,9 @@ def test_the_api_lists_the_library_and_moves_items(tmp_path: Path) -> None:
     client = TestClient(app)
 
     view = client.get("/content").json()
-    assert view["counts"]["draft"] == 1 and view["items"][0]["scripts"][0]["beats"] == ["Crash", "Fix"]
-    assert client.post("/content/day-16/status", json={"status": "ready"}).json()["status"] == "ready"
+    assert view["counts"]["idea"] == 1 and view["items"][0]["scripts"][0]["beats"] == ["Crash", "Fix"]
+    assert view["moves"]["production"] == ["ready", "script"]
+    assert client.post("/content/day-16/status", json={"status": "script"}).json()["status"] == "script"
+    assert client.post("/content/day-16/status", json={"status": "posted"}).status_code == 400
     assert client.post("/content/day-16/status", json={"status": "published"}).status_code == 400
     assert client.post("/content/day-99/status", json={"status": "ready"}).status_code == 404

@@ -165,9 +165,13 @@ tests pass again. Never ship a build he hasn't asked you to.
 - ARI keeps a build log of every release that went live, with what changed and why. \
 "What did we build this week?" or "what's new in ARI" is get_build_log.
 - ARI's content library holds "Day N of building ARI": each building day's hooks, \
-video outlines, and lessons, as draft, ready, posted, or skipped. get_content_library \
-lists them (by status if he asks, e.g. "what's ready to post"); set_content_status \
-records "mark day 19 posted" or "skip day 7".
+video outlines, and lessons. Each goes through the content process in order: idea \
+(ARI wrote it), script (Alec approved it), production (being recorded and edited), \
+ready (the finished video exists), posted; or skipped. get_content_library lists them \
+(by stage if he asks, e.g. "what's in production"); set_content_status moves one a \
+stage ("approve day 19's script", "day 19 is filmed and edited", "mark day 19 posted"). \
+A day can't be ready before production or posted before it's ready; if he asks for \
+that, say which stage it's at and what comes next.
 - GET DONE is Alec's to-do list in Apple Reminders, on his phone. "Add X to my list" or \
 "put X on GET DONE" goes there with add_to_get_done; get_done_list shows what's on it \
 and complete_get_done checks something off. ARI only ever writes to GET DONE.
@@ -411,19 +415,19 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["idea", "draft", "ready", "posted", "skipped"]},
+                "status": {"type": "string", "enum": ["idea", "script", "production", "ready", "posted", "skipped"]},
                 "limit": {"type": "integer", "description": "Default 10."},
             },
         },
     },
     {
         "name": "set_content_status",
-        "description": "Mark a build day draft, ready, posted, or skipped.",
+        "description": "Move a build day one stage: idea, script, production, ready, posted, or skipped.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "day": {"type": "integer", "description": "The day number, e.g. 19."},
-                "status": {"type": "string", "enum": ["idea", "draft", "ready", "posted", "skipped"]},
+                "status": {"type": "string", "enum": ["idea", "script", "production", "ready", "posted", "skipped"]},
             },
             "required": ["day", "status"],
         },
@@ -824,7 +828,10 @@ def make_tool_dispatcher(
             )
             return {"content": [item.describe() for item in items]}
         if name == "set_content_status":
-            item = set_content_status(build_day_id(int(tool_input["day"])), str(tool_input["status"]), db_path=spine())
+            try:
+                item = set_content_status(build_day_id(int(tool_input["day"])), str(tool_input["status"]), db_path=spine())
+            except ValueError as error:
+                return {"error": str(error)}
             return {"updated": item.describe()} if item else {"error": f"There's no Day {tool_input['day']} in the library."}
         if name == "recall":
             return {"found": recall(str(tool_input.get("query") or ""), spine())}

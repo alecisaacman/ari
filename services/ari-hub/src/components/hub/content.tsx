@@ -4,28 +4,33 @@ import { useMemo, useState } from "react";
 
 import type { ContentItem, ContentLibrary } from "@/src/core/ari-spine/brain-bridge";
 
-const FILTERS = ["all", "draft", "ready", "posted", "skipped"] as const;
-type Filter = (typeof FILTERS)[number];
+// The content process, in order. Skipped sits outside it.
+const PIPELINE = ["idea", "script", "production", "ready", "posted"] as const;
 
-const LABEL: Record<string, string> = {
-  all: "All",
-  idea: "Idea",
-  draft: "Draft",
-  ready: "Ready",
-  posted: "Posted",
-  skipped: "Skipped",
+const STAGE: Record<string, { label: string; hint: string }> = {
+  idea: { label: "Idea", hint: "ARI wrote it from the day's commits. Check the hook against what really happened." },
+  script: { label: "Script", hint: "Approved. The script is set and waiting to be made." },
+  production: { label: "Production", hint: "Being recorded, voiced, and edited." },
+  ready: { label: "Ready to post", hint: "The finished video exists and can go out." },
+  posted: { label: "Posted", hint: "Out in the world." },
+  skipped: { label: "Skipped", hint: "Set aside. Bring one back any time." },
 };
 
-// The moves that make sense from each status, first one most likely.
-const MOVES: Record<string, Array<{ to: string; label: string }>> = {
-  idea: [{ to: "draft", label: "Start a draft" }, { to: "skipped", label: "Skip" }],
-  draft: [{ to: "ready", label: "Mark ready" }, { to: "skipped", label: "Skip" }],
-  ready: [{ to: "posted", label: "Mark posted" }, { to: "draft", label: "Back to draft" }],
-  posted: [{ to: "ready", label: "Not posted after all" }],
-  skipped: [{ to: "draft", label: "Bring back" }],
-};
+// What a move is called depends on where the item is now.
+function moveLabel(from: string, to: string): string {
+  if (to === "skipped") return "Skip";
+  if (from === "skipped") return "Bring back";
+  if (to === "script") return from === "idea" ? "Approve script" : "Back to script";
+  if (to === "production") return from === "script" ? "Start production" : "Back to production";
+  if (to === "ready") return "Finished, ready to post";
+  if (to === "posted") return "Mark posted";
+  if (to === "idea") return "Back to idea";
+  return from === "posted" ? "Not posted after all" : STAGE[to]?.label ?? to;
+}
 
-// The Content tab: every building day, what stage it's at, and its hooks and scripts.
+type Filter = (typeof PIPELINE)[number] | "skipped" | "all";
+
+// Content: every piece of content and where it is in the content process.
 export function Content({ library }: { library: ContentLibrary }) {
   const [items, setItems] = useState<ContentItem[]>(library.items);
   const [filter, setFilter] = useState<Filter>("all");
@@ -33,13 +38,13 @@ export function Content({ library }: { library: ContentLibrary }) {
   const [error, setError] = useState<string | null>(null);
 
   const counts = useMemo(() => {
-    const result: Record<string, number> = { all: items.length };
+    const result: Record<string, number> = {};
     for (const item of items) {
       result[item.status] = (result[item.status] ?? 0) + 1;
     }
     return result;
   }, [items]);
-  const shown = filter === "all" ? items : items.filter((item) => item.status === filter);
+  const shown = filter === "all" ? items.filter((item) => item.status !== "skipped") : items.filter((item) => item.status === filter);
 
   async function move(item: ContentItem, to: string) {
     setBusy(item.id);
@@ -65,27 +70,42 @@ export function Content({ library }: { library: ContentLibrary }) {
   return (
     <div className="content">
       <header className="content-head">
+        <p className="content-kicker">Content</p>
         <h1>Day N of building ARI</h1>
         <p>
-          {items.length} building days. ARI writes each one from that day&apos;s commits as a draft. Check the hook against what really
-          happened, then mark it ready.
+          Short-form, one video per building day. Each goes idea, script, production, then ready to post, so nothing is ready
+          until the finished video exists.
         </p>
       </header>
 
-      <nav className="content-filters" aria-label="Show">
-        {FILTERS.map((name) => (
+      <nav className="content-pipeline" aria-label="Stages">
+        <button type="button" className={filter === "all" ? "is-on" : ""} aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
+          <span className="content-stage-name">All</span>
+          <span className="content-stage-count">{items.length - (counts.skipped ?? 0)}</span>
+        </button>
+        {PIPELINE.map((stage) => (
           <button
-            key={name}
+            key={stage}
             type="button"
-            className={filter === name ? "is-on" : ""}
-            aria-pressed={filter === name}
-            onClick={() => setFilter(name)}
+            className={filter === stage ? "is-on" : ""}
+            aria-pressed={filter === stage}
+            onClick={() => setFilter(stage)}
           >
-            {LABEL[name]}
-            <span>{counts[name] ?? 0}</span>
+            <span className="content-stage-name">{STAGE[stage].label}</span>
+            <span className="content-stage-count">{counts[stage] ?? 0}</span>
           </button>
         ))}
+        <button
+          type="button"
+          className={`content-stage-aside ${filter === "skipped" ? "is-on" : ""}`}
+          aria-pressed={filter === "skipped"}
+          onClick={() => setFilter("skipped")}
+        >
+          <span className="content-stage-name">Skipped</span>
+          <span className="content-stage-count">{counts.skipped ?? 0}</span>
+        </button>
       </nav>
+      {filter !== "all" ? <p className="hub-quiet">{STAGE[filter].hint}</p> : null}
 
       {error ? <p className="chat-error">{error}</p> : null}
 
@@ -93,18 +113,34 @@ export function Content({ library }: { library: ContentLibrary }) {
         <ol className="content-list">
           {shown.map((item) => (
             <li key={item.id}>
-              <ContentCard item={item} busy={busy === item.id} onMove={(to) => move(item, to)} />
+              <ContentCard
+                item={item}
+                moves={library.moves[item.status] ?? []}
+                busy={busy === item.id}
+                onMove={(to) => move(item, to)}
+              />
             </li>
           ))}
         </ol>
       ) : (
-        <p className="hub-quiet content-empty">Nothing is {LABEL[filter].toLowerCase()} right now.</p>
+        <p className="hub-quiet content-empty">Nothing at {filter === "all" ? "any stage" : STAGE[filter].label.toLowerCase()} right now.</p>
       )}
     </div>
   );
 }
 
-function ContentCard({ item, busy, onMove }: { item: ContentItem; busy: boolean; onMove: (to: string) => void }) {
+function ContentCard({
+  item,
+  moves,
+  busy,
+  onMove,
+}: {
+  item: ContentItem;
+  moves: string[];
+  busy: boolean;
+  onMove: (to: string) => void;
+}) {
+  const step = PIPELINE.indexOf(item.status as (typeof PIPELINE)[number]);
   return (
     <article className={`content-card is-${item.status}`}>
       <details>
@@ -112,9 +148,17 @@ function ContentCard({ item, busy, onMove }: { item: ContentItem; busy: boolean;
           <span className="content-meta">
             <span className="content-day">Day {item.dayNumber}</span>
             <span className="content-date">{item.date ? shortDate(item.date) : ""}</span>
-            <span className={`content-status is-${item.status}`}>{LABEL[item.status] ?? item.status}</span>
+            <span className="content-format">{item.format}</span>
+            <span className={`content-status is-${item.status}`}>{STAGE[item.status]?.label ?? item.status}</span>
           </span>
           <span className="content-hook">{item.hook}</span>
+          {step >= 0 ? (
+            <span className="content-progress" aria-hidden="true">
+              {PIPELINE.map((stage, index) => (
+                <span key={stage} className={index <= step ? "is-done" : ""} />
+              ))}
+            </span>
+          ) : null}
         </summary>
 
         <div className="content-body">
@@ -149,15 +193,9 @@ function ContentCard({ item, busy, onMove }: { item: ContentItem; busy: boolean;
       </details>
 
       <div className="content-actions">
-        {(MOVES[item.status] ?? []).map((move, index) => (
-          <button
-            key={move.to}
-            type="button"
-            className={index === 0 ? "is-primary" : ""}
-            disabled={busy}
-            onClick={() => onMove(move.to)}
-          >
-            {move.label}
+        {moves.map((to, index) => (
+          <button key={to} type="button" className={index === 0 ? "is-primary" : ""} disabled={busy} onClick={() => onMove(to)}>
+            {moveLabel(item.status, to)}
           </button>
         ))}
         {item.postedAt && item.status === "posted" ? <span className="hub-quiet">Posted {shortDate(item.postedAt)}</span> : null}

@@ -64,13 +64,16 @@ its self-improvement before it feeds any post. ARI texts me the story; it never 
 anything.
 
 Every day lives in ARI's content library (`ari_content_items`,
-`modules/self_documentation/library.py`), the one place content is kept. Each item
-moves draft -> ready -> posted, or is skipped; a day ARI writes starts as a draft
-because hooks come from commits, which say what ARI could do, not what I did. Texting
-"what's ready to post" or "mark day 19 posted" works through ARI's tools. The older
-self-documentation idea bank reads the library too, so it lists every day not yet
-posted or skipped beside any content seeds and packages. Rewriting a day keeps its
-status. `python -m ari_core.build_story import-notes` moved the days first written as
+`modules/self_documentation/library.py`), the one place content is kept. Each item goes
+through the content process in order: idea (ARI wrote it), script (I checked and
+approved it), production (recording, voice, editing), ready (the finished short-form or
+long-form piece exists), posted; or it's skipped. Nothing reaches ready without
+production and nothing is posted that wasn't ready; an item steps back one stage at a
+time. A day ARI writes starts as an idea, because hooks come from commits, which say
+what ARI could do, not what I did. The hub shows the library on its own page, /content;
+texting "what's in production" or "approve day 19's script" works through ARI's tools.
+The older self-documentation idea bank reads the library too. Rewriting a day keeps its
+stage. `python -m ari_core.build_story import-notes` moved the days first written as
 ARI notes into the library. `python -m ari_core.build_story backfill --repo
 PATH` writes every day so far. Only the writing calls a model, and only with the commits'
 own words.

@@ -87,13 +87,20 @@ export type ContentItem = {
   lessons: string[];
   story: string;
   scripts: ContentScript[];
+  format: string;
   updatedAt: string;
   postedAt: string | null;
 };
 
-export type ContentLibrary = { items: ContentItem[]; counts: Record<string, number>; statuses: string[] };
+export type ContentLibrary = {
+  items: ContentItem[];
+  counts: Record<string, number>;
+  statuses: string[];
+  // Where an item can go from each stage, as ARI allows it.
+  moves: Record<string, string[]>;
+};
 
-// ARI's content library: every building day, with where it stands.
+// ARI's content library: every building day, with its stage in the content process.
 export async function getContentLibrary(): Promise<ContentLibrary> {
   if (isSubprocessBridgeMode()) {
     return runCanonicalJsonCommand<ContentLibrary>(["api", "content", "list", "--json"]);
