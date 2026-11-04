@@ -60,6 +60,33 @@ def test_a_day_becomes_a_story_with_lessons_first_and_is_kept_as_a_note(tmp_path
 
     assert seen[0]["day"] == 2 and len(seen) == 1
     assert story is not None and story.title == "Build story, Day 2 (Oct 28)"
-    assert story.note().startswith("What ARI learned\n- Mac control got used")
     assert "Hook: I text my laptop and it obeys." in story.message()
     assert latest_lessons(spine) == WRITTEN["lessons"]
+
+    from ari_core.modules.self_documentation.library import get_content_item, set_status
+
+    day = get_content_item("day-2", db_path=spine)
+    assert day.status == "draft" and day.day_date == "2026-10-28" and day.hook == "I text my laptop and it obeys."
+    set_status("day-2", "posted", db_path=spine)
+    with factory() as session:  # rewriting a posted day keeps it posted
+        run_story(session, repo=repo, day=date(2026, 10, 28), now=NOW, write=write, spine_db_path=spine)
+    assert get_content_item("day-2", db_path=spine).status == "posted"
+
+
+def test_build_days_kept_as_notes_move_into_the_library(tmp_path: Path) -> None:
+    from ari_core.build_story import import_notes
+    from ari_core.modules.notes.db import save_ari_note
+    from ari_core.modules.self_documentation.library import get_content_item
+
+    spine = tmp_path / "spine.db"
+    body = (
+        "What ARI learned\n- Ship the read side first.\n\nThe story\nDay one.\n\n"
+        "Short-form 1\nHook: ARI had no memory.\n1. The problem\n2. The fix\nCaption: Day 1 of building ARI."
+    )
+    save_ari_note("Build story, Day 1 (Apr 10)", body, db_path=spine)
+    save_ari_note("Morning review, Fri Oct 30", "not a day", db_path=spine)
+    assert import_notes(spine) == 1
+    day = get_content_item("day-1", db_path=spine)
+    assert day.lessons == ("Ship the read side first.",) and day.story == "Day one."
+    assert day.scripts[0] == {"hook": "ARI had no memory.", "beats": ["The problem", "The fix"], "caption": "Day 1 of building ARI."}
+    assert day.day_date.endswith("-04-10")

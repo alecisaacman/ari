@@ -210,20 +210,25 @@ def run_review(
     apple: AppleDesk | None = None,
     write: Write = write_with_model,
     spine_db_path: Path | None = None,
+    on_skip: Callable[[str], None] | None = None,
 ) -> Review | None:
-    """Gather, write, and keep a review. None when the budget has no room for it."""
+    """Gather, write, and keep a review. None when it couldn't be written; on_skip hears why."""
+    skipped = on_skip or (lambda reason: None)
     current = now or datetime.now(tz=UTC)
     if month_spend(session, now=current).exhausted:
+        skipped("this month's budget is used up")
         return None
     facts = gather(session, kind=kind, now=current, apple=apple)
     try:
         written, call = write(kind, facts)
-    except anthropic.APIError:
+    except anthropic.APIError as error:
+        skipped(f"the model didn't answer ({type(error).__name__}: {str(error)[:160]})")
         return None
     if call is not None:
         record_model_call(session, call, channel=CHANNEL, escalated=True)
     message = str(written.get("message") or "").strip()
     if not message:
+        skipped("the model wrote an empty review")
         return None
     build = written.get("build") if isinstance(written.get("build"), dict) else None
     if build and build.get("title"):

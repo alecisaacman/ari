@@ -319,10 +319,15 @@ class ImessageGateway:
                 pass
             marker.write_text(local.date().isoformat())  # once a day, even if writing fails
             with self.session_factory() as session:
-                review = run_review(session, kind=kind, now=self.now(), apple=self.apple, write=self.review_writer)
+                reasons: list[str] = []
+                review = run_review(
+                    session, kind=kind, now=self.now(), apple=self.apple, write=self.review_writer,
+                    on_skip=reasons.append,
+                )
             if review is None:
-                # Over budget, an API error, or an empty review: said in the log, not swallowed.
-                report.detail = f"The {kind} review didn't get written."
+                # Said in the log with its reason, never swallowed.
+                why = f": {reasons[0]}" if reasons else ""
+                report.detail = f"The {kind} review didn't get written{why}."
                 continue
             if not self._send(self.settings.reply_to or "", review.message, report):
                 continue

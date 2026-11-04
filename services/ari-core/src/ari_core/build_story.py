@@ -10,7 +10,8 @@ every day so far.
 The lessons come first: ARI's reviews read the latest ones, so the story feeds its
 self-improvement before it feeds any post. ARI never posts anything. The facts come
 from git, in the commits' own words; only the writing calls a model, and it may use
-only those facts. Each day is kept as an ARI note.
+only those facts. Each day is kept in ARI's content library
+(modules/self_documentation/library.py), as a draft until Alec checks it.
 
     python -m ari_core.build_story backfill --repo PATH [--from-day N]
 """
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,7 +34,8 @@ from sqlalchemy.orm import Session
 
 from ari_core.brain import DEEP_MODEL, make_client
 from ari_core.brain_usage import ModelCall, month_spend, record_model_call
-from ari_core.modules.notes.db import save_ari_note, search_ari_notes
+from ari_core.modules.notes.db import search_ari_notes
+from ari_core.modules.self_documentation.library import latest_build_day, store_build_day
 
 CHANNEL = "story"
 TITLE_PREFIX = "Build story"
@@ -196,19 +199,65 @@ def run_story(
         scripts=[script for script in written.get("scripts") or [] if isinstance(script, dict)],
     )
     kwargs = {} if spine_db_path is None else {"db_path": spine_db_path}
-    save_ari_note(story.title, story.note(), **kwargs)
+    store_build_day(
+        day_number=facts["day"],
+        day_date=day.isoformat(),
+        title=story.title,
+        lessons=story.lessons,
+        story=story.story,
+        scripts=story.scripts,
+        commit_count=len(facts["commits"]),
+        **kwargs,
+    )
     return story
 
 
 def latest_lessons(spine_db_path: Path | None = None) -> list[str]:
-    """The lessons from the most recent build story, for ARI's reviews to build on."""
+    """The lessons from the most recent build day, for ARI's reviews to build on."""
     kwargs = {} if spine_db_path is None else {"db_path": spine_db_path}
-    for row in search_ari_notes(TITLE_PREFIX, limit=5, **kwargs):
-        if not row["title"].startswith(TITLE_PREFIX):
+    day = latest_build_day(**kwargs)
+    return list(day.lessons) if day else []
+
+
+def import_notes(spine_db_path: Path | None = None) -> int:
+    """Move build days written as ARI notes (before the library existed) into the library."""
+    kwargs = {} if spine_db_path is None else {"db_path": spine_db_path}
+    moved = 0
+    for row in search_ari_notes(f"{TITLE_PREFIX}, Day", limit=500, **kwargs):
+        match = re.match(rf"{TITLE_PREFIX}, Day (\d+) \((.+)\)$", row["title"])
+        if match is None:
             continue
-        section = row["body"].split("\n\n", 1)[0]
-        return [line[2:].strip() for line in section.splitlines() if line.startswith("- ")]
-    return []
+        lessons_part, _, rest = row["body"].partition("\n\nThe story\n")
+        story, *raw_scripts = re.split(r"\n\nShort-form \d+\n", rest)
+        scripts = []
+        for raw in raw_scripts:
+            lines = raw.splitlines()
+            scripts.append({
+                "hook": next((line[6:] for line in lines if line.startswith("Hook: ")), ""),
+                "beats": [re.sub(r"^\d+\.\s*", "", line) for line in lines if re.match(r"^\d+\.", line)],
+                "caption": next((line[9:] for line in lines if line.startswith("Caption: ")), ""),
+            })
+        store_build_day(
+            day_number=int(match.group(1)),
+            day_date=_note_date(row["created_at"], match.group(2)),
+            title=row["title"],
+            lessons=[line[2:].strip() for line in lessons_part.splitlines() if line.startswith("- ")],
+            story=story.strip(),
+            scripts=scripts,
+            commit_count=0,
+            **kwargs,
+        )
+        moved += 1
+    return moved
+
+
+def _note_date(created_at: str, short: str) -> str:
+    """The day's ISO date from its title's "Oct 28", in the year the note was written."""
+    year = str(created_at)[:4]
+    try:
+        return datetime.strptime(f"{short} {year}", "%b %d %Y").date().isoformat()
+    except ValueError:
+        return short
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -230,8 +279,12 @@ def main(argv: list[str] | None = None) -> int:
     backfill = commands.add_parser("backfill", help="Write a story for every building day so far.")
     backfill.add_argument("--repo", type=Path, required=True)
     backfill.add_argument("--from-day", type=int, default=1)
+    commands.add_parser("import-notes", help="Move build days kept as ARI notes into the library.")
     args = parser.parse_args(argv)
     load_local_env()
+    if args.command == "import-notes":
+        print(f"Moved {import_notes()} build day(s) into the content library.")
+        return 0
     factory = create_session_factory(create_engine(DatabaseSettings().database_url))
     for number, day in enumerate(building_days(args.repo), start=1):
         if number < args.from_day:

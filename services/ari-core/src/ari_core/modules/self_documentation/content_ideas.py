@@ -9,6 +9,7 @@ from ari_core.core.paths import DB_PATH
 
 from .content_package import ContentPackage
 from .content_seed import ContentSeed
+from .library import BUILD_DAY, ContentItem, list_content_items
 from .storage import list_content_packages, list_content_seeds
 
 
@@ -56,7 +57,7 @@ def generate_content_idea_bank(
     db_path: Path = DB_PATH,
     limit: int = 20,
 ) -> ContentIdeaBank:
-    source_of_truth = "persisted self-documentation ContentSeed and ContentPackage artifacts"
+    source_of_truth = "ARI's content library (build days) and persisted self-documentation ContentSeed and ContentPackage artifacts"
     authority_warning = (
         "This idea bank is read-only content planning. ARI may propose grounded "
         "content ideas, but it must not record, edit, upload, publish, mutate "
@@ -65,6 +66,11 @@ def generate_content_idea_bank(
     try:
         seeds = list_content_seeds(limit=limit, db_path=db_path)
         packages = list_content_packages(limit=limit, db_path=db_path)
+        days = [
+            item
+            for item in list_content_items(kind=BUILD_DAY, db_path=db_path)
+            if item.status not in ("posted", "skipped")
+        ]
     except Exception as error:  # pragma: no cover - exercised through monkeypatch tests.
         return ContentIdeaBank(
             generated_at=_now_iso(),
@@ -82,6 +88,7 @@ def generate_content_idea_bank(
             (
                 *(_idea_from_seed(seed) for seed in seeds),
                 *(_idea_from_package(package) for package in packages),
+                *(idea for day in days for idea in _ideas_from_build_day(day)),
             ),
             key=lambda idea: (
                 -idea.recommended_priority,
@@ -168,6 +175,42 @@ def _idea_from_package(package: ContentPackage) -> ContentIdea:
         reason_for_priority=_priority_reason(priority, risk_level, has_package=True),
         created_at=package.created_at,
     )
+
+
+# Day stories are written from commits, which say what ARI could do, not what Alec did.
+BUILD_DAY_CLAIMS = ("Don't claim Alec did something the commits only made possible.",)
+
+
+def _ideas_from_build_day(day: ContentItem) -> tuple[ContentIdea, ...]:
+    """One idea per short-form outline. Ready days rank first, then the newest."""
+    ideas = []
+    for index, script in enumerate(day.scripts):
+        beats = tuple(str(beat) for beat in script.get("beats") or ())
+        priority = (2 if day.status == "ready" else 1) * 100 + (day.day_number or 0) - index
+        ideas.append(
+            ContentIdea(
+                idea_id=f"{day.item_id}-{index + 1}",
+                title=f"Day {day.day_number} of building ARI",
+                hook=str(script.get("hook") or day.hook),
+                platform_fit=("short-form video", "linkedin"),
+                audience="People following ARI being built in public",
+                source_artifact_ids=(day.item_id,),
+                source_artifact_types=("content_item",),
+                proof_points=tuple(day.lessons)[:3],
+                visual_plan=day.story,
+                suggested_shot_list=beats,
+                script_angle=str(script.get("caption") or ""),
+                recording_difficulty=_recording_difficulty(beats),
+                edit_complexity="low" if len(beats) <= 3 else "medium",
+                risk_level="low",
+                redaction_notes=(),
+                claims_to_avoid=BUILD_DAY_CLAIMS,
+                recommended_priority=priority,
+                reason_for_priority=f"Day {day.day_number}, {day.status}.",
+                created_at=day.created_at,
+            )
+        )
+    return tuple(ideas)
 
 
 def _category(*values: str) -> str:

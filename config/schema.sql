@@ -492,6 +492,22 @@ create table if not exists ari_self_documentation_content_seeds (
     updated_at text not null
 );
 
+-- ARI's content library: one item per piece of content, moving idea -> draft -> ready
+-- -> posted (or skipped). Build days ("Day N of building ARI") are the first kind.
+create table if not exists ari_content_items (
+    item_id text primary key,
+    kind text not null,
+    day_number integer,
+    day_date text,
+    title text not null,
+    hook text not null,
+    status text not null,
+    payload_json text not null,
+    created_at text not null,
+    updated_at text not null,
+    posted_at text
+);
+
 create table if not exists ari_self_documentation_content_packages (
     package_id text primary key,
     source_seed_id text not null,

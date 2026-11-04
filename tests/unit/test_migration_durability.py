@@ -457,7 +457,9 @@ def test_lock_held_past_timeout_fails_clearly_without_partial_schema(scratch: Pa
     initialize_database(db_path=db_path, migrations_dir=_migrations_upto(scratch, 1))
     before = _schema(db_path)
 
-    holder = _hold_write_lock(db_path, 4)
+    # Held well past the worker's start-up: on a busy or battery-throttled Mac, starting
+    # Python alone took over 4 seconds and the lock was gone before the worker asked.
+    holder = _hold_write_lock(db_path, 20)
     started = time.monotonic()
     blocked = _run(scratch, {"db": str(db_path)}, ARI_SQLITE_LOCK_TIMEOUT_SECONDS="1")
     elapsed = time.monotonic() - started
@@ -465,7 +467,7 @@ def test_lock_held_past_timeout_fails_clearly_without_partial_schema(scratch: Pa
 
     assert blocked.returncode == 1
     assert "MigrationLockTimeout" in blocked.stderr
-    assert elapsed < 4
+    assert elapsed < 20
     assert _schema(db_path) == before
     assert _versions(db_path) == VERSIONS[:1]
 

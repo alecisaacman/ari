@@ -60,7 +60,17 @@ a day with work, or when I text "ARI story", ARI turns that day's commits into a
 (`ari_core.build_story`): one to three lessons about what was worth building and what
 broke; the day in 80 to 160 words; and one or two short-form video outlines (hook, beats,
 caption). The lessons come first because ARI's next reviews read them, so the story feeds
-its self-improvement before it feeds any post. ARI texts me the story and keeps all of it
-as an ARI note; it never posts anything. `python -m ari_core.build_story backfill --repo
+its self-improvement before it feeds any post. ARI texts me the story; it never posts
+anything.
+
+Every day lives in ARI's content library (`ari_content_items`,
+`modules/self_documentation/library.py`), the one place content is kept. Each item
+moves draft -> ready -> posted, or is skipped; a day ARI writes starts as a draft
+because hooks come from commits, which say what ARI could do, not what I did. Texting
+"what's ready to post" or "mark day 19 posted" works through ARI's tools. The older
+self-documentation idea bank reads the library too, so it lists every day not yet
+posted or skipped beside any content seeds and packages. Rewriting a day keeps its
+status. `python -m ari_core.build_story import-notes` moved the days first written as
+ARI notes into the library. `python -m ari_core.build_story backfill --repo
 PATH` writes every day so far. Only the writing calls a model, and only with the commits'
 own words.

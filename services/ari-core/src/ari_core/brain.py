@@ -30,6 +30,8 @@ from sqlalchemy.orm import Session
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.build_log import recent_builds, tool_use
 from ari_core.email_reader import EmailDesk, EmailError
+from ari_core.modules.self_documentation.library import build_day_id, list_content_items
+from ari_core.modules.self_documentation.library import set_status as set_content_status
 from ari_core.mac import MacDesk, MacError
 from ari_core.brain_usage import ModelCall
 from ari_core.builds import decide_build, list_builds, propose_build
@@ -162,6 +164,10 @@ when he says to ship a built build ("ship it") call ship_build; it goes live aft
 tests pass again. Never ship a build he hasn't asked you to.
 - ARI keeps a build log of every release that went live, with what changed and why. \
 "What did we build this week?" or "what's new in ARI" is get_build_log.
+- ARI's content library holds "Day N of building ARI": each building day's hooks, \
+video outlines, and lessons, as draft, ready, posted, or skipped. get_content_library \
+lists them (by status if he asks, e.g. "what's ready to post"); set_content_status \
+records "mark day 19 posted" or "skip day 7".
 - GET DONE is Alec's to-do list in Apple Reminders, on his phone. "Add X to my list" or \
 "put X on GET DONE" goes there with add_to_get_done; get_done_list shows what's on it \
 and complete_get_done checks something off. ARI only ever writes to GET DONE.
@@ -397,6 +403,29 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"build_id": {"type": "string"}},
             "required": ["build_id"],
+        },
+    },
+    {
+        "name": "get_content_library",
+        "description": "ARI's content library: build days with their status and hooks, newest first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["idea", "draft", "ready", "posted", "skipped"]},
+                "limit": {"type": "integer", "description": "Default 10."},
+            },
+        },
+    },
+    {
+        "name": "set_content_status",
+        "description": "Mark a build day draft, ready, posted, or skipped.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "day": {"type": "integer", "description": "The day number, e.g. 19."},
+                "status": {"type": "string", "enum": ["idea", "draft", "ready", "posted", "skipped"]},
+            },
+            "required": ["day", "status"],
         },
     },
     {
@@ -753,7 +782,7 @@ def make_tool_dispatcher(
             "remember", "save_note", "set_daily_state", "set_weekly_plan",
             "update_open_loop", "set_reminder", "cancel_reminder",
             "add_to_get_done", "complete_get_done", "add_calendar_event",
-            "decide_build", "propose_build", "ship_build",
+            "decide_build", "propose_build", "ship_build", "set_content_status",
         }:
             return {"recorded": {"tool": name, "dry_run": True}}
         if dry_run and name in MAC_TOOL_NAMES - MAC_READ_TOOLS:
@@ -789,6 +818,14 @@ def make_tool_dispatcher(
                 return {"error": str(error)}
             except ValueError as error:
                 return {"error": f"I couldn't read that date: {error}"}
+        if name == "get_content_library":
+            items = list_content_items(
+                status=tool_input.get("status"), limit=int(tool_input.get("limit") or 10), db_path=spine()
+            )
+            return {"content": [item.describe() for item in items]}
+        if name == "set_content_status":
+            item = set_content_status(build_day_id(int(tool_input["day"])), str(tool_input["status"]), db_path=spine())
+            return {"updated": item.describe()} if item else {"error": f"There's no Day {tool_input['day']} in the library."}
         if name == "recall":
             return {"found": recall(str(tool_input.get("query") or ""), spine())}
         if name == "save_note":
@@ -999,6 +1036,8 @@ FAST_TOOL_NAMES = {
     "get_build_list",
     "get_build_log",
     "ship_build",
+    "get_content_library",
+    "set_content_status",
     "decide_build",
     "propose_build",
     "get_done_list",

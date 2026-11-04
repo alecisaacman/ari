@@ -19,6 +19,13 @@ from .content_seed import (
     content_seed_from_dict,
     generate_content_seed_from_commits,
 )
+from .library import (
+    ContentItem,
+    get_content_item,
+    list_content_items,
+    set_status,
+    store_build_day,
+)
 from .recording_plan import (
     RecordingPlan,
     generate_recording_plan_from_idea,
@@ -33,6 +40,11 @@ from .storage import (
 )
 
 __all__ = [
+    "ContentItem",
+    "get_content_item",
+    "list_content_items",
+    "set_status",
+    "store_build_day",
     "ContentPackage",
     "ContentSeed",
     "ContentIdea",
