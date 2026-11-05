@@ -336,3 +336,15 @@ def test_alec_approves_or_holds_what_ari_proposes_to_build(tmp_path) -> None:
     assert [item["status"] for item in dispatch("get_build_list", {})["builds"]] == ["approved"]
     dispatch("decide_build", {"build_id": build["id"], "decision": "decline"})
     assert dispatch("get_build_list", {})["builds"] == []
+
+
+def test_a_tool_call_the_records_reject_goes_back_to_the_model_instead_of_failing(tmp_path) -> None:
+    from ari_core.brain import TOOLS, make_tool_dispatcher
+    from ari_memory import create_engine, create_session_factory
+
+    factory = create_session_factory(create_engine(f"sqlite+pysqlite:///{tmp_path / 'ari.db'}"))
+    dispatch = make_tool_dispatcher(factory, save_for_later=lambda link, note: None, spine_db_path=tmp_path / "s.db")
+    result = dispatch("set_daily_state", {"priorities": ["Tutoring", "Schoolwork", "GET DONE", "Building ARI"]})
+    assert "wasn't saved" in result["error"] and "priorities" in result["error"]
+    schema = next(tool for tool in TOOLS if tool["name"] == "set_daily_state")["input_schema"]
+    assert schema["properties"]["priorities"]["maxItems"] == 3

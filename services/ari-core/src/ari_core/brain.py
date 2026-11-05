@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID
 
 import anthropic
+from pydantic import ValidationError
 from ari_memory import OpenLoopRepository
 from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
 from sqlalchemy.orm import Session
@@ -646,7 +647,12 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "priorities": {"type": "array", "items": {"type": "string"}},
+                "priorities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 3,
+                    "description": "At most three. If he names more, keep the three that matter most and say so.",
+                },
                 "win_condition": {"type": "string"},
                 "stress": {"type": "integer", "minimum": 1, "maximum": 10},
                 "next_action": {"type": "string"},
@@ -659,7 +665,7 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "outcomes": {"type": "array", "items": {"type": "string"}},
+                "outcomes": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
                 "cannot_drift": {"type": "array", "items": {"type": "string"}},
                 "blockers": {"type": "array", "items": {"type": "string"}},
             },
@@ -771,6 +777,17 @@ def make_tool_dispatcher(
         return spine_db_path or core_paths.DB_PATH
 
     def dispatch(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        # A tool call ARI's records reject goes back to the model to fix, instead of
+        # failing Alec's whole message.
+        try:
+            return run(name, tool_input)
+        except ValidationError as error:
+            problems = "; ".join(
+                f"{'.'.join(str(part) for part in issue['loc']) or 'input'}: {issue['msg']}" for issue in error.errors()
+            )
+            return {"error": f"{name} wasn't saved: {problems}. Fix the input and try again."}
+
+    def run(name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         if name == "propose_action":
             if dry_run:
                 return {"proposed": {"summary": tool_input.get("summary"), "dry_run": True}}
