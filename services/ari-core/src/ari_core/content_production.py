@@ -30,7 +30,7 @@ def studio_command(item: ContentItem) -> list[str] | None:
     """The command that makes an item's video, or None if the studio isn't installed."""
     python = ari_home() / "media" / "venv" / "bin" / "python"
     studio = ari_home() / "runtime" / "current" / "tools" / "ari-studio" / "studio.py"
-    if item.day_number is None or not python.exists() or not studio.exists():
+    if item.day_number is None or not python.exists() or not studio.exists() or not _narration_available():
         return None
     return [str(python), str(studio), "produce", "--day", str(item.day_number), "--attach"]
 
@@ -46,6 +46,14 @@ def move(item_id: str, status: str, *, db_path: Path = DB_PATH, spawn: Spawn | N
         return item, False
     (spawn or _spawn_detached)(command)
     return item, True
+
+
+def _narration_available() -> bool:
+    """Narration needs Replicate connected, or a Mac told it can run the model itself.
+
+    This Mac's 8 GB can't, so without either, production stays a stage marked by hand.
+    """
+    return bool(os.environ.get("REPLICATE_API_TOKEN")) or os.environ.get("ARI_STUDIO_VOICE") == "local"
 
 
 def _spawn_detached(command: Sequence[str]) -> None:

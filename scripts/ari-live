@@ -13,6 +13,7 @@ and tests it first, then switches `current`; the previous release stays for roll
   ari-live connect-mac                             let ARI control this Mac when Alec texts it
   ari-live connect-gmail                           let ARI read Gmail (asks for an app password)
   ari-live connect-builds                          let ARI build approved builds on a schedule
+  ari-live connect-replicate                       let ARI's studio narrate on Replicate ($5/month cap)
   ari-live status                                   what's live, and what's running
   ari-live setup                                    point ARI's launchd jobs at `current`
   ari-live hub open | stop                          start the hub on demand and open it
@@ -90,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("connect-mac", help="Let ARI control this Mac when Alec asks it to.")
     commands.add_parser("connect-gmail", help="Let ARI read Gmail, with an app password you type in.")
     commands.add_parser("connect-builds", help="Let ARI build what Alec approves, on a schedule.")
+    commands.add_parser("connect-replicate", help="Let ARI's studio narrate on Replicate, under a monthly cap.")
     commands.add_parser("status")
     commands.add_parser("setup")
     hub = commands.add_parser("hub")
@@ -107,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         return connect_gmail()
     if args.command == "connect-builds":
         return connect_builds()
+    if args.command == "connect-replicate":
+        return connect_replicate()
     if args.command == "rollback":
         return rollback()
     if args.command == "status":
@@ -448,6 +452,37 @@ def _set_env(key: str, value: str) -> None:
     lines = [line for line in existing.splitlines() if not line.startswith(f"{key}=")]
     ENV_FILE.write_text("\n".join([*lines, f"{key}={value}"]) + "\n", encoding="utf-8")
     ENV_FILE.chmod(0o600)
+
+
+def connect_replicate() -> int:
+    """Check a Replicate API token, then keep it and the studio's monthly cap in ari.env.
+
+    Alec types the token here himself; it is never shown or logged.
+    """
+    import getpass
+    import urllib.error
+    import urllib.request
+
+    token = getpass.getpass("Replicate API token (from replicate.com/account/api-tokens; it won't show): ").strip()
+    if not token:
+        print("Not connected: no token.")
+        return 1
+    request = urllib.request.Request("https://api.replicate.com/v1/account", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            account = json.loads(response.read())
+    except (OSError, urllib.error.URLError, ValueError) as error:
+        print(f"Not connected: Replicate refused the token ({error}).")
+        return 1
+    _set_env("REPLICATE_API_TOKEN", token)
+    existing = ENV_FILE.read_text(encoding="utf-8") if ENV_FILE.exists() else ""
+    if "ARI_STUDIO_MONTHLY_USD=" not in existing:
+        _set_env("ARI_STUDIO_MONTHLY_USD", "5")
+    # ARI's API reads ari.env when it starts, and it's what starts the studio.
+    if _loaded(API_LABEL):
+        subprocess.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{API_LABEL}"], check=False, capture_output=True)
+    print(f"ARI's studio narrates on Replicate as {account.get('username', 'your account')}, capped at $5 a month.")
+    return 0
 
 
 def connect_gmail() -> int:

@@ -147,3 +147,22 @@ def test_starting_production_starts_the_studio_once(tmp_path: Path, monkeypatch)
     content_production.move("day-16", "ready", db_path=spine, spawn=started.append)
     _, producing = content_production.move("day-16", "production", db_path=spine, spawn=started.append)
     assert not producing and len(started) == 1  # stepping back from ready keeps the video
+
+
+def test_the_studio_waits_for_a_way_to_narrate(tmp_path: Path, monkeypatch) -> None:
+    from ari_core import content_production
+    from ari_core.modules.self_documentation.library import get_content_item
+
+    for folder in ("media/venv/bin", "runtime/current/tools/ari-studio"):
+        (tmp_path / folder).mkdir(parents=True)
+    (tmp_path / "media/venv/bin/python").write_text("")
+    (tmp_path / "runtime/current/tools/ari-studio/studio.py").write_text("")
+    monkeypatch.setattr(content_production, "ari_home", lambda: tmp_path)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    monkeypatch.delenv("ARI_STUDIO_VOICE", raising=False)
+    spine = tmp_path / "spine.db"
+    _day(spine, 16)
+    item = get_content_item("day-16", db_path=spine)
+    assert content_production.studio_command(item) is None  # no Replicate, and this Mac can't run it
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "t")
+    assert content_production.studio_command(item)[-3:] == ["--day", "16", "--attach"]

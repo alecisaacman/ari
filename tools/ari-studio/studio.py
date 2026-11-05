@@ -3,9 +3,12 @@
     ~/ARI/media/venv/bin/python tools/ari-studio/studio.py produce --day 23 [--script 1]
 
 1. Narration: each line of the script (the hook, then each beat, then the sign-off) is
-   spoken in Alec's cloned voice by Chatterbox, an open-source model that runs on this
-   Mac, from his one-minute sample (~/ARI/media/voice/alec-sample.wav). With no sample
-   yet it uses Chatterbox's default voice, so the pipeline can be checked end to end.
+   spoken in Alec's cloned voice by Chatterbox, an open-source voice-cloning model, from
+   his one-minute sample (~/ARI/media/voice/alec-sample.wav). With no sample yet it uses
+   Chatterbox's default voice, so the pipeline can be checked end to end. Chatterbox runs
+   on Replicate's GPUs, paid per second (this Mac's 8 GB can't hold it), under a monthly
+   cap (ARI_STUDIO_MONTHLY_USD, $5); ARI_STUDIO_VOICE=local runs it here instead, for
+   when ARI moves to a bigger Mac.
 2. Footage: real material from that day. The code that changed comes from the public
    repository's commits for the day; the cards and the sign-off show the hook and ARI's
    hummingbird. Nothing personal (texts, calendar, to-dos) goes in: the video is public.
@@ -28,8 +31,11 @@ import re
 import shutil
 import subprocess
 import tempfile
-import wave
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 HOME = Path.home()
@@ -45,6 +51,13 @@ WIDTH, HEIGHT, FPS = 1080, 1920, 30
 PAUSE_SECONDS = 0.25
 WORDS_PER_CAPTION = 3
 CODE_LINES = 22
+REPLICATE = "https://api.replicate.com/v1"
+REPLICATE_MODEL = "resemble-ai/chatterbox"
+# Replicate doesn't publish this model's price, so every second of GPU time is counted at
+# its dearest GPU's rate (an A100, $0.0014 a second): the cap can only stop early.
+REPLICATE_USD_PER_SECOND = 0.0014
+DEFAULT_MONTHLY_USD = 5.0
+SPEND = MEDIA / "studio-spend.json"
 
 
 @dataclass
@@ -100,6 +113,22 @@ def _spoken(text: str) -> str:
 
 
 def _narrate(lines: list[Line], work: Path) -> None:
+    if _voice_backend() == "replicate":
+        _narrate_replicate(lines, work)
+    else:
+        _narrate_local(lines, work)
+    for line in lines:
+        line.seconds = _duration(line.audio) + PAUSE_SECONDS
+
+
+def _voice_backend() -> str:
+    chosen = os.environ.get("ARI_STUDIO_VOICE") or _env_value("ARI_STUDIO_VOICE")
+    if chosen:
+        return chosen
+    return "replicate" if _replicate_token() else "local"
+
+
+def _narrate_local(lines: list[Line], work: Path) -> None:
     import torchaudio as ta
     from chatterbox.tts import ChatterboxTTS
 
@@ -112,7 +141,117 @@ def _narrate(lines: list[Line], work: Path) -> None:
         audio = model.generate(line.text, audio_prompt_path=sample) if sample else model.generate(line.text)
         line.audio = work / f"line{index:02d}.wav"
         ta.save(str(line.audio), audio, model.sr)
-        line.seconds = _duration(line.audio) + PAUSE_SECONDS
+
+
+# --- Narration on Replicate, under a monthly cap -------------------------------------
+
+
+class OverBudget(RuntimeError):
+    """This month's studio budget is spent; the video waits for next month or a higher cap."""
+
+
+def _narrate_replicate(lines: list[Line], work: Path) -> None:
+    _check_budget()
+    sample_url = _upload_sample(work) if VOICE_SAMPLE.exists() else None
+    for index, line in enumerate(lines):
+        _check_budget()
+        payload = {"prompt": line.text, "exaggeration": 0.5, "cfg_weight": 0.5, "temperature": 0.8}
+        if sample_url:
+            payload["audio_prompt"] = sample_url
+        output, seconds = _predict(payload)
+        _record_spend(seconds)
+        line.audio = work / f"line{index:02d}.wav"
+        with urllib.request.urlopen(output, timeout=60) as response:
+            line.audio.write_bytes(response.read())
+
+
+def _predict(payload: dict) -> tuple[str, float]:
+    """Run one prediction; returns the audio's URL and the GPU seconds it was billed for."""
+    prediction = _replicate("POST", f"/models/{REPLICATE_MODEL}/predictions", {"input": payload}, wait=True)
+    deadline = time.monotonic() + 300
+    while prediction.get("status") not in ("succeeded", "failed", "canceled"):
+        if time.monotonic() > deadline:
+            raise RuntimeError("Replicate took more than five minutes on one line.")
+        time.sleep(1.5)
+        prediction = _replicate("GET", f"/predictions/{prediction['id']}")
+    seconds = float((prediction.get("metrics") or {}).get("predict_time") or 0)
+    if prediction["status"] != "succeeded":
+        _record_spend(seconds)
+        raise RuntimeError(f"Replicate couldn't narrate a line: {prediction.get('error') or prediction['status']}")
+    output = prediction["output"]
+    return (output[0] if isinstance(output, list) else output), seconds
+
+
+def _upload_sample(work: Path) -> str:
+    """Alec's sample, made small (mono MP3) and uploaded once per video."""
+    small = work / "sample.mp3"
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(VOICE_SAMPLE), "-ac", "1",
+                    "-ar", "24000", "-b:a", "96k", str(small)], check=True)
+    boundary = "ari-studio-boundary"
+    body = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="content"; filename="sample.mp3"\r\n'
+        "Content-Type: audio/mpeg\r\n\r\n"
+    ).encode() + small.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+    request = urllib.request.Request(
+        f"{REPLICATE}/files", data=body, method="POST",
+        headers={"Authorization": f"Bearer {_replicate_token()}", "Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.loads(response.read())["urls"]["get"]
+
+
+def _replicate(method: str, path: str, body: dict | None = None, wait: bool = False) -> dict:
+    headers = {"Authorization": f"Bearer {_replicate_token()}", "Content-Type": "application/json"}
+    if wait:
+        headers["Prefer"] = "wait=60"
+    request = urllib.request.Request(
+        f"{REPLICATE}{path}", data=json.dumps(body).encode() if body is not None else None, method=method, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"Replicate said {error.code}: {error.read().decode()[:200]}") from error
+
+
+def _replicate_token() -> str | None:
+    return os.environ.get("REPLICATE_API_TOKEN") or _env_value("REPLICATE_API_TOKEN")
+
+
+def monthly_cap() -> float:
+    value = os.environ.get("ARI_STUDIO_MONTHLY_USD") or _env_value("ARI_STUDIO_MONTHLY_USD")
+    try:
+        return float(value) if value else DEFAULT_MONTHLY_USD
+    except ValueError:
+        return DEFAULT_MONTHLY_USD
+
+
+def spent_this_month(now: datetime | None = None) -> float:
+    month = (now or datetime.now(tz=UTC)).strftime("%Y-%m")
+    try:
+        ledger = json.loads(SPEND.read_text())
+    except (OSError, ValueError):
+        return 0.0
+    return float(ledger.get(month, {}).get("usd", 0.0))
+
+
+def _record_spend(seconds: float, now: datetime | None = None) -> None:
+    month = (now or datetime.now(tz=UTC)).strftime("%Y-%m")
+    try:
+        ledger = json.loads(SPEND.read_text())
+    except (OSError, ValueError):
+        ledger = {}
+    entry = ledger.setdefault(month, {"seconds": 0.0, "usd": 0.0})
+    entry["seconds"] = round(entry["seconds"] + seconds, 3)
+    entry["usd"] = round(entry["usd"] + seconds * REPLICATE_USD_PER_SECOND, 5)
+    SPEND.parent.mkdir(parents=True, exist_ok=True)
+    SPEND.write_text(json.dumps(ledger, indent=2))
+
+
+def _check_budget() -> None:
+    spent, cap = spent_this_month(), monthly_cap()
+    if spent >= cap:
+        raise OverBudget(f"The studio has used ${spent:.2f} of its ${cap:.2f} this month, so it stopped.")
 
 
 class _NoWatermark:
@@ -141,8 +280,12 @@ def _mps() -> bool:
 
 
 def _duration(path: Path) -> float:
-    with wave.open(str(path)) as audio:
-        return audio.getnframes() / audio.getframerate()
+    """Seconds of audio. ffprobe, because the model writes float WAVs Python's wave can't read."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
 
 
 # --- Shots and captions, drawn by Chrome ---------------------------------------------
@@ -315,6 +458,7 @@ def main() -> int:
     args = parser.parse_args()
     out = produce(args.day, args.script, keep=args.keep)
     voice = "Alec (cloned)" if VOICE_SAMPLE.exists() else "default voice"
+    print(f"Studio spend this month: ${spent_this_month():.2f} of ${monthly_cap():.2f}")
     if args.attach:
         subprocess.run(
             [str(ARI_CLI), "api", "content", "video", "--id", f"day-{args.day}", "--path", str(out), "--voice", voice],
