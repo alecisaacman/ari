@@ -54,8 +54,10 @@ commits only made possible. Flag invented numbers.
 then a reason to come back. Point out a beat that's out of order or doesn't earn its place.
 - Plain words: someone who doesn't code should follow it.
 
-Pass it only if there are no truth problems and it would hold attention. Give at most \
-five notes, each one specific and fixable, in plain words. Give it with send_review."""
+Pass it only if there are no truth problems and it would hold attention. truth_problems \
+lists only claims that are wrong or unsupported, one per problem; leave it empty when \
+there are none, and never put praise or "no problems" in it. Give at most five notes, \
+each one specific and fixable, in plain words. Give it with send_review."""
 
 SEND_REVIEW_TOOL: dict[str, Any] = {
     "name": "send_review",
