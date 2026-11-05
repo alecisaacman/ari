@@ -10,6 +10,8 @@ from .brain_cli import (
     handle_api_content_list,
     handle_api_content_status,
     handle_api_content_video,
+    handle_api_content_edit,
+    handle_api_content_review,
 )
 from .core.paths import DB_PATH
 from .core.pause import handle_pause, handle_paused, handle_resume
@@ -1882,6 +1884,16 @@ def _add_api_parsers(subparsers: argparse._SubParsersAction) -> None:
     content_status_parser.add_argument("--id", required=True, help="The item, e.g. day-19.")
     content_status_parser.add_argument("--status", required=True, help="draft, ready, posted, or skipped.")
     content_status_parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
+    content_edit_parser = content_subparsers.add_parser("edit", help="Replace one of an item's scripts.")
+    content_edit_parser.add_argument("--id", required=True, help="The item, e.g. day-19.")
+    content_edit_parser.add_argument("--script", type=int, default=1, help="Which script, from 1.")
+    content_edit_parser.add_argument("--hook", required=True)
+    content_edit_parser.add_argument("--beat", action="append", required=True, help="One per beat, in order.")
+    content_edit_parser.add_argument("--caption", default="")
+    content_edit_parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
+    content_review_parser = content_subparsers.add_parser("review", help="Have ARI review an item's scripts.")
+    content_review_parser.add_argument("--id", required=True, help="The item, e.g. day-19.")
+    content_review_parser.add_argument("--json", dest="as_json", action="store_true", help="Render JSON output.")
     content_video_parser = content_subparsers.add_parser("video", help="Attach a finished video to an item.")
     content_video_parser.add_argument("--id", required=True, help="The item, e.g. day-19.")
     content_video_parser.add_argument("--path", required=True, help="The finished MP4.")
@@ -2842,6 +2854,10 @@ def main(argv: list[str] | None = None, db_path: Path = DB_PATH) -> int:
             return handle_api_content_status(args, db_path=db_path)
         if args.api_command == "content" and args.api_content_command == "video":
             return handle_api_content_video(args, db_path=db_path)
+        if args.api_command == "content" and args.api_content_command == "edit":
+            return handle_api_content_edit(args, db_path=db_path)
+        if args.api_command == "content" and args.api_content_command == "review":
+            return handle_api_content_review(args, db_path=db_path)
         if args.api_command == "tasks" and args.api_tasks_command == "create":
             return handle_api_tasks_create(args, db_path=db_path)
         if args.api_command == "tasks" and args.api_tasks_command == "list":

@@ -17,7 +17,8 @@ from .conversation import Conversation
 from .core.env import load_local_env
 from .core.paths import DB_PATH
 from .content_production import move
-from .modules.self_documentation.library import attach_video, content_view
+from .modules.self_documentation.library import attach_video, content_view, edit_script
+from .script_review import review as review_script
 from .panel import HUB_CHANNEL, build_panel, recent_exchange
 from .self_review import write_with_model
 
@@ -83,5 +84,31 @@ def handle_api_content_video(args, db_path: Path = DB_PATH) -> int:  # type: ign
     if item is None:
         print(json.dumps({"error": "No such content item."}))
         return 1
+    print(json.dumps(item.to_dict()))
+    return 0
+
+
+def handle_api_content_edit(args, db_path: Path = DB_PATH) -> int:  # type: ignore[no-untyped-def]
+    try:
+        item = edit_script(args.id, args.script - 1, hook=args.hook, beats=args.beat, caption=args.caption or "",
+                           db_path=db_path)
+    except ValueError as error:
+        print(json.dumps({"error": str(error)}))
+        return 1
+    if item is None:
+        print(json.dumps({"error": "No such content item."}))
+        return 1
+    print(json.dumps(item.to_dict()))
+    return 0
+
+
+def handle_api_content_review(args, db_path: Path = DB_PATH) -> int:  # type: ignore[no-untyped-def]
+    load_local_env()
+    with _session_factory()() as session:
+        try:
+            item = review_script(session, args.id, db_path=db_path)
+        except ValueError as error:
+            print(json.dumps({"error": str(error)}))
+            return 1
     print(json.dumps(item.to_dict()))
     return 0

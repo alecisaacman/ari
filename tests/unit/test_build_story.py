@@ -67,7 +67,9 @@ def test_a_day_becomes_a_story_with_lessons_first_and_is_kept_as_a_note(tmp_path
 
     day = get_content_item("day-2", db_path=spine)
     assert day.status == "idea" and day.day_date == "2026-10-28" and day.hook == "I text my laptop and it obeys."
-    from ari_core.modules.self_documentation.library import attach_video
+    from ari_core.modules.self_documentation.library import attach_video, record_review
+
+    record_review("day-2", {"passed": True}, db_path=spine)
 
     for stage in ("script", "production", "ready", "posted"):
         if stage == "ready":

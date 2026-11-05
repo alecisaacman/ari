@@ -4,7 +4,10 @@ Each item goes through the content process in order:
 
     idea -> script -> production -> ready -> posted   (or skipped)
 
-An idea is what ARI wrote. A script is one Alec has checked and approved. Production is
+An idea is what ARI wrote, or Alec's own rewrite of it. Before an idea can become a
+script, ARI reviews it (ari_core.script_review): true to that day's commits, a hook
+that earns attention, a clear flow, the right length. Only a script whose current
+version passed review can be approved; editing it again needs a new review. Production is
 recording, voice, and editing. Ready means the finished piece (a short-form video, or
 long-form) exists and can be posted, so nothing reaches ready without production, and
 nothing is posted that wasn't ready. Items can step back one stage.
@@ -20,6 +23,7 @@ posted day look unposted.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -69,6 +73,8 @@ class ContentItem:
     content_format: str = FORMATS[0]
     # The finished video, once ARI's studio has made it: {"path", "voice", "producedAt"}.
     video: dict[str, Any] | None = None
+    # ARI's last review of the scripts: {"passed", "notes", "checks", "scriptHash", "reviewedAt"}.
+    review: dict[str, Any] | None = None
     created_at: str = field(default_factory=lambda: _now_iso())
     updated_at: str = field(default_factory=lambda: _now_iso())
     posted_at: str | None = None
@@ -100,6 +106,8 @@ class ContentItem:
             "scripts": list(self.scripts),
             "format": self.content_format,
             "video": self.video,
+            "review": self.review,
+            "reviewCurrent": review_is_current(self),
             "updatedAt": self.updated_at,
             "postedAt": self.posted_at,
         }
@@ -163,10 +171,67 @@ def set_status(item_id: str, status: str, *, db_path: Path = DB_PATH) -> Content
     if status != item.status and status not in MOVES[item.status]:
         allowed = " or ".join(MOVES[item.status])
         raise ValueError(f"{item.title} is at {item.status}; from there it can go to {allowed}.")
+    if item.status == "idea" and status == "script" and not _passed(item):
+        raise ValueError(f"{item.title} needs ARI's review to pass its current script before it's approved.")
     if status == "ready" and not _video_exists(item):
         raise ValueError(f"{item.title} has no finished video yet, so it can't be ready to post.")
     posted_at = item.posted_at if status == "posted" and item.posted_at else (_now_iso() if status == "posted" else None)
     return _put(_replace(item, status=status, posted_at=posted_at), db_path=db_path)
+
+
+EDITABLE = ("idea", "script")
+
+
+def edit_script(
+    item_id: str, index: int, *, hook: str, beats: list[str], caption: str, db_path: Path = DB_PATH
+) -> ContentItem | None:
+    """Replace one of an item's scripts with Alec's version. An approved script goes back
+    to idea, because the version that was approved is gone; it needs a new review."""
+    item = get_content_item(item_id, db_path=db_path)
+    if item is None:
+        return None
+    if item.status not in EDITABLE:
+        raise ValueError(f"{item.title} is in {item.status}; step it back to script to change the words.")
+    scripts = list(item.scripts)
+    if not 0 <= index < max(len(scripts), 1):
+        raise ValueError(f"{item.title} has no script {index + 1}.")
+    script = {
+        "hook": hook.strip(),
+        "beats": [beat.strip() for beat in beats if beat.strip()],
+        "caption": caption.strip(),
+        "by": "alec",
+    }
+    if not script["hook"] or not script["beats"]:
+        raise ValueError("A script needs a hook and at least one beat.")
+    if scripts:
+        scripts[index] = script
+    else:
+        scripts = [script]
+    return _put(
+        _replace(item, scripts=tuple(scripts), hook=scripts[0]["hook"], status="idea"),
+        db_path=db_path,
+    )
+
+
+def record_review(item_id: str, review: dict[str, Any], *, db_path: Path = DB_PATH) -> ContentItem | None:
+    """Keep ARI's review, tied to the exact scripts it read."""
+    item = get_content_item(item_id, db_path=db_path)
+    if item is None:
+        return None
+    review = {**review, "scriptHash": script_hash(item), "reviewedAt": _now_iso()}
+    return _put(_replace(item, review=review), db_path=db_path)
+
+
+def script_hash(item: ContentItem) -> str:
+    return hashlib.sha256(json.dumps(list(item.scripts), sort_keys=True).encode()).hexdigest()[:16]
+
+
+def review_is_current(item: ContentItem) -> bool:
+    return bool(item.review and item.review.get("scriptHash") == script_hash(item))
+
+
+def _passed(item: ContentItem) -> bool:
+    return review_is_current(item) and bool(item.review and item.review.get("passed"))
 
 
 def attach_video(item_id: str, path: str, *, voice: str, db_path: Path = DB_PATH) -> ContentItem | None:
@@ -210,6 +275,7 @@ def _put(item: ContentItem, *, db_path: Path) -> ContentItem:
         "commit_count": item.commit_count,
         "format": item.content_format,
         "video": item.video,
+        "review": item.review,
     }
     row = put_coordination_entity(
         CONTENT_ITEM_ENTITY,
@@ -247,6 +313,7 @@ def _from_row(row: Any) -> ContentItem:
         commit_count=int(payload.get("commit_count") or 0),
         content_format=payload.get("format") or FORMATS[0],
         video=payload.get("video"),
+        review=payload.get("review"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         posted_at=row["posted_at"],

@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID
 
 import anthropic
+from ari_state.models import MAX_DAILY_PRIORITIES
 from pydantic import ValidationError
 from ari_memory import OpenLoopRepository
 from ari_state import OpenLoop, OpenLoopKind, OpenLoopPriority, SkillKind
@@ -650,8 +651,8 @@ TOOLS: list[dict[str, Any]] = [
                 "priorities": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "maxItems": 3,
-                    "description": "At most three. If he names more, keep the three that matter most and say so.",
+                    "maxItems": MAX_DAILY_PRIORITIES,
+                    "description": "At most five. If he names more, keep the five that matter most and say so.",
                 },
                 "win_condition": {"type": "string"},
                 "stress": {"type": "integer", "minimum": 1, "maximum": 10},

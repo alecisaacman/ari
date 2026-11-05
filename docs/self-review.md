@@ -65,14 +65,24 @@ anything.
 
 Every day lives in ARI's content library (`ari_content_items`,
 `modules/self_documentation/library.py`), the one place content is kept. Each item goes
-through the content process in order: idea (ARI wrote it), script (I checked and
-approved it), production (recording, voice, editing), ready (the finished short-form or
+through the content process in order: idea (ARI wrote it, or I rewrote it), script
+(approved), production (recording, voice, editing), ready (the finished short-form or
 long-form piece exists), posted; or it's skipped. Nothing reaches ready without
 production and nothing is posted that wasn't ready; an item steps back one stage at a
 time. A day ARI writes starts as an idea, because hooks come from commits, which say
 what ARI could do, not what I did. The hub shows the library on its own page, /content;
 texting "what's in production" or "approve day 19's script" works through ARI's tools.
-The older self-documentation idea bank reads the library too. Rewriting a day keeps its
+The older self-documentation idea bank reads the library too.
+
+On the Content page I can rewrite any day's script (hook, beats, caption) and ask ARI
+to review it (`ari_core.script_review`). ARI checks it two ways: rules without a model
+(a hook of 16 words or fewer, three to six beats, about 20 to 75 seconds spoken, a
+caption that opens "Day N of building ARI") and an editor's read by the deeper model
+against that day's commits (every claim true to what was built, a hook that earns
+attention without overstating, a flow from problem to build to what changed, plain
+words). It passes the script or returns notes. "Approve script" only works on a
+version that passed; editing an approved script sends it back to idea for a new
+review, and scripts are locked once production starts. Rewriting a day keeps its
 stage. `python -m ari_core.build_story import-notes` moved the days first written as
 ARI notes into the library. `python -m ari_core.build_story backfill --repo
 PATH` writes every day so far. Only the writing calls a model, and only with the commits'
@@ -96,8 +106,11 @@ make the video in the background:
    Chatterbox's inaudible AI watermark off (`ARI_STUDIO_WATERMARK=1` turns it on);
    Replicate's hosted copy always adds it. Posts get the platform's own AI-generated
    label either way.
-2. **Footage** from that day: real diffs from the day's commits in the public
-   repository, title cards with the hook, and ARI's hummingbird. Nothing personal goes
+2. **Footage** chosen per beat: the diff of the day's commit that shares the most
+   words with the beat, with the matching lines lit; a big-number card for a beat
+   with a number; a re-created ARI message (labelled as one) for a beat about
+   texting; a lesson card; otherwise the beat's own words, never unrelated code.
+   The hook gets a title card and the sign-off ARI's hummingbird. Nothing personal goes
    in (no texts, calendar, or to-dos), because the video is public.
 3. **Captions** a few words at a time, timed across each spoken line.
 4. **The cut**: ffmpeg pushes slowly into each shot, lays the captions over it, and

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { setContentStatus } from "@/src/core/ari-spine/brain-bridge";
+import { ariErrorMessage, setContentStatus } from "@/src/core/ari-spine/brain-bridge";
 import { getUiSession } from "@/src/core/auth/guard";
 
 export const runtime = "nodejs";
@@ -19,6 +19,6 @@ export async function POST(request: NextRequest, context: { params: Promise<{ it
     }
     return NextResponse.json(await setContentStatus(itemId, body.status));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "ARI didn't answer." }, { status: 502 });
+    return NextResponse.json({ error: ariErrorMessage(error) }, { status: 400 });
   }
 }

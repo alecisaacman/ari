@@ -37,12 +37,11 @@ def test_daily_state_serializes_canonical_fields() -> None:
     assert payload["next_action"] == "Update migrations and tests."
 
 
-def test_daily_state_rejects_more_than_three_priorities() -> None:
+def test_daily_state_keeps_up_to_five_priorities() -> None:
+    five = ["one", "two", "three", "four", "five"]
+    assert DailyState(date=date(2026, 4, 10), priorities=five).priorities == five
     with pytest.raises(ValidationError):
-        DailyState(
-            date=date(2026, 4, 10),
-            priorities=["one", "two", "three", "four"],
-        )
+        DailyState(date=date(2026, 4, 10), priorities=[*five, "six"])
 
 
 def test_weekly_state_rejects_more_than_three_outcomes() -> None:

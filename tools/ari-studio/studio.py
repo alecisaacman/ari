@@ -9,9 +9,12 @@
    on Replicate's GPUs, paid per second (this Mac's 8 GB can't hold it), under a monthly
    cap (ARI_STUDIO_MONTHLY_USD, $5); ARI_STUDIO_VOICE=local runs it here instead, for
    when ARI moves to a bigger Mac.
-2. Footage: real material from that day. The code that changed comes from the public
-   repository's commits for the day; the cards and the sign-off show the hook and ARI's
-   hummingbird. Nothing personal (texts, calendar, to-dos) goes in: the video is public.
+2. Footage: each beat gets the shot that fits it. A beat about code gets the diff of the
+   commit that day that matches it best (by the words they share), with the matching
+   lines lit; a beat with a number in it gets the number, big; a beat about texting ARI
+   gets a re-created message bubble, labelled as such; a lesson gets a quote card. A beat
+   nothing matches gets its own words on a card instead of unrelated code. Nothing
+   personal (real texts, calendar, to-dos) goes in: the video is public.
 3. Captions: two to four words at a time, bold, timed across each spoken line.
 4. The cut: ffmpeg zooms slowly through each shot, lays the captions over it, and joins
    the shots with the narration into a 1080 x 1920 MP4 under ~/ARI/media/out.
@@ -93,14 +96,79 @@ def _plan(item: dict, script: dict, work: Path) -> list[Line]:
     day = item["dayNumber"]
     hook = script.get("hook") or item.get("hook") or ""
     beats = [beat for beat in script.get("beats") or [] if beat.strip()]
-    code = _code_shots(item.get("date"), len(beats), work)
+    commits = _day_commits(item.get("date"))
+    used: set[str] = set()
     lines = [Line(_spoken(hook), _card(work, "hook", day=day, big=hook, label=f"DAY {day} OF BUILDING ARI"))]
     for index, beat in enumerate(beats):
-        shot = code[index % len(code)] if code else _card(work, f"beat{index}", day=day, big=beat, label=f"DAY {day}")
-        lines.append(Line(_spoken(beat), shot))
+        lines.append(Line(_spoken(beat), _shot_for(beat, index, day, commits, used, work)))
     sign_off = f"Day {day} of building ARI. Follow along for day {day + 1}."
     lines.append(Line(sign_off, _card(work, "end", day=day, big=f"Day {day} of building ARI", label="FOLLOW ALONG", bird=True)))
     return lines
+
+
+# --- Choosing a shot for each beat ---------------------------------------------------
+
+STOPWORDS = set(
+    "a an and are as at be but by for from has have he his i in is it its me my now of on or so that the their them "
+    "then there this to was we were what when which who will with you your ari day not no one two get got just".split()
+)
+NUMBER = re.compile(r"(\d[\d,.]*\s*(?:%|x|k|gb|mb)?)(?:[- ]?(tokens?|hours?|minutes?|seconds?|days?|tests?|times|"
+                    r"commits?|dollars?|cents?|lines?|messages?|nights?))?", re.IGNORECASE)
+TEXTING = re.compile(r"\b(text(ed|s|ing)?|imessage|message[sd]?|replied|reply|chat)\b", re.IGNORECASE)
+LESSON = re.compile(r"^(the )?(lesson|takeaway|moral)\b", re.IGNORECASE)
+
+
+def _words(text: str) -> set[str]:
+    """The words that carry meaning, with a plain -s dropped so "reviews" matches "review"."""
+    words = set()
+    for word in re.findall(r"[a-z][a-z0-9]+", text.lower()):
+        if word in STOPWORDS or len(word) < 3:
+            continue
+        words.add(word[:-1] if len(word) > 4 and word.endswith("s") and not word.endswith("ss") else word)
+    return words
+
+
+def _shot_for(beat: str, index: int, day: int, commits: list[dict], used: set[str], work: Path) -> Path:
+    if LESSON.match(beat):
+        return _quote_card(work, f"beat{index}", beat)
+    number = NUMBER.search(beat)
+    if number and re.search(r"\d{2,}", number.group(1)):
+        unit = (number.group(2) or "").lower()
+        return _stat_card(work, f"beat{index}", number.group(1).strip(), unit, beat)
+    if TEXTING.search(beat):
+        return _bubble_card(work, f"beat{index}", beat)
+    match = _best_commit(beat, commits, used)
+    if match is not None:
+        used.add(match["sha"])
+        shot = _diff_card(work, f"beat{index}", match, _words(beat))
+        if shot is not None:
+            return shot
+    return _card(work, f"beat{index}", day=day, big=beat, label=f"DAY {day}")
+
+
+def _best_commit(beat: str, commits: list[dict], used: set[str]) -> dict | None:
+    """The day's commit that shares the most words with the beat; None if none share any."""
+    wanted = _words(beat)
+    scored = [
+        (len(wanted & _words(f"{commit['subject']} {commit['body']}")), commit)
+        for commit in commits
+        if commit["sha"] not in used
+    ]
+    scored = [entry for entry in scored if entry[0] > 0]
+    return max(scored, key=lambda entry: entry[0])[1] if scored else None
+
+
+def _day_commits(date: str | None) -> list[dict]:
+    repo = _source_repo()
+    if repo is None or not date:
+        return []
+    log = _git(repo, "log", "--all", f"--since={date} 00:00", f"--until={date} 23:59:59", "--format=%H%x1f%s%x1f%b%x1e")
+    commits = []
+    for record in log.split("\x1e"):
+        parts = record.strip().split("\x1f")
+        if len(parts) == 3:
+            commits.append({"sha": parts[0], "subject": parts[1], "body": parts[2], "repo": repo})
+    return commits
 
 
 def _spoken(text: str) -> str:
@@ -309,31 +377,64 @@ body {{ background: radial-gradient(120% 80% at 50% 20%, #1d2030 0%, #0c0d12 60%
     return _render(work, name, page)
 
 
-def _code_shots(date: str | None, count: int, work: Path) -> list[Path]:
-    """Real diffs from the day's commits in ARI's public repository."""
-    repo = _source_repo()
-    if repo is None or not date or count == 0:
-        return []
-    shas = _git(repo, "log", "--all", f"--since={date} 00:00", f"--until={date} 23:59:59", "--format=%H %s").splitlines()
-    shots = []
-    for index, row in enumerate(shas[:count]):
-        sha, _, subject = row.partition(" ")
-        diff = _git(repo, "show", "--format=", "--unified=1", "--no-color", sha, "--", "*.py", "*.ts", "*.tsx", "*.swift")
-        added = [line for line in diff.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
-        if not added:
-            continue
-        body = "".join(
-            f'<div class="{"add" if line.startswith("+") else "del"}">{html.escape(line[:58])}</div>'
-            for line in added[:CODE_LINES]
-        )
-        page = f"""<style>{STYLE}
+def _diff_card(work: Path, name: str, commit: dict, wanted: set[str]) -> Path | None:
+    """The commit's diff, starting near the lines that share words with the beat, which are lit."""
+    diff = _git(commit["repo"], "show", "--format=", "--unified=1", "--no-color", commit["sha"], "--",
+                "*.py", "*.ts", "*.tsx", "*.swift")
+    changed = [line for line in diff.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
+    if not changed:
+        return None
+    hits = [i for i, line in enumerate(changed) if _words(line) & wanted]
+    start = max(0, (hits[0] if hits else 0) - 4)
+    window = changed[start : start + CODE_LINES]
+    body = "".join(
+        f'<div class="{"add" if line.startswith("+") else "del"}{" hit" if _words(line) & wanted else ""}">'
+        f"{html.escape(line[:58])}</div>"
+        for line in window
+    )
+    page = f"""<style>{STYLE}
 body {{ background:#0c0d12; display:flex; flex-direction:column; justify-content:center; padding:0 64px; }}
 .subject {{ color:#a2a7b4; font-size:38px; margin-bottom:40px; line-height:1.3; }}
 .code {{ background:#151821; border-radius:28px; padding:44px 40px; font: 30px/1.55 ui-monospace, Menlo, monospace; }}
 .add {{ color:#7ee2b8; white-space:pre; overflow:hidden; }} .del {{ color:#ff8a8a; white-space:pre; overflow:hidden; opacity:.7 }}
-</style><div class="subject">{html.escape(subject)}</div><div class="code">{body}</div>"""
-        shots.append(_render(work, f"code{index}", page))
-    return shots
+.hit {{ background: rgba(255,95,162,.18); border-radius:8px; margin: 0 -12px; padding: 0 12px; }}
+</style><div class="subject">{html.escape(commit["subject"])}</div><div class="code">{body}</div>"""
+    return _render(work, name, page)
+
+
+def _stat_card(work: Path, name: str, number: str, unit: str, beat: str) -> Path:
+    page = f"""<style>{STYLE}
+body {{ background: radial-gradient(110% 70% at 50% 30%, #2a1020 0%, #0c0d12 65%); display:flex; flex-direction:column;
+  justify-content:center; padding: 0 96px; }}
+.number {{ color:#ff5fa2; font-size:220px; font-weight:900; letter-spacing:-6px; line-height:1; white-space:nowrap; }}
+.unit {{ color:#ff5fa2; font-size:64px; font-weight:700; letter-spacing:4px; text-transform:uppercase; margin-top:12px; }}
+.line {{ margin-top:56px; font-size:60px; font-weight:700; line-height:1.15; }}
+</style><div class="number">{html.escape(number)}</div><div class="unit">{html.escape(unit)}</div>
+<div class="line">{html.escape(beat)}</div>"""
+    return _render(work, name, page)
+
+
+def _bubble_card(work: Path, name: str, beat: str) -> Path:
+    """A re-created message from ARI, labelled as a re-creation: never a real text."""
+    page = f"""<style>{STYLE}
+body {{ background:#0c0d12; display:flex; flex-direction:column; justify-content:center; padding: 0 72px; }}
+.who {{ color:#a2a7b4; font-size:34px; margin: 0 0 18px 12px; }}
+.bubble {{ align-self:flex-start; max-width:860px; background:#26272d; border-radius:48px 48px 48px 14px;
+  padding:40px 48px; font-size:58px; line-height:1.25; font-weight:500; }}
+.note {{ margin-top:40px; color:#6f7280; font-size:28px; letter-spacing:2px; text-transform:uppercase; }}
+</style><div class="who">ARI</div><div class="bubble">{html.escape(beat)}</div><div class="note">Re-created message</div>"""
+    return _render(work, name, page)
+
+
+def _quote_card(work: Path, name: str, beat: str) -> Path:
+    text = LESSON.sub("", beat).lstrip(" :").strip() or beat
+    page = f"""<style>{STYLE}
+body {{ background: linear-gradient(160deg, #10241f 0%, #0c0d12 60%); display:flex; flex-direction:column;
+  justify-content:center; padding: 0 96px; }}
+.label {{ color:#5fd3b8; font-size:40px; font-weight:700; letter-spacing:6px; }}
+.quote {{ margin-top:36px; font-size:86px; font-weight:800; line-height:1.1; }}
+</style><div class="label">THE LESSON</div><div class="quote">{html.escape(text[0].upper() + text[1:])}</div>"""
+    return _render(work, name, page)
 
 
 def _captions(lines: list[Line], work: Path) -> list[tuple[Path, float, float]]:

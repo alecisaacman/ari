@@ -1,4 +1,4 @@
-import { isSubprocessBridgeMode, requestAriApi, runCanonicalJsonCommand } from "@/src/core/ari-spine/api-client";
+import { AriApiError, isSubprocessBridgeMode, requestAriApi, runCanonicalJsonCommand } from "@/src/core/ari-spine/api-client";
 
 // The hub has no brain of its own. It shows ARI's control panel and carries
 // Alec's messages to ARI's one brain, the same one iMessage reaches.
@@ -74,7 +74,17 @@ export async function sendToAri(text: string): Promise<BrainReply> {
   return requestAriApi<BrainReply>("POST", "/brain/messages", { body: { text }, timeoutMs: REPLY_TIMEOUT_MS });
 }
 
-export type ContentScript = { hook: string; beats: string[]; caption: string };
+export type ContentScript = { hook: string; beats: string[]; caption: string; by?: string };
+
+export type ScriptReview = {
+  passed: boolean;
+  truth: string[];
+  rules: string[];
+  notes: string[];
+  hookScore?: number;
+  flowScore?: number;
+  reviewedAt: string;
+};
 
 export type ContentItem = {
   id: string;
@@ -90,6 +100,9 @@ export type ContentItem = {
   format: string;
   // The finished video, once ARI's studio made it.
   video: { path: string; voice: string; producedAt: string } | null;
+  // ARI's last review of the scripts, and whether it read the current version.
+  review: ScriptReview | null;
+  reviewCurrent: boolean;
   producing?: boolean;
   updatedAt: string;
   postedAt: string | null;
@@ -119,4 +132,37 @@ export async function setContentStatus(itemId: string, status: string): Promise<
     body: { status },
     timeoutMs: PANEL_TIMEOUT_MS,
   });
+}
+
+export async function editContentScript(itemId: string, number: number, script: ContentScript): Promise<ContentItem> {
+  if (isSubprocessBridgeMode()) {
+    const beats = script.beats.flatMap((beat) => ["--beat", beat]);
+    return runCanonicalJsonCommand<ContentItem>([
+      "api", "content", "edit", "--id", itemId, "--script", String(number), "--hook", script.hook, ...beats,
+      "--caption", script.caption, "--json",
+    ]);
+  }
+  return requestAriApi<ContentItem>("PUT", `/content/${encodeURIComponent(itemId)}/scripts/${number}`, {
+    body: { hook: script.hook, beats: script.beats, caption: script.caption },
+    timeoutMs: PANEL_TIMEOUT_MS,
+  });
+}
+
+// ARI's editor reads the script against that day's commits; it takes a model call.
+export async function reviewContent(itemId: string): Promise<ContentItem> {
+  if (isSubprocessBridgeMode()) {
+    return runCanonicalJsonCommand<ContentItem>(["api", "content", "review", "--id", itemId, "--json"]);
+  }
+  return requestAriApi<ContentItem>("POST", `/content/${encodeURIComponent(itemId)}/review`, { timeoutMs: REPLY_TIMEOUT_MS });
+}
+
+// What ARI said went wrong, in its own words when it gave some.
+export function ariErrorMessage(error: unknown, fallback = "ARI didn't answer."): string {
+  if (error instanceof AriApiError) {
+    const detail = (error.details as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+  }
+  return error instanceof Error ? error.message : fallback;
 }

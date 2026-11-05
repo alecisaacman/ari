@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 
-import type { ContentItem, ContentLibrary } from "@/src/core/ari-spine/brain-bridge";
+import type { ContentItem, ContentLibrary, ContentScript, ScriptReview } from "@/src/core/ari-spine/brain-bridge";
 
 // The content process, in order. Skipped sits outside it.
 const PIPELINE = ["idea", "script", "production", "ready", "posted"] as const;
@@ -46,26 +46,31 @@ export function Content({ library }: { library: ContentLibrary }) {
   }, [items]);
   const shown = filter === "all" ? items.filter((item) => item.status !== "skipped") : items.filter((item) => item.status === filter);
 
-  async function move(item: ContentItem, to: string) {
+  // Every change goes through ARI, which answers with the item as it now stands.
+  async function call(item: ContentItem, url: string, init: RequestInit): Promise<boolean> {
     setBusy(item.id);
     setError(null);
     try {
-      const response = await fetch(`/api/content/${encodeURIComponent(item.id)}/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: to }),
-      });
+      const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json" } });
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error || "ARI didn't save that.");
       }
       setItems((current) => current.map((entry) => (entry.id === item.id ? (payload as ContentItem) : entry)));
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "ARI didn't save that.");
+      return false;
     } finally {
       setBusy(null);
     }
   }
+
+  const base = (item: ContentItem) => `/api/content/${encodeURIComponent(item.id)}`;
+  const move = (item: ContentItem, to: string) => call(item, `${base(item)}/status`, { method: "POST", body: JSON.stringify({ status: to }) });
+  const save = (item: ContentItem, number: number, script: ContentScript) =>
+    call(item, `${base(item)}/scripts/${number}`, { method: "PUT", body: JSON.stringify(script) });
+  const review = (item: ContentItem) => call(item, `${base(item)}/review`, { method: "POST" });
 
   return (
     <div className="content">
@@ -118,6 +123,8 @@ export function Content({ library }: { library: ContentLibrary }) {
                 moves={library.moves[item.status] ?? []}
                 busy={busy === item.id}
                 onMove={(to) => move(item, to)}
+                onSave={(number, script) => save(item, number, script)}
+                onReview={() => review(item)}
               />
             </li>
           ))}
@@ -134,13 +141,20 @@ function ContentCard({
   moves,
   busy,
   onMove,
+  onSave,
+  onReview,
 }: {
   item: ContentItem;
   moves: string[];
   busy: boolean;
   onMove: (to: string) => void;
+  onSave: (number: number, script: ContentScript) => Promise<boolean>;
+  onReview: () => Promise<boolean>;
 }) {
   const step = PIPELINE.indexOf(item.status as (typeof PIPELINE)[number]);
+  const [editing, setEditing] = useState<number | null>(null);
+  const editable = item.status === "idea" || item.status === "script";
+  const approved = Boolean(item.reviewCurrent && item.review?.passed);
   return (
     <article className={`content-card is-${item.status}`}>
       <details>
@@ -172,17 +186,43 @@ function ContentCard({
           ) : item.status === "production" ? (
             <p className="hub-quiet">ARI&apos;s studio is making this video. It shows up here when it&apos;s done.</p>
           ) : null}
-          {item.scripts.map((script, index) => (
-            <section key={index} className="content-script" aria-label={`Video ${index + 1}`}>
-              {index > 0 ? <p className="content-alt">{script.hook}</p> : null}
-              <ol className="content-beats">
-                {script.beats.map((beat, beatIndex) => (
-                  <li key={beatIndex}>{beat}</li>
-                ))}
-              </ol>
-              <Caption text={script.caption} />
-            </section>
-          ))}
+          {item.scripts.map((script, index) =>
+            editing === index ? (
+              <ScriptEditor
+                key={index}
+                script={script}
+                busy={busy}
+                onCancel={() => setEditing(null)}
+                onSave={async (changed) => {
+                  if (await onSave(index + 1, changed)) {
+                    setEditing(null);
+                  }
+                }}
+              />
+            ) : (
+              <section key={index} className="content-script" aria-label={`Video ${index + 1}`}>
+                {index > 0 || script.by === "alec" ? (
+                  <p className="content-alt">
+                    {script.hook}
+                    {script.by === "alec" ? <span className="content-by">Your version</span> : null}
+                  </p>
+                ) : null}
+                <ol className="content-beats">
+                  {script.beats.map((beat, beatIndex) => (
+                    <li key={beatIndex}>{beat}</li>
+                  ))}
+                </ol>
+                <Caption text={script.caption} />
+                {editable ? (
+                  <button type="button" className="content-edit" disabled={busy} onClick={() => setEditing(index)}>
+                    Edit script
+                  </button>
+                ) : null}
+              </section>
+            ),
+          )}
+
+          {editable ? <ReviewPanel review={item.review} current={item.reviewCurrent} busy={busy} onReview={onReview} /> : null}
 
           {item.lessons.length ? (
             <section className="content-lessons" aria-label="What ARI learned">
@@ -203,14 +243,126 @@ function ContentCard({
       </details>
 
       <div className="content-actions">
-        {moves.map((to, index) => (
-          <button key={to} type="button" className={index === 0 ? "is-primary" : ""} disabled={busy} onClick={() => onMove(to)}>
-            {moveLabel(item.status, to)}
-          </button>
-        ))}
+        {moves.map((to, index) => {
+          // Approving waits for ARI's review to pass the script as it stands.
+          const blocked = item.status === "idea" && to === "script" && !approved;
+          return (
+            <button
+              key={to}
+              type="button"
+              className={index === 0 ? "is-primary" : ""}
+              disabled={busy || blocked}
+              title={blocked ? "Ask ARI to review the script first" : undefined}
+              onClick={() => onMove(to)}
+            >
+              {moveLabel(item.status, to)}
+            </button>
+          );
+        })}
+        {item.status === "idea" && !approved ? <span className="hub-quiet">Open the day and ask ARI to review it first.</span> : null}
         {item.postedAt && item.status === "posted" ? <span className="hub-quiet">Posted {shortDate(item.postedAt)}</span> : null}
       </div>
     </article>
+  );
+}
+
+function ScriptEditor({
+  script,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  script: ContentScript;
+  busy: boolean;
+  onSave: (script: ContentScript) => void;
+  onCancel: () => void;
+}) {
+  const [hook, setHook] = useState(script.hook);
+  const [beats, setBeats] = useState(script.beats.join("\n"));
+  const [caption, setCaption] = useState(script.caption);
+  const id = useId();
+  const lines = beats.split("\n").map((beat) => beat.trim()).filter(Boolean);
+  const seconds = Math.round((hook.split(/\s+/).filter(Boolean).length + lines.join(" ").split(/\s+/).filter(Boolean).length + 9) / 2.5);
+  return (
+    <form
+      className="content-editor"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave({ hook, beats: lines, caption });
+      }}
+    >
+      <label htmlFor={`${id}-hook`}>Hook</label>
+      <input id={`${id}-hook`} value={hook} onChange={(event) => setHook(event.target.value)} />
+      <label htmlFor={`${id}-beats`}>Beats, one per line</label>
+      <textarea id={`${id}-beats`} rows={Math.max(4, lines.length + 1)} value={beats} onChange={(event) => setBeats(event.target.value)} />
+      <label htmlFor={`${id}-caption`}>Caption</label>
+      <textarea id={`${id}-caption`} rows={3} value={caption} onChange={(event) => setCaption(event.target.value)} />
+      <p className="hub-quiet">
+        {lines.length} beats, about {seconds} seconds spoken. Saving sends it back to idea for ARI to review.
+      </p>
+      <div className="content-actions">
+        <button type="submit" className="is-primary" disabled={busy || !hook.trim() || !lines.length}>
+          Save
+        </button>
+        <button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ReviewPanel({
+  review,
+  current,
+  busy,
+  onReview,
+}: {
+  review: ScriptReview | null;
+  current: boolean;
+  busy: boolean;
+  onReview: () => Promise<boolean>;
+}) {
+  const [asking, setAsking] = useState(false);
+  async function ask() {
+    setAsking(true);
+    await onReview();
+    setAsking(false);
+  }
+  return (
+    <section className={`content-review ${review && current ? (review.passed ? "is-passed" : "is-returned") : ""}`} aria-label="ARI's review">
+      <h3>ARI&apos;s review</h3>
+      {!review ? (
+        <p className="hub-quiet">Not reviewed yet. ARI checks it against that day&apos;s commits, the hook, the flow, and the length.</p>
+      ) : !current ? (
+        <p className="hub-quiet">You changed the script since ARI read it. Ask again.</p>
+      ) : (
+        <>
+          <p className="content-verdict">
+            {review.passed ? "Passed. Ready to approve." : "Returned with notes."}
+            {review.hookScore ? <span> Hook {review.hookScore}/5 · Flow {review.flowScore}/5</span> : null}
+          </p>
+          {review.truth.length + review.rules.length + review.notes.length ? (
+            <ul>
+              {review.truth.map((note, index) => (
+                <li key={`t${index}`} className="is-truth">
+                  Not true to the day: {note}
+                </li>
+              ))}
+              {review.rules.map((note, index) => (
+                <li key={`r${index}`}>{note}</li>
+              ))}
+              {review.notes.map((note, index) => (
+                <li key={`n${index}`}>{note}</li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      )}
+      <button type="button" className="content-edit" disabled={busy || asking} onClick={ask}>
+        {asking ? "ARI is reading it…" : review && current ? "Review again" : "Ask ARI to review"}
+      </button>
+    </section>
   );
 }
 

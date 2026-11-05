@@ -689,6 +689,109 @@ body:has(.login-shell) {
   background: #000;
 }
 
+.content-by {
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--tile-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: 2px;
+}
+
+.content-edit {
+  align-self: flex-start;
+  margin-top: 12px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #2a2b31;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: 500 13px var(--font);
+  cursor: pointer;
+}
+
+.content-edit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.content-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.content-editor label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.content-editor input,
+.content-editor textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #2a2b31;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 var(--font);
+  resize: vertical;
+}
+
+.content-editor input:focus,
+.content-editor textarea:focus {
+  border-color: rgba(127, 178, 255, 0.6);
+  outline: none;
+}
+
+.content-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--tile-2);
+}
+
+.content-review.is-passed {
+  box-shadow: inset 0 0 0 1px rgba(95, 208, 165, 0.45);
+}
+
+.content-review.is-returned {
+  box-shadow: inset 0 0 0 1px rgba(240, 179, 90, 0.45);
+}
+
+.content-review h3 {
+  margin: 0;
+}
+
+.content-verdict {
+  font-weight: 500;
+}
+
+.content-verdict span {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.content-review ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.content-review li.is-truth {
+  color: var(--hot);
+}
+
 .content-script + .content-script {
   padding-top: 18px;
   border-top: 1px dashed var(--line);

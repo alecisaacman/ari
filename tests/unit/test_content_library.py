@@ -27,8 +27,16 @@ def _finished_video(spine: Path, item_id: str, folder: Path) -> None:
     attach_video(item_id, str(video), voice="Alec (cloned)", db_path=spine)
 
 
+def _passed_review(spine: Path, item_id: str) -> None:
+    from ari_core.modules.self_documentation.library import record_review
+
+    record_review(item_id, {"passed": True, "notes": []}, db_path=spine)
+
+
 def _walk(spine: Path, item_id: str, *stages: str) -> None:
     for stage in stages:
+        if stage == "script":
+            _passed_review(spine, item_id)
         set_status(item_id, stage, db_path=spine)
 
 
@@ -60,6 +68,7 @@ def test_days_saved_as_drafts_before_production_existed_read_as_ideas(tmp_path: 
     row = dict(get_coordination_entity("content_item", "day-16", db_path=spine))
     put_coordination_entity("content_item", {**row, "status": "draft"}, db_path=spine)
     assert list_content_items(db_path=spine)[0].status == "idea"
+    _passed_review(spine, "day-16")
     assert set_status("day-16", "script", db_path=spine).status == "script"
 
 
@@ -84,6 +93,8 @@ def test_ari_lists_and_marks_days_by_text(tmp_path: Path) -> None:
 
     dispatch = make_tool_dispatcher(no_session, save_for_later=lambda link, note: None, spine_db_path=spine)
     assert dispatch("get_content_library", {})["content"][0]["status"] == "idea"
+    assert "needs ARI's review" in dispatch("set_content_status", {"day": 16, "status": "script"})["error"]
+    _passed_review(spine, "day-16")
     assert dispatch("set_content_status", {"day": 16, "status": "script"})["updated"]["status"] == "script"
     assert "can go to production" in dispatch("set_content_status", {"day": 16, "status": "posted"})["error"]
     assert "no Day 3" in dispatch("set_content_status", {"day": 3, "status": "script"})["error"]
@@ -106,6 +117,7 @@ def test_the_api_lists_the_library_and_moves_items(tmp_path: Path) -> None:
     view = client.get("/content").json()
     assert view["counts"]["idea"] == 1 and view["items"][0]["scripts"][0]["beats"] == ["Crash", "Fix"]
     assert view["moves"]["production"] == ["ready", "script"]
+    _passed_review(spine, "day-16")
     assert client.post("/content/day-16/status", json={"status": "script"}).json()["status"] == "script"
     assert client.post("/content/day-16/status", json={"status": "posted"}).status_code == 400
     assert client.post("/content/day-16/status", json={"status": "published"}).status_code == 400
@@ -135,6 +147,7 @@ def test_starting_production_starts_the_studio_once(tmp_path: Path, monkeypatch)
     started: list[list[str]] = []
     monkeypatch.setattr(content_production, "studio_command", lambda item: ["studio", "produce", "--day", str(item.day_number)])
 
+    _passed_review(spine, "day-16")
     set_status("day-16", "script", db_path=spine)
     item, producing = content_production.move("day-16", "production", db_path=spine, spawn=started.append)
     assert producing and item.status == "production" and started == [["studio", "produce", "--day", "16"]]

@@ -344,7 +344,11 @@ def test_a_tool_call_the_records_reject_goes_back_to_the_model_instead_of_failin
 
     factory = create_session_factory(create_engine(f"sqlite+pysqlite:///{tmp_path / 'ari.db'}"))
     dispatch = make_tool_dispatcher(factory, save_for_later=lambda link, note: None, spine_db_path=tmp_path / "s.db")
-    result = dispatch("set_daily_state", {"priorities": ["Tutoring", "Schoolwork", "GET DONE", "Building ARI"]})
+    six = ["Tutoring", "Schoolwork", "GET DONE", "Building ARI", "Gym", "Errands"]
+    result = dispatch("set_daily_state", {"priorities": six})
     assert "wasn't saved" in result["error"] and "priorities" in result["error"]
+    assert "updated" in dispatch("set_daily_state", {"priorities": six[:5]}) or "error" not in dispatch(
+        "set_daily_state", {"priorities": six[:5]}
+    )
     schema = next(tool for tool in TOOLS if tool["name"] == "set_daily_state")["input_schema"]
-    assert schema["properties"]["priorities"]["maxItems"] == 3
+    assert schema["properties"]["priorities"]["maxItems"] == 5

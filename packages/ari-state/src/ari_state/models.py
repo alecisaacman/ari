@@ -27,6 +27,9 @@ from ari_state.enums import (
     VerificationOutcome,
 )
 
+# How many priorities Alec keeps for a day.
+MAX_DAILY_PRIORITIES = 5
+
 
 class ARIModel(BaseModel):
     model_config = ConfigDict(use_enum_values=True, extra="forbid")
@@ -37,7 +40,7 @@ ARIId = UUID | str
 
 class DailyState(ARIModel):
     date: date
-    priorities: list[str] = Field(default_factory=list, max_length=3)
+    priorities: list[str] = Field(default_factory=list, max_length=MAX_DAILY_PRIORITIES)
     win_condition: str = ""
     movement: bool | None = None
     stress: int | None = Field(default=None, ge=1, le=10)

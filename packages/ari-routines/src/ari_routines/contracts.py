@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from ari_state import DailyState, Event, EventCategory, WeeklyState
+from ari_state.models import MAX_DAILY_PRIORITIES
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -12,7 +13,7 @@ class RoutineInput(BaseModel):
 
 
 class DailyCheckInput(RoutineInput):
-    priorities: list[str] = Field(default_factory=list, max_length=3)
+    priorities: list[str] = Field(default_factory=list, max_length=MAX_DAILY_PRIORITIES)
     win_condition: str = ""
     movement: bool | None = None
     stress: int | None = Field(default=None, ge=1, le=10)
