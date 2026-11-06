@@ -177,6 +177,8 @@ class ImessageGateway:
             cursor, history = state.cursor, list(state.messages)
             if any(row.rowid > cursor for row in rows):
                 self._update_pet(thinking=True)
+            # What piled up while ARI couldn't run, for the gap notice.
+            self._waiting = sum(1 for row in rows if row.rowid > cursor and row.text and not row.is_tapback)
             for row in (row for row in rows if row.rowid > cursor):
                 try:
                     history = self._handle(row, history, report)
@@ -457,9 +459,27 @@ class ImessageGateway:
                 f"Sorry for the slow reply. You sent this at {sent}, and I couldn't see it until now: "
                 f"I wasn't running from {_clock(previous)} to {_clock(now)}, most likely because your Mac was asleep."
             )
+            catch_up = self._catch_up()
+            if catch_up:
+                notice += f" {catch_up}"
         else:
             notice = f"Sorry for the slow reply. You sent this at {sent}, and I'm only answering it now."
         self._send(handle, notice, report)
+
+    def _catch_up(self) -> str:
+        """What ARI is doing about the gap, counted from its records: messages waiting, reminders missed."""
+        waiting = getattr(self, "_waiting", 0)
+        try:
+            with self.session_factory() as session:
+                missed = sum(1 for reminder in due_reminders(session, now=self.now()) if not reminder.apple_id)
+        except Exception:  # noqa: BLE001 - the notice still goes out without the count
+            missed = 0
+        parts = []
+        if waiting > 1:
+            parts.append(f"answering your {waiting} messages in order")
+        if missed:
+            parts.append(f"sending {_count(missed, 'reminder')} that came due while I was off")
+        return f"Catching up now: {' and '.join(parts)}." if parts else ""
 
     def _read_heartbeat(self) -> datetime | None:
         try:
@@ -560,6 +580,10 @@ PHONE_TEXT = {
 
 def _phone_text(alert: AlertRow) -> str:
     return PHONE_TEXT.get(alert.title) or f"{alert.title}. {alert.message or alert.reason}".strip()
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
 def _clock(moment: datetime) -> str:

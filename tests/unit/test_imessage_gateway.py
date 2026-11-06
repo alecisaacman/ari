@@ -574,6 +574,38 @@ def test_late_reply_explains_the_downtime_from_recorded_facts(settings, session_
     assert brain.texts == ["What's on my plate"]
 
 
+def test_gap_notice_says_what_ari_is_catching_up_on(settings, session_factory) -> None:
+    from ari_core.reminders import set_reminder
+
+    now = datetime(2026, 10, 28, 4, 57, tzinfo=UTC)
+    with session_factory() as session:
+        set_reminder(session, text="Stretch.", remind_at=now - timedelta(minutes=30), now=now - timedelta(hours=1))
+    brain = FakeBrain(reply="Done.")
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=brain, messages=messages, now=lambda: now)
+    seed(gateway, settings)
+    # ARI slept from 4:10; Alec texted twice while it was off, and a reminder came due.
+    (settings.state_dir / "last-run").write_text((now - timedelta(minutes=47)).isoformat())
+    settings.dump_path.write_text(
+        "\n".join([
+            f"1|{b'old'.hex()}||0|{SELF}|0",
+            dump_line(2, "add milk", now - timedelta(minutes=20)),
+            dump_line(3, "and eggs", now - timedelta(minutes=19)),
+        ]) + "\n"
+    )
+
+    gateway.poll_once()
+
+    sent = [body for _, body in messages.sent]
+    notice = sent[0]
+    assert "I wasn't running from" in notice
+    assert "Catching up now: answering your 2 messages in order and sending 1 reminder that came due" in notice
+    # One notice for the whole gap, then the replies, then the reminder it promised.
+    assert sum("slow reply" in body for body in sent) == 1
+    assert sent[-1].startswith("Reminder: Stretch.")
+    assert brain.texts == ["add milk", "and eggs"]
+
+
 def test_prompt_reply_has_no_notice(settings, session_factory) -> None:
     now = datetime(2026, 10, 28, 4, 57, tzinfo=UTC)
     messages = FakeMessages()

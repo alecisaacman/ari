@@ -164,7 +164,9 @@ It does call the model.
 If Anthropic credits run out or the API key is rejected, ARI answers each message
 with a plain explanation, written by its code with no model call, and does not
 retry. A reply more than three minutes late is preceded by a notice of when the
-message was sent and when ARI was last running.
+message was sent and when ARI was last running, and of what ARI is catching up
+on: how many messages it is answering in order and how many reminders came due
+while it was off. One notice covers the whole gap.
 
 ## Limits
 
