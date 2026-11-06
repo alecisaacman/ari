@@ -20,10 +20,12 @@ class FakeShell:
         self.claude_result = claude or {"is_error": False, "result": "Added the thing, with tests."}
         self.claude_code, self.commits, self.tests = claude_code, commits, tests
         self.calls: list[list[str]] = []
+        self.envs: dict[str, dict | None] = {}
 
-    def __call__(self, argv, *, cwd=None, timeout=600):
+    def __call__(self, argv, *, cwd=None, timeout=600, env=None):
         argv = list(argv)
         self.calls.append(argv)
+        self.envs[argv[0]] = env
         if argv[0].endswith("claude"):
             return subprocess.CompletedProcess(argv, self.claude_code, json.dumps(self.claude_result), "")
         if argv[0] == "uv":
@@ -135,3 +137,30 @@ def test_a_build_left_building_by_a_session_that_died_is_tried_again(tmp_path: P
         builder.claim(session, now=NOW)
         assert builder.claim(session, now=NOW + timedelta(hours=1)) == "nothing approved"
         assert builder.claim(session, now=NOW + timedelta(hours=4))["id"] == str(build_id)
+
+
+def test_the_builders_claude_session_uses_alecs_plan_not_api_credits(tmp_path: Path, monkeypatch) -> None:
+    from ari_core.builder import USER_BIN, claude_env
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-test")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "token-test")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("HOME", str(Path.home()))
+
+    env = claude_env()
+
+    assert "ANTHROPIC_API_KEY" not in env and "ANTHROPIC_AUTH_TOKEN" not in env
+    assert env["PATH"].split(":")[0] == str(USER_BIN)  # launchd's PATH has no uv
+    assert env["HOME"] == str(Path.home())  # the plan login is found through HOME
+
+
+def test_the_builder_hands_claude_the_plan_environment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-test")
+    shell = FakeShell()
+    builder = Builder(source=tmp_path, builds_dir=tmp_path / "builds", state_path=tmp_path / "s.json",
+                      run=shell, claude="claude")
+
+    builder._claude(tmp_path, "build it")
+
+    assert shell.envs["claude"] is not None
+    assert "ANTHROPIC_API_KEY" not in shell.envs["claude"]

@@ -24,9 +24,10 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -87,8 +88,33 @@ class BuildError(RuntimeError):
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
-def _run(argv: Sequence[str], *, cwd: Path | None = None, timeout: float = 600) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(list(argv), cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
+def _run(
+    argv: Sequence[str], *, cwd: Path | None = None, timeout: float = 600, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(argv), cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False,
+        env=None if env is None else dict(env),
+    )
+
+
+# Keys that make Claude Code bill the Anthropic API instead of Alec's Claude plan.
+# ARI's brain needs ANTHROPIC_API_KEY (loaded from ari.env); the builder must not pass it on.
+API_BILLING_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+USER_BIN = Path.home() / ".local" / "bin"
+
+
+def claude_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment for the builder's Claude session: Alec's plan login, never API credits.
+
+    launchd's PATH also lacks ~/.local/bin, where uv and claude live, so the session's
+    own test runs would fail without it.
+    """
+    env = {key: value for key, value in (os.environ if environ is None else environ).items()
+           if key not in API_BILLING_KEYS}
+    path = env.get("PATH", "/usr/bin:/bin")
+    if str(USER_BIN) not in path.split(":"):
+        env["PATH"] = f"{USER_BIN}:{path}"
+    return env
 
 
 @dataclass(slots=True)
@@ -100,6 +126,7 @@ class Builder:
     state_path: Path
     run: Run = _run
     claude: str = "claude"
+    uv: str = "uv"
     every: timedelta = timedelta(hours=DEFAULT_EVERY_HOURS)
     live_script: Path = Path("scripts/ari-live")
 
@@ -115,7 +142,8 @@ class Builder:
             source=Path(source),
             builds_dir=ari_home() / "builds",
             state_path=ari_home() / "state" / "builder.json",
-            claude=os.environ.get("ARI_CLAUDE") or str(Path.home() / ".local" / "bin" / "claude"),
+            claude=os.environ.get("ARI_CLAUDE") or str(USER_BIN / "claude"),
+            uv=shutil.which("uv") or str(USER_BIN / "uv"),
             every=timedelta(hours=hours),
             live_script=ari_home() / "runtime" / "current" / "scripts" / "ari-live",
         )
@@ -243,7 +271,7 @@ class Builder:
         completed = self.run(
             [self.claude, "-p", prompt, "--output-format", "json", "--permission-mode", "acceptEdits",
              "--allowedTools", *ALLOWED_TOOLS],
-            cwd=worktree, timeout=CLAUDE_TIMEOUT_SECONDS,
+            cwd=worktree, timeout=CLAUDE_TIMEOUT_SECONDS, env=claude_env(),
         )
         try:
             result: dict[str, Any] = json.loads(completed.stdout)
@@ -257,7 +285,7 @@ class Builder:
         return text or "Built, with no summary."
 
     def _tests(self, worktree: Path) -> None:
-        completed = self.run(list(TEST_COMMAND), cwd=worktree, timeout=TEST_TIMEOUT_SECONDS)
+        completed = self.run([self.uv, *TEST_COMMAND[1:]], cwd=worktree, timeout=TEST_TIMEOUT_SECONDS)
         if completed.returncode != 0:
             raise BuildError(f"The tests fail: {_tail(completed)}")
 
