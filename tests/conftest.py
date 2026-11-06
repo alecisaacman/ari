@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import sqlite3
+import sqlite3.dbapi2
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -52,11 +54,57 @@ def _canonical_checkout_root() -> Path:
     return common_dir.resolve(strict=False).parent
 
 
+# Live ARI's databases. Live ARI writes these while tests run (the iMessage poller,
+# the signal engine, the builder), so comparing them before and after a run can't tell
+# a test's write from ARI's own. Instead, the test process may not open them at all:
+# sqlite3.connect refuses, which also covers SQLAlchemy. Tests reach their own copies
+# through ARI_HOME, set above; subprocesses inherit that too.
+LIVE_DATABASE_DIRS = tuple(
+    path.resolve(strict=False)
+    for path in (_OPERATOR_HOME / "ARI" / "state", _OPERATOR_HOME / "ARI" / "modules")
+)
+
+
+class LiveStateAccessError(RuntimeError):
+    """A test tried to open one of live ARI's databases."""
+
+
+def _sqlite_target(database: object) -> Path | None:
+    if isinstance(database, bytes):
+        database = database.decode()
+    if not isinstance(database, (str, os.PathLike)):
+        return None
+    text = os.fspath(database)
+    if text.startswith("file:"):
+        text = text.removeprefix("file:").split("?", 1)[0].removeprefix("//")
+    if not text or text == ":memory:":
+        return None
+    return Path(text).expanduser().resolve(strict=False)
+
+
+def _is_live_database(path: Path) -> bool:
+    return any(path.is_relative_to(root) for root in LIVE_DATABASE_DIRS)
+
+
+_REAL_SQLITE_CONNECT = sqlite3.connect
+
+
+def _guarded_sqlite_connect(database, *args, **kwargs):  # type: ignore[no-untyped-def]
+    target = _sqlite_target(database)
+    if target is not None and _is_live_database(target):
+        raise LiveStateAccessError(f"A test tried to open live ARI state: {target}")
+    return _REAL_SQLITE_CONNECT(database, *args, **kwargs)
+
+
+sqlite3.connect = _guarded_sqlite_connect
+sqlite3.dbapi2.connect = _guarded_sqlite_connect
+
+
 def _protected_state_roots() -> tuple[Path, ...]:
+    """Files nothing else writes during a run, so any change means a test wrote them."""
     configured = os.environ.get("ARI_TEST_PROTECTED_STATE_PATHS", "")
     extra_paths = [Path(value).expanduser() for value in configured.split(os.pathsep) if value]
     candidates = [
-        _OPERATOR_HOME / "ARI" / "modules" / "networking-crm" / "state" / "networking.db",
         _canonical_checkout_root() / "data" / "surface" / "status",
         *extra_paths,
     ]

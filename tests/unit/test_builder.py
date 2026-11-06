@@ -164,3 +164,25 @@ def test_the_builder_hands_claude_the_plan_environment(tmp_path: Path, monkeypat
 
     assert shell.envs["claude"] is not None
     assert "ANTHROPIC_API_KEY" not in shell.envs["claude"]
+
+
+def test_a_ship_that_crashes_is_marked_stuck_not_left_shipping(tmp_path: Path) -> None:
+    class MissingUv(FakeShell):
+        missing = False
+
+        def __call__(self, argv, **kwargs):
+            if self.missing and list(argv)[0] == "uv":
+                raise FileNotFoundError(2, "No such file or directory", "uv")
+            return super().__call__(argv, **kwargs)
+
+    shell = MissingUv()
+    factory, builder, build_id = _setup(tmp_path, shell)
+    with factory() as session:
+        builder.run_once(session, now=NOW)  # builds it; uv is still there
+        shell.missing = True
+        start_ship(session, build_id, spawn=lambda command: None)
+
+        assert builder.ship(session, build_id, now=NOW).startswith("stuck")
+        row = session.get(BuildProposalRow, build_id)
+        assert row.status == STUCK and "uv" in row.result
+        assert not any("HEAD:main" in call for call in shell.calls)

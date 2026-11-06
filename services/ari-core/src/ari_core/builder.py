@@ -247,7 +247,7 @@ class Builder:
             )
             if installed.returncode != 0:
                 raise BuildError(f"It's on GitHub, but the release didn't install: {_tail(installed)}")
-        except (BuildError, subprocess.TimeoutExpired) as error:
+        except Exception as error:  # noqa: BLE001 - any failure must leave the build stuck, never "shipping"
             self.run(["git", "rebase", "--abort"], cwd=worktree)
             row.status, row.result = STUCK, f"Shipping failed: {error}"[:RESULT_CHARS]
             session.commit()
