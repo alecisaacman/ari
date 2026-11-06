@@ -158,3 +158,66 @@ def _spend(session: Session) -> dict[str, Any]:
         "deeperModelRequests": spend.escalated_requests,
         "summary": spend.describe(),
     }
+
+
+_PRIORITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+AMBIENT_ACTIVITY_MAX = 80
+
+
+def ambient_status(
+    session: Session,
+    *,
+    spine_db_path: Path,
+    action_desk: ActionDesk | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """ARI in one glance, for ambient surfaces (the screensaver, a phone widget).
+
+    Deliberately tiny: a state word, one line of what ARI is on, and how much is waiting.
+    It names one thing at most, never notes, messages, memory, or spend; those stay in
+    the panel. The state is the first of these that is true:
+
+    - paused: Alec said stop. Activity is the reason he gave.
+    - building / shipping: ARI's builder is working on an approved build. Activity is its title.
+    - awaiting approval: an action or a finished build is waiting on Alec's yes.
+    - stuck: a build failed and needs a look.
+    - idle: nothing in motion. Activity is the most important open loop.
+
+    Queue counts what is waiting on someone: open loops, open hub tasks, and approvals.
+    """
+    current = now or datetime.now(tz=UTC)
+    paused = get_pause_state()
+    builds = list_builds(session)
+    pending = action_desk.pending() if action_desk else []
+    loops = sorted(
+        list_open_loops(session),
+        key=lambda loop: (_PRIORITY_RANK.get(str(getattr(loop.priority, "value", loop.priority)), 9), loop.opened_at),
+    )
+    hub_tasks = [row for row in list_ari_tasks(limit=50, db_path=spine_db_path) if row["status"] == "open"]
+
+    def first(status: str) -> str | None:
+        return next((build.title for build in builds if build.status == status), None)
+
+    state, activity = "idle", loops[0].title if loops else ""
+    if paused.get("paused"):
+        state, activity = "paused", paused.get("reason") or ""
+    elif first("building") is not None:
+        state, activity = "building", f"Building: {first('building')}"
+    elif first("shipping") is not None:
+        state, activity = "shipping", f"Shipping: {first('shipping')}"
+    elif pending:
+        state, activity = "awaiting approval", pending[0].summary
+    elif first("built") is not None:
+        state, activity = "awaiting approval", f"Ready to ship: {first('built')}"
+    elif first("stuck") is not None:
+        state, activity = "stuck", f"Stuck: {first('stuck')}"
+
+    activity = " ".join(str(activity).split())
+    if len(activity) > AMBIENT_ACTIVITY_MAX:
+        activity = activity[: AMBIENT_ACTIVITY_MAX - 1].rstrip() + "…"
+    return {
+        "state": state,
+        "activity": activity,
+        "queue": len(loops) + len(hub_tasks) + len(pending),
+        "updatedAt": current.isoformat(),
+    }

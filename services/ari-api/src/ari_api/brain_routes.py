@@ -13,15 +13,15 @@ from typing import Any
 from ari_core.action_desk import ActionDesk
 from ari_core.apple import AppleDesk
 from ari_core.brain import respond_to_message
+from ari_core.content_production import move
 from ari_core.conversation import Conversation, Respond
 from ari_core.core import paths as core_paths
-from ari_core.content_production import move
 from ari_core.modules.self_documentation.library import content_view, edit_script, get_content_item
+from ari_core.panel import HUB_CHANNEL, ambient_status, build_panel, recent_exchange
 from ari_core.script_review import review as review_script
-from fastapi.responses import FileResponse
-from ari_core.panel import HUB_CHANNEL, build_panel, recent_exchange
 from ari_core.self_review import Write as ReviewWriter
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -63,6 +63,21 @@ def register_brain_routes(
             return build_panel(
                 session, spine_db_path=spine_db_path(), action_desk=action_desk(), apple=apple()
             )
+
+    @app.get("/ambient/status")
+    def get_ambient_status(request: Request, response: Response) -> dict[str, Any]:
+        """ARI's state for the screensaver and widgets: {state, activity, queue, updatedAt}.
+
+        The screensaver page loads from file://, so its fetches carry `Origin: null`.
+        Only that origin is let in: a website open in a browser on this Mac sends its
+        own origin and gets no CORS header, so it can't read what ARI is working on.
+        """
+        if request.headers.get("origin") == "null":
+            response.headers["Access-Control-Allow-Origin"] = "null"
+            response.headers["Vary"] = "Origin"
+        response.headers["Cache-Control"] = "no-store"
+        with session_factory() as session:
+            return ambient_status(session, spine_db_path=spine_db_path(), action_desk=action_desk())
 
     @app.post("/brain/messages")
     def post_brain_message(payload: BrainMessageRequest) -> dict[str, Any]:

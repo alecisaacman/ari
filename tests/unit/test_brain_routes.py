@@ -81,3 +81,58 @@ def test_panel_shows_what_is_inside_ari(harness) -> None:
     assert panel["conversations"]["hub"][-1] == {"role": "ari", "text": "Heard: remember Sam"}
     assert panel["paused"]["paused"] is False
     assert set(panel) >= {"today", "week", "openLoops", "alerts", "spend", "waitingForApproval", "notes"}
+
+
+def _ambient_seed(session_factory, *, loops: list[tuple[str, str]] = (), build: tuple[str, str] | None = None) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from ari_core.builds import propose_build
+    from ari_core.state import CreateOpenLoopInput, create_open_loop
+    from ari_memory.tables import BuildProposalRow
+
+    start = datetime(2026, 11, 6, 9, 0, tzinfo=UTC)
+    with session_factory() as session:
+        for offset, (title, priority) in enumerate(loops):
+            create_open_loop(
+                session,
+                loop=CreateOpenLoopInput(title=title, source="test", priority=priority),
+                opened_at=start + timedelta(minutes=offset),
+            )
+        if build is not None:
+            proposed, _ = propose_build(session, title=build[0], why="", brief="", now=start)
+            session.get(BuildProposalRow, proposed.id).status = build[1]
+        session.commit()
+
+
+def test_ambient_status_is_idle_on_the_most_important_loop(harness) -> None:
+    client, session_factory, _, _ = harness
+    _ambient_seed(session_factory, loops=[("Water plants", "low"), ("Finish assignment", "high"), ("Call Kyle", "high")])
+
+    body = client.get("/ambient/status").json()
+
+    assert body["state"] == "idle"
+    assert body["activity"] == "Finish assignment"  # highest priority, then oldest
+    assert body["queue"] == 3
+    assert set(body) == {"state", "activity", "queue", "updatedAt"}  # nothing private rides along
+
+
+def test_ambient_status_shows_what_ari_is_building_and_pause_wins(harness) -> None:
+    client, session_factory, _, _ = harness
+    _ambient_seed(session_factory, loops=[("Finish assignment", "high")], build=("Email digest", "building"))
+
+    assert client.get("/ambient/status").json()["activity"] == "Building: Email digest"
+
+    pause_module.pause("Focus time")
+    body = client.get("/ambient/status").json()
+    assert (body["state"], body["activity"]) == ("paused", "Focus time")
+
+
+def test_ambient_status_is_readable_from_the_screensaver_only(harness) -> None:
+    client, _, _, _ = harness
+
+    from_file_page = client.get("/ambient/status", headers={"Origin": "null"})
+    from_a_website = client.get("/ambient/status", headers={"Origin": "https://example.com"})
+
+    assert from_file_page.headers["access-control-allow-origin"] == "null"
+    assert "access-control-allow-origin" not in from_a_website.headers
+    assert from_file_page.json() == {**from_file_page.json(), "state": "idle", "activity": "", "queue": 0}
