@@ -62,8 +62,8 @@ ORCHESTRATE_EVERY = timedelta(minutes=30)
 # A day's build story goes out at night, after the night review.
 STORY_FROM = (21, 30)
 STORY_UNTIL = (23, 59)
-# How Anthropic says the account has no credits left.
-CREDITS_GONE = "credit balance is too low"
+# How Anthropic says ARI can't spend: no credits left, or Alec's monthly spend limit reached.
+CREDITS_GONE = ("credit balance is too low", "reached your specified api usage limits")
 # How long a poll waits for a fresh dump it asked for.
 DUMP_REFRESH_WAIT_SECONDS = 5.0
 # GET DONE is read through the EventKit helper, so ARI looks once a minute, not every poll.
@@ -332,7 +332,7 @@ class ImessageGateway:
                 # Said in the log with its reason, never swallowed.
                 why = f": {reasons[0]}" if reasons else ""
                 report.detail = f"The {kind} review didn't get written{why}."
-                if reasons and CREDITS_GONE in reasons[0].lower():
+                if reasons and any(phrase in reasons[0].lower() for phrase in CREDITS_GONE):
                     history = self._say_out_of_credits(history, report, local)
                 continue
             if not self._send(self.settings.reply_to or "", review.message, report):
@@ -354,8 +354,9 @@ class ImessageGateway:
             pass
         marker.write_text(local.date().isoformat())
         body = (
-            "Heads up: ARI's Anthropic API credits are used up, so I can't write reviews, answer you, "
-            "or propose builds until they're topped up at console.anthropic.com. Nothing is lost."
+            "Heads up: ARI can't use its Anthropic API right now (credits used up, or this month's spend "
+            "limit reached), so I can't write reviews, answer you, or propose builds until that's sorted "
+            "at console.anthropic.com. Nothing is lost."
         )
         if not self._send(self.settings.reply_to or "", body, report):
             return history

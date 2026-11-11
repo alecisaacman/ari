@@ -1055,8 +1055,24 @@ def test_a_review_stopped_by_empty_credits_tells_alec_once_a_day(settings, sessi
     gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: clock["now"], review_writer=broke)
     seed(gateway, settings)
     gateway.poll_once()
-    notices = [body for _, body in messages.sent if "credits are used up" in body]
+    notices = [body for _, body in messages.sent if "can't use its Anthropic API" in body]
     assert len(notices) == 1
     clock["now"] = local.replace(hour=21, minute=5)  # the night review fails too, the same day
     gateway.poll_once()
-    assert len([body for _, body in messages.sent if "credits are used up" in body]) == 1
+    assert len([body for _, body in messages.sent if "can't use its Anthropic API" in body]) == 1
+
+
+def test_a_reached_spend_limit_also_tells_alec(settings, session_factory) -> None:
+    import anthropic
+    import httpx
+
+    def limited(kind, facts):
+        response = httpx.Response(400, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+        raise anthropic.BadRequestError("You have reached your specified API usage limits.", response=response, body=None)
+
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages,
+                           now=lambda: datetime(2026, 11, 10, 8, 30).astimezone(), review_writer=limited)
+    seed(gateway, settings)
+    gateway.poll_once()
+    assert any("spend limit reached" in body for _, body in messages.sent)
