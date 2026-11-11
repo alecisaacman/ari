@@ -7,7 +7,9 @@ Twice a day ARI looks at where I am and where it falls short.
 - **Night (21:00):** what I checked off and what moved, what's still open, and how
   tomorrow starts.
 
-A review missed while the Mac slept still goes out when ARI next runs, until noon for
+When Anthropic refuses a review because the API credits are used up, ARI texts me once
+that day, since reviews, replies, and build proposals all stop until I top them up, and
+the desktop pets show it. A review missed while the Mac slept still goes out when ARI next runs, until noon for
 the morning and midnight for the night. "ARI review" asks for one any time. The times
 come from `ARI_REVIEW_MORNING` and `ARI_REVIEW_NIGHT` in `~/ARI/ari.env` (`off` turns
 one off). Each review is kept as an ARI note.
@@ -29,15 +31,17 @@ to add it to the list.
 
 ## Approved builds build themselves
 
-With the builder on (`ari-live connect-builds`), an hourly scheduled task in the Claude
-app, "ARI builds", starts a session I can watch, steer, or stop. The session runs
+With the builder on (`ari-live connect-builds`), a scheduled task in the Claude app,
+"ARI builds", starts a session I can watch, steer, or stop, each night at 10:45 PM,
+after the night review ("Run now" on the task starts one sooner). It ran hourly at
+first; each session loads the full Claude Code context (about $0.27 at API rates), so
+24 sessions a day mostly spent my plan's usage finding nothing approved. The session runs
 `python -m ari_core.builder claim`. At most every 5 hours (`ARI_BUILD_EVERY_HOURS`) that
 takes the oldest approved build, makes a fresh worktree on branch `ari/build-<id>` from
 GitHub's main under `~/ARI/builds`, and prints the brief. The session builds it there,
 commits, and runs `finish`, where ARI runs the tests itself: new commits and passing
 tests make the build `built`; anything else makes it `stuck`, with the reason. A session
-out of credits runs `give-back`, and the next hourly run tries again, so the build starts
-when the credits refresh. A build left half-done for 3 hours goes back on the list.
+out of credits runs `give-back`, and the next night's run tries again. A build left half-done for 3 hours goes back on the list.
 
 ARI texts me each result once. Nothing goes live until I say "ship it": ARI then brings
 the branch up to date with main, tests it again, pushes it to main, and installs it as

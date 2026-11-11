@@ -38,7 +38,7 @@ from ari_core.email_reader import EmailDesk
 from ari_core.mac import MacDesk
 from ari_core.memory import get_conversation_state, save_conversation_state
 from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orchestration
-from ari_core.pet_status import build_pet_status, write_pet_status
+from ari_core.pet_status import build_pet_status, note_credits, write_pet_status
 from ari_core.reminders import due_reminders, mark_sent
 from ari_core.self_review import Write as ReviewWriter
 from ari_core.self_review import run_review
@@ -62,6 +62,8 @@ ORCHESTRATE_EVERY = timedelta(minutes=30)
 # A day's build story goes out at night, after the night review.
 STORY_FROM = (21, 30)
 STORY_UNTIL = (23, 59)
+# How Anthropic says the account has no credits left.
+CREDITS_GONE = "credit balance is too low"
 # How long a poll waits for a fresh dump it asked for.
 DUMP_REFRESH_WAIT_SECONDS = 5.0
 # GET DONE is read through the EventKit helper, so ARI looks once a minute, not every poll.
@@ -330,6 +332,8 @@ class ImessageGateway:
                 # Said in the log with its reason, never swallowed.
                 why = f": {reasons[0]}" if reasons else ""
                 report.detail = f"The {kind} review didn't get written{why}."
+                if reasons and CREDITS_GONE in reasons[0].lower():
+                    history = self._say_out_of_credits(history, report, local)
                 continue
             if not self._send(self.settings.reply_to or "", review.message, report):
                 continue
@@ -337,6 +341,25 @@ class ImessageGateway:
             if history:
                 history = [*history, {"role": "assistant", "content": [{"type": "text", "text": review.message}]}]
         return history
+
+    def _say_out_of_credits(self, history: list[dict[str, Any]], report: PollReport, local: datetime) -> list[dict[str, Any]]:
+        """Tell Alec once a day that the API credits are gone, since reviews and builds stop with them."""
+        if self.pet_status_path is not None:
+            note_credits(out=True)
+        marker = self.settings.state_dir / "last-credits-notice"
+        try:
+            if marker.read_text().strip() == local.date().isoformat():
+                return history
+        except OSError:
+            pass
+        marker.write_text(local.date().isoformat())
+        body = (
+            "Heads up: ARI's Anthropic API credits are used up, so I can't write reviews, answer you, "
+            "or propose builds until they're topped up at console.anthropic.com. Nothing is lost."
+        )
+        if not self._send(self.settings.reply_to or "", body, report):
+            return history
+        return [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
 
     def _send_reminders(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
         """Text Alec the reminders that are due. He chose the time, so quiet hours don't hold them."""

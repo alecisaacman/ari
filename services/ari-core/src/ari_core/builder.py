@@ -1,14 +1,16 @@
 """ARI builds what Alec approved, in a Claude session he can watch, and ships it when he says so.
 
-A build Alec approves ("yes" to a review's proposal) waits on the build list. Once an
-hour a scheduled task in the Claude app starts a session that runs
-`python -m ari_core.builder claim`. When the last build finished long enough ago
+A build Alec approves ("yes" to a review's proposal) waits on the build list. Each night
+at 10:45 PM, after the night review, a scheduled task in the Claude app starts a session
+that runs `python -m ari_core.builder claim` ("Run now" on the task starts one sooner).
+It was hourly at first, but every session loads the full Claude Code context, about
+$0.27 at API rates, so 24 a day mostly spent Alec's plan finding nothing approved. When the last build finished long enough ago
 (ARI_BUILD_EVERY_HOURS, 5 by default), claim takes the oldest approved build, makes a
 fresh git worktree on a new branch from GitHub's main under ~/ARI/builds, and prints the
 brief. The session builds it there and runs `finish`, where ARI runs the tests itself:
 new commits and passing tests make it `built`; otherwise it is `stuck`, with the reason.
 A session that runs out of credits runs `give-back`, and the build waits for the next
-hourly run. The poller texts Alec each result once.
+night's run. The poller texts Alec each result once.
 
 Nothing goes live until Alec says "ship it". Then `python -m ari_core.builder ship ID`
 brings the branch up to date with main, tests it again, pushes it to main, and installs

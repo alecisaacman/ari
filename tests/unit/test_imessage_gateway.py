@@ -1039,3 +1039,24 @@ def test_the_build_story_goes_out_once_at_night_on_a_day_with_work(settings, ses
     assert calls == [today.date()] and "ARI learned to run the Mac." in messages.sent[-1][1]
     clock["now"] = today.replace(hour=22, minute=30)
     assert gateway.poll_once().stories_sent == 0
+
+
+def test_a_review_stopped_by_empty_credits_tells_alec_once_a_day(settings, session_factory) -> None:
+    import anthropic
+
+    def broke(kind, facts):
+        request = __import__("httpx").Request("POST", "https://api.anthropic.com/v1/messages")
+        response = __import__("httpx").Response(400, request=request)
+        raise anthropic.BadRequestError("Your credit balance is too low to access the Anthropic API.", response=response, body=None)
+
+    local = datetime(2026, 11, 10, 8, 30).astimezone()
+    clock = {"now": local}
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: clock["now"], review_writer=broke)
+    seed(gateway, settings)
+    gateway.poll_once()
+    notices = [body for _, body in messages.sent if "credits are used up" in body]
+    assert len(notices) == 1
+    clock["now"] = local.replace(hour=21, minute=5)  # the night review fails too, the same day
+    gateway.poll_once()
+    assert len([body for _, body in messages.sent if "credits are used up" in body]) == 1
