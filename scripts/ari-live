@@ -159,7 +159,9 @@ def install_release(repo: Path, commit: str, *, run_tests: bool) -> int:
         if node and hub.is_dir():
             npm = str(Path(node).with_name("npm"))
             path_env = {**os.environ, "PATH": f"{Path(node).parent}:{os.environ.get('PATH', '')}"}
-            _step("Hub packages", [npm, "ci", "--no-audit", "--no-fund", "--silent"], cwd=hub, env=path_env)
+            # The build needs dev packages (TypeScript reads the "@/" paths); a NODE_ENV=production
+            # in the shell that runs the install would otherwise skip them and break the hub build.
+            _step("Hub packages", [npm, "ci", "--include=dev", "--no-audit", "--no-fund", "--silent"], cwd=hub, env=path_env)
             _step("Hub build", [node, str(hub / "node_modules" / "next" / "dist" / "bin" / "next"), "build"], cwd=hub, env=path_env)
         if (release / "tools" / "ari-eventkit").is_dir():
             _build_eventkit(release / "tools" / "ari-eventkit")
