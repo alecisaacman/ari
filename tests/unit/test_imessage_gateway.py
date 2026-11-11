@@ -1076,3 +1076,61 @@ def test_a_reached_spend_limit_also_tells_alec(settings, session_factory) -> Non
     seed(gateway, settings)
     gateway.poll_once()
     assert any("spend limit reached" in body for _, body in messages.sent)
+
+
+def test_a_message_that_keeps_failing_reaches_alec_once_and_again_when_it_works(settings, session_factory) -> None:
+    start = datetime(2026, 11, 10, 15, 0).astimezone()
+    clock = {"now": start}
+    broken = {"on": True}
+
+    def brain(*, text, history, **_: Any) -> BrainResponse:
+        if broken["on"]:
+            raise RuntimeError("tool registry missing")
+        return BrainResponse(reply="ok", messages=[*history, {"role": "user", "content": text}])
+
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, brain=brain, messages=messages, now=lambda: clock["now"])
+    seed(gateway, settings)
+    write_dump(settings, (1, "old message"), (2, "what's next?"))
+    assert gateway.poll_once().watchdog_sent == 0  # a blip, maybe
+    clock["now"] = start + timedelta(minutes=11)
+    report = gateway.poll_once()
+    assert report.watchdog_sent == 1 and "keeps failing (RuntimeError: tool registry missing)" in messages.sent[-1][1]
+    clock["now"] = start + timedelta(minutes=20)
+    assert gateway.poll_once().watchdog_sent == 0  # told once
+    broken["on"] = False
+    clock["now"] = start + timedelta(minutes=21)
+    gateway.poll_once()
+    assert messages.sent[-2:] == [(SELF, "ok"), (SELF, "Answering your messages is working again.")]
+
+
+def test_a_review_that_fails_for_another_reason_is_texted_not_only_logged(settings, session_factory) -> None:
+    local = datetime(2026, 11, 10, 8, 30).astimezone()
+    messages = FakeMessages()
+    gateway = make_gateway(
+        settings, session_factory, messages=messages, now=lambda: local,
+        review_writer=lambda kind, facts: ({"message": "", "build": None}, None),
+    )
+    seed(gateway, settings)
+    assert gateway.poll_once().watchdog_sent == 1
+    assert "morning review didn't get written" in messages.sent[-1][1]
+    assert gateway.poll_once().watchdog_sent == 0
+
+
+def test_watchdog_texts_wait_for_quiet_hours_to_end(settings, session_factory) -> None:
+    quiet = replace(settings, quiet_hours=(22, 7))
+    night = datetime(2026, 11, 10, 23, 30).astimezone()
+    clock = {"now": night}
+
+    def brain(*, text, history, **_: Any) -> BrainResponse:
+        raise RuntimeError("down")
+
+    messages = FakeMessages()
+    gateway = make_gateway(quiet, session_factory, brain=brain, messages=messages, now=lambda: clock["now"])
+    seed(gateway, quiet)
+    write_dump(quiet, (1, "old message"), (2, "late thought"))
+    gateway.poll_once()
+    clock["now"] = night + timedelta(hours=1)
+    assert gateway.poll_once().watchdog_sent == 0  # past ten minutes, but it's the middle of the night
+    clock["now"] = night + timedelta(hours=8)  # 7:30 AM
+    assert gateway.poll_once().watchdog_sent == 1

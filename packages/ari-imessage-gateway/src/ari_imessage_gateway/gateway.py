@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -42,6 +43,7 @@ from ari_core.pet_status import build_pet_status, note_credits, write_pet_status
 from ari_core.reminders import due_reminders, mark_sent
 from ari_core.self_review import Write as ReviewWriter
 from ari_core.self_review import run_review
+from ari_core.watchdog import RECORDS, Problem, Watchdog, check_records
 from ari_memory.tables import AlertRow
 from ari_state import AlertChannel, AlertEscalationLevel, AlertStatus
 from sqlalchemy import select
@@ -68,6 +70,10 @@ CREDITS_GONE = ("credit balance is too low", "reached your specified api usage l
 DUMP_REFRESH_WAIT_SECONDS = 5.0
 # GET DONE is read through the EventKit helper, so ARI looks once a minute, not every poll.
 GET_DONE_LOOK_EVERY = timedelta(minutes=1)
+# How long a failure lasts before the watchdog texts Alec, so blips that clear themselves stay quiet.
+MESSAGE_FAILING_AFTER = timedelta(minutes=10)
+GET_DONE_FAILING_AFTER = timedelta(minutes=30)
+SIGNAL_ENGINE_FAILING_AFTER = timedelta(hours=1)
 NOTIFY_LEVELS = {
     AlertEscalationLevel.ELEVATED.value,
     AlertEscalationLevel.INTERRUPTIVE.value,
@@ -87,6 +93,15 @@ class PollReport:
     get_done_noticed: int = 0
     builds_announced: int = 0
     stories_sent: int = 0
+    watchdog_sent: int = 0
+    # What failed this poll, and what ran and worked, for ARI's watchdog.
+    problems: list[Problem] = field(default_factory=list)
+    cleared: set[str] = field(default_factory=set)
+
+    def problem(self, problem: Problem) -> None:
+        """Record a failure: in the log line, and for the watchdog to text Alec."""
+        self.problems.append(problem)
+        self.detail = problem.text
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +116,7 @@ class PollReport:
             "getDoneNoticed": self.get_done_noticed,
             "buildsAnnounced": self.builds_announced,
             "storiesSent": self.stories_sent,
+            "watchdogSent": self.watchdog_sent,
         }
 
 
@@ -186,8 +202,16 @@ class ImessageGateway:
                     history = self._handle(row, history, report)
                 except Exception as error:  # noqa: BLE001 - stop here; retry this message next poll
                     report.status = "error"
-                    report.detail = f"Message {row.rowid} failed: {type(error).__name__}: {error}"
+                    report.problem(Problem(
+                        key=f"message-{row.rowid}",
+                        text=(f"A message you sent keeps failing ({type(error).__name__}: {error}). "
+                              "I'm retrying it, and the ones after it wait until it goes through."),
+                        label="Answering your messages",
+                        after=MESSAGE_FAILING_AFTER,
+                    ))
+                    self._watch(history, report)
                     return report
+                report.cleared.add(f"message-{row.rowid}")
                 cursor = row.rowid
                 self._save(cursor, history)
             # A message may have changed ARI's state, so the engine re-checks before alerts go out.
@@ -198,6 +222,7 @@ class ImessageGateway:
             history = self._notice_get_done(history, report)
             history = self._announce_builds(history, report)
             history = self._send_story(history, report)
+            history = self._watch(history, report)
             self._save(cursor, history)
             self._update_pet(thinking=False)
         return report
@@ -261,8 +286,15 @@ class ImessageGateway:
                     ),
                 )
             report.signals_raised = len(result.signals)
+            report.cleared.add("signal-engine")
         except Exception as error:  # noqa: BLE001 - a failed run is reported, never fatal to messaging
-            report.detail = f"Signal engine failed: {type(error).__name__}: {error}"
+            report.problem(Problem(
+                key="signal-engine",
+                text=(f"My signal engine keeps failing ({type(error).__name__}: {error}), so I'm not "
+                      "noticing things on my own until it's fixed."),
+                label="My signal engine",
+                after=SIGNAL_ENGINE_FAILING_AFTER,
+            ))
 
     def _handle(self, row: DumpRow, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
         text = row.text
@@ -329,11 +361,14 @@ class ImessageGateway:
                     on_skip=reasons.append,
                 )
             if review is None:
-                # Said in the log with its reason, never swallowed.
                 why = f": {reasons[0]}" if reasons else ""
-                report.detail = f"The {kind} review didn't get written{why}."
+                text = f"The {kind} review didn't get written{why}."
                 if reasons and any(phrase in reasons[0].lower() for phrase in CREDITS_GONE):
+                    # The credits notice already tells Alec, once a day.
+                    report.detail = text
                     history = self._say_out_of_credits(history, report, local)
+                else:
+                    report.problem(Problem(key=f"review-{kind}-{local.date().isoformat()}", text=text, lasting=False))
                 continue
             if not self._send(self.settings.reply_to or "", review.message, report):
                 continue
@@ -346,13 +381,9 @@ class ImessageGateway:
         """Tell Alec once a day that the API credits are gone, since reviews and builds stop with them."""
         if self.pet_status_path is not None:
             note_credits(out=True)
-        marker = self.settings.state_dir / "last-credits-notice"
-        try:
-            if marker.read_text().strip() == local.date().isoformat():
-                return history
-        except OSError:
-            pass
-        marker.write_text(local.date().isoformat())
+        if self._told_credits_today(local):
+            return history
+        (self.settings.state_dir / "last-credits-notice").write_text(local.date().isoformat())
         body = (
             "Heads up: ARI can't use its Anthropic API right now (credits used up, or this month's spend "
             "limit reached), so I can't write reviews, answer you, or propose builds until that's sorted "
@@ -361,6 +392,12 @@ class ImessageGateway:
         if not self._send(self.settings.reply_to or "", body, report):
             return history
         return [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
+
+    def _told_credits_today(self, local: datetime) -> bool:
+        try:
+            return (self.settings.state_dir / "last-credits-notice").read_text().strip() == local.date().isoformat()
+        except OSError:
+            return False
 
     def _send_reminders(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
         """Text Alec the reminders that are due. He chose the time, so quiet hours don't hold them."""
@@ -404,8 +441,14 @@ class ImessageGateway:
         try:
             items, ids = new_from_alec(self.apple, seen_path)
         except AppleError as error:
-            report.detail = f"GET DONE couldn't be read: {error}"
+            report.problem(Problem(
+                key="get-done",
+                text=f"I haven't been able to read GET DONE for a while: {error}",
+                label="Reading GET DONE",
+                after=GET_DONE_FAILING_AFTER,
+            ))
             return history
+        report.cleared.add("get-done")
         if not items:
             mark_seen(seen_path, ids)
             return history
@@ -453,13 +496,41 @@ class ImessageGateway:
         with self.session_factory() as session:
             story = run_story(session, repo=repo, day=local.date(), now=self.now(), write=self.story_writer)
         if story is None:
-            report.detail = "Today's build story didn't get written."
+            text = "Today's build story didn't get written."
+            if self._told_credits_today(local):
+                report.detail = text  # the credits notice already explains it
+            else:
+                report.problem(Problem(key=f"story-{local.date().isoformat()}", text=text, lasting=False))
             return history
         body = story.message()
         if not self._send(self.settings.reply_to or "", body, report):
             return history
         report.stories_sent += 1
         return [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
+
+    def _watch(self, history: list[dict[str, Any]], report: PollReport) -> list[dict[str, Any]]:
+        """Text Alec what's failing, once, and when it works again. Quiet hours and a pause hold it."""
+        if self.dry_run:
+            return history
+        now = self.now()
+        watchdog = Watchdog(self.settings.state_dir / "watchdog.json")
+        try:
+            with self.session_factory() as session:
+                records = check_records(session, now=now, builder_on=os.environ.get("ARI_AUTOBUILD") == "1")
+            notices = watchdog.observe([*report.problems, *records], cleared={*report.cleared, RECORDS}, now=now)
+        except Exception as error:  # noqa: BLE001 - the watchdog never stops messaging
+            report.detail = f"The watchdog failed: {type(error).__name__}: {error}"
+            return history
+        if not notices or get_pause_state()["paused"] or self._quiet(now):
+            return history
+        for notice in notices:
+            if not self._send(self.settings.reply_to or "", notice.body, report):
+                break  # still waiting in the watchdog's file, for the next poll
+            watchdog.told(notice)
+            report.watchdog_sent += 1
+            if history:
+                history = [*history, {"role": "assistant", "content": [{"type": "text", "text": notice.body}]}]
+        return history
 
     def _quiet(self, now: datetime) -> bool:
         if self.settings.quiet_hours is None:

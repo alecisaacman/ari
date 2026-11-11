@@ -168,6 +168,28 @@ message was sent and when ARI was last running, and of what ARI is catching up
 on: how many messages it is answering in order and how many reminders came due
 while it was off. One notice covers the whole gap.
 
+## The watchdog
+
+Every failure reaches Alec by text, never only the log (`ari_core/watchdog.py`).
+Each part of a poll that can fail reports a problem with a stable key instead of
+writing over one log line. Each poll, the watchdog decides what Alec hears:
+
+- **One-off failures** (a review or the build story didn't get written) are texted
+  once. When the cause is used-up API credits, the once-a-day credits notice
+  covers it instead.
+- **Lasting failures** are texted once they have lasted long enough to matter, so a
+  blip that clears itself stays quiet: a message that keeps failing (10 minutes),
+  GET DONE that can't be read (30 minutes), the signal engine (an hour). When the
+  part reports working again, ARI says so once.
+- **ARI's records** are checked every poll: a build still "shipping" after 30
+  minutes (the ship step died), and an approved build no builder has picked up
+  for 30 hours (usually the Claude app was closed at 10:45 PM).
+
+Quiet hours and a pause hold these texts; they wait in
+`ARI_HOME/imessage/watchdog.json` and go out after. The watchdog calls no model
+and costs nothing. A failure to send through Messages can't be texted; it stays
+in the log and the next poll retries.
+
 ## Limits
 
 - One Apple ID means no separate "ARI" sender. ARI writes in your own
