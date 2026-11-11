@@ -37,6 +37,15 @@ os.environ["ARI_HOME"] = str(_TEST_ARI_HOME)
 os.environ["ARI_CANONICAL_HOME"] = str(_TEST_ARI_HOME)
 os.environ["ARI_SURFACE_STATUS_DIR"] = str(_TEST_SURFACE_STATUS_DIR)
 
+# Tests never spend real money. The builder and ari-live run this suite with Alec's
+# ari.env loaded, so its keys would otherwise reach any test that builds a real client.
+# Every paid credential is removed, and a client built anyway points at a closed port and
+# fails at once instead of calling Anthropic.
+for _paid in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "REPLICATE_API_TOKEN", "ARI_GMAIL_APP_PASSWORD"):
+    os.environ.pop(_paid, None)
+os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:9"
+os.environ["ARI_JOB_APPLICATION_ENRICHMENT_ENABLED"] = "false"
+
 
 def _canonical_checkout_root() -> Path:
     configured = os.environ.get("ARI_LIVE_SOURCE_ROOT")

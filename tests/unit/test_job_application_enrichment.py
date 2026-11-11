@@ -21,6 +21,7 @@ def _make_session() -> Session:
 def test_job_application_loop_triggers_enrichment_and_logs_skill_invocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ARI_JOB_APPLICATION_ENRICHMENT_ENABLED", "true")  # the suite turns it off
     monkeypatch.setattr(
         state_module,
         "research_company",
@@ -68,6 +69,7 @@ def test_job_application_loop_triggers_enrichment_and_logs_skill_invocation(
 def test_job_application_enrichment_failure_is_logged_not_raised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ARI_JOB_APPLICATION_ENRICHMENT_ENABLED", "true")  # the suite turns it off
     def _boom(company: str, **_: object) -> CompanyResearchResult:
         raise RuntimeError("search API unavailable")
 
@@ -141,3 +143,24 @@ def test_non_job_application_loop_never_triggers_research(
 
         assert OpenLoopEnrichmentRepository(session).list_for_loop(result.state.id) == []
         assert SkillInvocationRepository(session).list_recent() == []
+
+
+def test_company_research_is_costed_in_aris_ledger_on_aris_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from ari_core import company_research
+
+    seen: dict = {}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            usage = SimpleNamespace(input_tokens=1000, output_tokens=200, cache_creation_input_tokens=0,
+                                    cache_read_input_tokens=0, server_tool_use=SimpleNamespace(web_search_requests=2))
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text='{"summary": "ok", "findings": []}')],
+                                   usage=usage, model=kwargs["model"])
+
+    monkeypatch.setattr(company_research.anthropic, "Anthropic", lambda: SimpleNamespace(messages=FakeMessages()))
+    result = company_research.research_company("Stripe")
+    assert seen["model"] == "claude-sonnet-5-5" and seen["tools"][0]["type"] == "web_search_20260209"
+    assert result.call is not None and result.call.web_searches == 2 and result.call.cost_usd > 0

@@ -2,21 +2,30 @@
 freezes, funding news, and interview-process signals. Unlike the web_search
 tool inside brain.py (invoked at Claude's discretion mid-conversation), this
 is a direct callable so the job_application enrichment trigger in
-ari_core.state can fire it outside of any chat turn."""
+ari_core.state can fire it outside of any chat turn.
+
+It runs on ARI's deeper model and every call goes in ARI's spending ledger (the
+caller records `call`), so ARI's monthly budget covers it like any other model call.
+It used to default to an older, dearer model and bypass the ledger, which hid its
+spend from ARI."""
 
 from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import anthropic
 
-RESEARCH_MODEL = os.environ.get("ARI_BRAIN_MODEL", "claude-sonnet-4-6")
+from ari_core.brain_usage import ModelCall
+
+# The same model as ARI's deeper brain (ari_core.brain.DEEP_MODEL); read here directly
+# because importing the brain from this module would be circular.
+RESEARCH_MODEL = os.environ.get("ARI_BRAIN_DEEP_MODEL", os.environ.get("ARI_BRAIN_MODEL", "claude-sonnet-5-5"))
 
 WEB_SEARCH_TOOL: dict[str, Any] = {
-    "type": "web_search_20250305",
+    "type": "web_search_20260209",
     "name": "web_search",
     "max_uses": 4,
 }
@@ -58,6 +67,8 @@ class CompanyResearchResult:
     summary: str
     findings: list[CompanyResearchFinding] = field(default_factory=list)
     raw_response_text: str = ""
+    # What the research cost, for ARI's spending ledger.
+    call: ModelCall | None = None
 
 
 def research_company(company: str, *, model: str = RESEARCH_MODEL) -> CompanyResearchResult:
@@ -78,7 +89,8 @@ def research_company(company: str, *, model: str = RESEARCH_MODEL) -> CompanyRes
         ],
     )
     final_text = "".join(block.text for block in response.content if block.type == "text").strip()
-    return _parse_research_response(company=company, raw_text=final_text)
+    result = _parse_research_response(company=company, raw_text=final_text)
+    return replace(result, call=ModelCall.from_response(response))
 
 
 def _parse_research_response(*, company: str, raw_text: str) -> CompanyResearchResult:

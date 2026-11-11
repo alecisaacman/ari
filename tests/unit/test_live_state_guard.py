@@ -32,3 +32,11 @@ def test_tests_own_databases_still_open(tmp_path: Path) -> None:
         assert connection.execute("select 1").fetchone() == (1,)
     with sqlite3.connect(":memory:") as connection:
         assert connection.execute("select 2").fetchone() == (2,)
+
+
+def test_the_suite_cannot_spend_real_money() -> None:
+    import os
+
+    for paid in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "REPLICATE_API_TOKEN", "ARI_GMAIL_APP_PASSWORD"):
+        assert paid not in os.environ
+    assert os.environ["ANTHROPIC_BASE_URL"].startswith("http://127.0.0.1")

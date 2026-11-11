@@ -36,6 +36,7 @@ from ari_state import (
 )
 from sqlalchemy.orm import Session
 
+from ari_core.brain_usage import month_spend, record_model_call
 from ari_core.company_research import research_company
 from ari_core.skills import PAUSED_FILE, record_skill_invocation
 
@@ -363,8 +364,12 @@ def _trigger_job_application_enrichment(
     invocation rather than raised, so a flaky search never blocks filing
     the open loop itself. Logs through ari_core.skills.record_skill_invocation,
     the same audit path every other skill call goes through."""
+    if month_spend(session).exhausted:
+        return  # ARI's monthly budget is spent; research waits like every other model call
     try:
         result = research_company(company)
+        if result.call is not None:
+            record_model_call(session, result.call, channel="company_research", escalated=True)
     except Exception as exc:  # noqa: BLE001 - any failure here is logged, not raised
         record_skill_invocation(
             session,

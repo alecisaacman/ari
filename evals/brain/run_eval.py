@@ -8,15 +8,18 @@ the deeper model, what the reply says), and its cost and latency are recorded.
 The replies are written out for Alec to read: the checks catch wrong behavior,
 not tone.
 
-This calls the real API and costs money; --max-usd stops the run at a ceiling.
+This calls the real API and costs money, so it runs only with --live; --max-usd stops
+the run at a ceiling. Company research is switched off for the run: it isn't what's
+being measured, and its own model calls would slip past the ceiling.
 
-    python evals/brain/run_eval.py --max-usd 2
+    python evals/brain/run_eval.py --live --max-usd 2
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import tempfile
 import time
 from collections.abc import Callable
@@ -295,7 +298,7 @@ def run_eval(
 
 
 def main() -> int:
-    from ari_imessage_gateway.config import ari_home, load_local_env
+    from ari_core.core.env import ari_home, load_local_env
 
     # The same private settings file the iMessage surface reads (ARI_HOME/ari.env).
     load_local_env(ari_home() / "ari.env")
@@ -303,7 +306,12 @@ def main() -> int:
     parser.add_argument("--max-usd", type=float, default=2.0, help="Stop once spend passes this.")
     parser.add_argument("--configs", default=",".join(CONFIGS), help="routed, sonnet, or both.")
     parser.add_argument("--cases", default="", help="Comma-separated case ids; default all.")
+    parser.add_argument("--live", action="store_true", help="Required: this spends real API money.")
     args = parser.parse_args()
+    if not args.live:
+        print("This eval calls the real API and costs money. Run it again with --live to go ahead.")
+        return 2
+    os.environ["ARI_JOB_APPLICATION_ENRICHMENT_ENABLED"] = "false"
 
     cases = json.loads((HERE / "cases.json").read_text(encoding="utf-8"))
     if args.cases:
