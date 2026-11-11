@@ -24,11 +24,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import anthropic
+from ari_state import SkillKind
 from sqlalchemy.orm import Session, sessionmaker
 
 from ari_core.action_desk import ActionDesk, PendingProposal, describe_result
 from ari_core.apple import AppleDesk
 from ari_core.email_reader import EmailDesk
+from ari_core.local_intents import answer as answer_locally
 from ari_core.mac import MacDesk
 from ari_core.brain import BrainResponse, make_tool_dispatcher, respond_to_message, roll_history
 from ari_core.brain_usage import (
@@ -177,6 +179,15 @@ class Conversation:
         pending = self.action_desk.pending() if self.action_desk else []
         if approval and pending:
             return self._said(history, text, self._decide(approval, pending))
+
+        # Plain everyday requests ARI answers itself, so they never cost a model call.
+        local = answer_locally(text, apple=self.apple, mac=self.mac, now=self.now(), dry_run=self.dry_run)
+        if local is not None:
+            self._log_invocation(
+                SkillKind.CUSTOM_TOOL, "ari.local", local.intent, f"answered without a model: {local.intent}",
+                {"message": text[:200]}, False,
+            )
+            return self._said(history, text, local.reply)
 
         with self.session_factory() as session:
             spend = month_spend(session)

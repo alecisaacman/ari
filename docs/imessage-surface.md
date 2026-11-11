@@ -178,3 +178,15 @@ while it was off. One notice covers the whole gap.
 - iMessage and the hub are the two surfaces. Both reach this brain through
   `ari_core/conversation.py`; each keeps its own thread, and they share ARI's
   records. The hub shows ARI's control panel (`ari_core/panel.py`).
+
+## Answered without a model
+
+Plain everyday requests are answered by ARI's own code (`ari_core.local_intents`), so they
+cost nothing and come back instantly: reading, adding to, and checking off GET DONE;
+today's or tomorrow's calendar and what's next; and Mac control (open or quit an
+installed app, volume, mute, play or pause, next song, lock, keep awake, what's open, run
+one of Alec's Shortcuts). This runs on every surface, after ARI's fixed commands and
+before the model. The patterns are strict: anything that doesn't clearly match, or whose
+target isn't real (an app that isn't installed, a shortcut that doesn't exist, a to-do
+that matches more than one item), goes to the model as before. Each local answer is
+logged as a skill invocation (`ari.local`), so reviews can see how often it's used.
