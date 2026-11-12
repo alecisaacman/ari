@@ -33,7 +33,7 @@ def test_night_review_sees_what_got_done_and_tomorrow(tmp_path) -> None:
     assert facts["checked_off_today"] == ["Request a replacement debit card"]
     assert facts["calendar_tomorrow"][0]["title"] == "ECON 441"
     assert facts["get_done"] == [{"title": "Get a REAL ID", "due": None}]
-    assert any(skill["skill_id"] == "ari.native.email_calendar_triage" for skill in facts["skills_not_built"])
+    assert "skills_not_built" not in facts  # ARI's own gaps go to the nightly self-evaluation
 
 
 def test_review_proposes_one_build_and_never_twice(tmp_path) -> None:

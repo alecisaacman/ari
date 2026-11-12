@@ -42,6 +42,8 @@ from ari_core.orchestration import RunSignalOrchestrationInput, run_signal_orche
 from ari_core.pet_status import build_pet_status, note_credits, write_pet_status
 from ari_core.reminders import due_reminders, mark_sent
 from ari_core.self_review import Write as ReviewWriter
+from ari_core.self_evaluation import announcement as proposal_text
+from ari_core.self_evaluation import unannounced as unannounced_proposals
 from ari_core.self_review import run_review
 from ari_core.watchdog import RECORDS, Problem, Watchdog, check_records
 from ari_memory.tables import AlertRow
@@ -465,8 +467,9 @@ class ImessageGateway:
         if self.dry_run or get_pause_state()["paused"] or self._quiet(self.now()):
             return history
         with self.session_factory() as session:
-            for row in unannounced(session):
-                body = announcement(row)
+            rows = [(row, announcement(row)) for row in unannounced(session)]
+            rows += [(row, proposal_text(row)) for row in unannounced_proposals(session)]
+            for row, body in rows:
                 if not self._send(self.settings.reply_to or "", body, report):
                     break
                 row.announced_status = row.status

@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ari_core.build_log import commits_between, recent_builds, record_release, tool_use
+from ari_core.self_evaluation import evidence
 from ari_core.self_review import gather
 from ari_memory import create_engine, create_session_factory
 from ari_memory.tables import SkillInvocationRow
@@ -64,4 +65,4 @@ def test_log_is_recorded_once_and_reviews_read_it_with_tool_use(tmp_path: Path) 
 
         facts = gather(session, kind="night", now=NOW + timedelta(minutes=5), apple=None)
         assert facts["shipped_recently"][0]["release"] == "r1"
-        assert facts["tool_use_last_week"]["mac_open"] == 2
+        assert evidence(session, now=NOW + timedelta(minutes=5))["tool_use_last_week"]["mac_open"] == 2

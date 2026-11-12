@@ -20,19 +20,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 import anthropic
-from ari_memory.tables import SkillInvocationRow
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain import DEEP_MODEL, make_client
 from ari_core.brain_usage import ModelCall, month_spend, record_model_call
-from ari_core.build_log import recent_builds, tool_use
-from ari_core.build_story import latest_lessons
+from ari_core.build_log import recent_builds
 from ari_core.builds import STILL_OPEN, propose_build
 from ari_core.builds import list_builds as _list_builds
 from ari_core.modules.notes.db import save_ari_note
-from ari_core.modules.skills.catalog import list_skill_manifests
 from ari_core.panel import recent_exchange
 from ari_core.reminders import pending_reminders
 from ari_core.state import get_daily_state, get_weekly_state, list_open_loops
@@ -52,14 +48,10 @@ points. Calm and direct.
 Use only the facts given. Never invent a task, event, or result. Keep it under 120 \
 words. Lead with what matters most.
 
-Then look at ARI itself: what shipped recently (shipped_recently, from ARI's build log), \
-the lessons from its last build story, \
-and whether ARI's tools are actually being used (tool_use_last_week), the skills it \
-doesn't have yet, tool errors, things Alec asked for that it couldn't do, and the builds \
-already on its list. If one build would clearly \
-help Alec most right now and isn't already on the list, propose it. Propose at most one, \
-and none if nothing stands out. End the message with the proposal in one line, asking \
-him to approve or hold it.
+ARI's own improvement is decided elsewhere: each night a Claude session evaluates ARI \
+and proposes builds, and ARI texts those itself. So don't propose a build (leave build \
+null) and don't say there is no proposal. Mention ARI's build list only if a build on it \
+is waiting for Alec's answer or just shipped, in one line.
 
 Give the review with send_review.
 """
@@ -134,16 +126,9 @@ def gather(
             for channel in ("imessage", "hub")
             for line in recent_exchange(session, channel=channel, limit=12)
         ],
-        "tool_errors_last_day": _tool_errors(session, since=now - timedelta(days=1)),
+        # How ARI itself is doing goes to the nightly self-evaluation (ari_core.self_evaluation).
         "build_list": [build.describe() for build in _list_builds(session, statuses=STILL_OPEN)],
         "shipped_recently": recent_builds(session, since=now - timedelta(days=1)),
-        "tool_use_last_week": tool_use(session, since=now - timedelta(days=7)),
-        "lessons_from_last_build_story": latest_lessons(),
-        "skills_not_built": [
-            {"skill_id": manifest.skill_id, "name": manifest.name, "purpose": manifest.purpose}
-            for manifest in list_skill_manifests()
-            if manifest.lifecycle_status == "candidate"
-        ],
         "spend": {"spent_usd": round(spend.spent_usd, 2), "budget_usd": spend.budget_usd},
     }
     if apple is None:
@@ -247,15 +232,6 @@ def run_review(
     kwargs = {} if spine_db_path is None else {"db_path": spine_db_path}
     save_ari_note(title, message, **kwargs)
     return Review(kind=kind, message=message, build=build, facts=facts)
-
-
-def _tool_errors(session: Session, *, since: datetime) -> list[str]:
-    rows = session.scalars(
-        select(SkillInvocationRow)
-        .where(SkillInvocationRow.occurred_at >= since, SkillInvocationRow.is_error.is_(True))
-        .order_by(SkillInvocationRow.occurred_at)
-    ).all()
-    return [f"{row.tool_name}: {row.summary[:160]}" for row in rows][-10:]
 
 
 def _parse(text: str) -> dict[str, Any]:

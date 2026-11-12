@@ -8,7 +8,8 @@ Twice a day ARI looks at where I am and where it falls short.
   tomorrow starts.
 
 When Anthropic refuses a review because the API credits are used up, ARI texts me once
-that day, since reviews, replies, and build proposals all stop until I top them up, and
+that day, since reviews, stories, and replies that need a model stop until I top them
+up (the nightly self-evaluation and builds run on my Claude plan and keep going), and
 the desktop pets show it. A review missed while the Mac slept still goes out when ARI next runs, until noon for
 the morning and midnight for the night. "ARI review" asks for one any time. The times
 come from `ARI_REVIEW_MORNING` and `ARI_REVIEW_NIGHT` in `~/ARI/ari.env` (`off` turns
@@ -18,16 +19,24 @@ one off). Each review is kept as an ARI note.
 
 ARI gathers facts deterministically from its own records and Apple's: open loops,
 state, reminders, GET DONE, the calendar, what was checked off, today's conversation,
-tool errors, the skills it doesn't have yet, its build list, what shipped in the last
-day (the build log), and how often each of its tools was used this week. Only the writing calls
+its build list, and what shipped in the last day (the build log). Only the writing calls
 a model (about 2 cents a review), and the model may use only those facts.
 
-## The build list
+## The build list, and the nightly self-evaluation
 
-A review may propose one build: something ARI should be able to do and can't. It goes
-on the build list (`build_proposals`), which the hub shows. I answer "yes" or "hold" in
-the conversation, and ARI records it. When I ask for something it can't do, ARI offers
-to add it to the list.
+Proposals come from a nightly self-evaluation, not from the reviews. The reviews are
+short, about my day, and written through the API; asked to propose a build too, they
+almost always proposed nothing, so in a month the list got one entry.
+
+Each night the "ARI builds" session (below), when nothing approved is waiting, evaluates
+ARI instead, on my Claude plan rather than API credits. `python -m ari_core.self_evaluation
+evidence` prints what ARI's records show for the last two weeks: tool use and errors,
+what I said to ARI, what shipped and whether it got used, what the watchdog has open,
+and API spend by channel. The session reads the code it needs to judge, then runs
+`propose` with the one build that would help me most. Only one proposal waits at a time.
+ARI texts it to me once, after quiet hours: "yes" approves it and the next night builds
+it; "hold" leaves it. When I ask ARI for something it can't do, it still offers to add it
+to the list (`build_proposals`, which the hub shows).
 
 ## Approved builds build themselves
 

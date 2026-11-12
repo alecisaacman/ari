@@ -1134,3 +1134,21 @@ def test_watchdog_texts_wait_for_quiet_hours_to_end(settings, session_factory) -
     assert gateway.poll_once().watchdog_sent == 0  # past ten minutes, but it's the middle of the night
     clock["now"] = night + timedelta(hours=8)  # 7:30 AM
     assert gateway.poll_once().watchdog_sent == 1
+
+
+def test_a_nightly_proposal_is_texted_once_in_the_morning(settings, session_factory) -> None:
+    from ari_core.self_evaluation import propose
+
+    quiet = replace(settings, quiet_hours=(22, 7))
+    night = datetime(2026, 11, 12, 23, 10).astimezone()
+    clock = {"now": night}
+    messages = FakeMessages()
+    gateway = make_gateway(quiet, session_factory, messages=messages, now=lambda: clock["now"])
+    seed(gateway, quiet)
+    with session_factory() as session:
+        propose(session, title="Delete calendar events", why="You asked twice.", brief="Add a tool.", now=night)
+    assert gateway.poll_once().builds_announced == 0  # the session runs at night; the text waits
+    clock["now"] = night + timedelta(hours=8)
+    assert gateway.poll_once().builds_announced == 1
+    assert "“Delete calendar events”. You asked twice." in messages.sent[-1][1]
+    assert gateway.poll_once().builds_announced == 0
