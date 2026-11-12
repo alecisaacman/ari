@@ -28,14 +28,25 @@ Proposals come from a nightly self-evaluation, not from the reviews. The reviews
 short, about my day, and written through the API; asked to propose a build too, they
 almost always proposed nothing, so in a month the list got one entry.
 
-Each night the "ARI builds" session (below), when nothing approved is waiting, evaluates
-ARI instead, on my Claude plan rather than API credits. `python -m ari_core.self_evaluation
-evidence` prints what ARI's records show for the last two weeks: tool use and errors,
-what I said to ARI, what shipped and whether it got used, what the watchdog has open,
-and API spend by channel. The session reads the code it needs to judge, then runs
-`propose` with the one build that would help me most. Only one proposal waits at a time.
-ARI texts it to me once, after quiet hours: "yes" approves it and the next night builds
-it; "hold" leaves it. When I ask ARI for something it can't do, it still offers to add it
+Every "ARI builds" session (below) evaluates ARI, on my Claude plan rather than API
+credits, after building whatever I approved. `python -m ari_core.self_evaluation
+evidence` prints what ARI knows about itself:
+
+- **Health**: an audit of every part (poller, both reviews, API credits and spend,
+  the live release, the builder, the watchdog) from the markers each part leaves. A
+  part that went quiet fails the audit even when nothing logged an error, which is how
+  the reviews stopped for four days unnoticed.
+- **Self-knowledge**: `~/ARI/state/self-knowledge.md`, ARI's running account of itself
+  (what each part does, how well it works, what was tried and learned), which each
+  session reads and rewrites. It is local, not in this public repo.
+- Two weeks of records: tool use and errors, what I said to ARI, what shipped and
+  whether it got used, what the watchdog has open, and API spend by channel.
+
+The session reads the code it needs to judge, then runs `propose` with the one build
+that would help me most. Only one proposal waits at a time.
+ARI texts it to me once, after quiet hours: "yes" approves it and the next session
+builds it; "hold" leaves it. The morning and night reviews never talk about builds;
+build texts come only from the build system. When I ask ARI for something it can't do, it still offers to add it
 to the list (`build_proposals`, which the hub shows).
 
 ## Approved builds build themselves

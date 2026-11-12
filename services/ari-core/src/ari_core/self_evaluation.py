@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -36,27 +37,35 @@ SOURCE = "ari.self-evaluation"
 LOOKBACK = timedelta(days=14)
 MAX_ERRORS = 25
 MAX_EXCHANGE = 40
+# ARI's running account of itself, kept by the nightly session: what each part does, how
+# well it works, what's been tried and learned. Local, not in the public repo.
+SELF_KNOWLEDGE = "self-knowledge.md"
 
 
-def evidence(session: Session, *, now: datetime, watchdog_path: Path | None = None) -> dict[str, Any]:
+def evidence(session: Session, *, now: datetime, home: Path | None = None) -> dict[str, Any]:
     """What ARI's records show about how well ARI is working. Read only; no model."""
+    root = home or ari_home()
     since = now - LOOKBACK
     errors = session.scalars(
         select(SkillInvocationRow)
         .where(SkillInvocationRow.occurred_at >= since, SkillInvocationRow.is_error.is_(True))
         .order_by(SkillInvocationRow.occurred_at)
     ).all()
-    spend: dict[str, float] = {}
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    for usage in session.scalars(select(BrainUsageRow).where(BrainUsageRow.occurred_at >= month_start)):
-        spend[usage.channel] = round(spend.get(usage.channel, 0.0) + usage.cost_microusd / 1e6, 4)
-    path = watchdog_path or ari_home() / "imessage" / "watchdog.json"
+    spend = evidence_spend(session, now=now)
+    path = root / "imessage" / "watchdog.json"
+    knowledge = root / "state" / SELF_KNOWLEDGE
+    try:
+        known = knowledge.read_text()
+    except OSError:
+        known = ""
     try:
         watchdog = json.loads(path.read_text()).get("open") or {}
     except (OSError, ValueError):
         watchdog = {}
     return {
         "now": now.astimezone().strftime("%A %B %-d, %-I:%M %p"),
+        "health": audit(session, now=now, home=root),
+        "what_ari_knows_about_itself": known or f"Nothing yet: write it to ~/ARI/state/{SELF_KNOWLEDGE}.",
         "build_list": [build.describe() for build in list_builds(session)],
         "shipped_last_two_weeks": recent_builds(session, since=since),
         "tool_use_last_week": tool_use(session, since=now - timedelta(days=7)),
@@ -76,6 +85,74 @@ def evidence(session: Session, *, now: datetime, watchdog_path: Path | None = No
             if manifest.lifecycle_status == "candidate"
         ],
     }
+
+
+def audit(session: Session, *, now: datetime, home: Path | None = None) -> list[dict[str, Any]]:
+    """Is every part of ARI working? One line per part, from the markers each part leaves. No model.
+
+    A part that has gone quiet is a problem even when nothing logged an error: that is how
+    the reviews stopped for four days without anyone noticing.
+    """
+    root = home or ari_home()
+    local = now.astimezone()
+    today, yesterday = local.date().isoformat(), (local.date() - timedelta(days=1)).isoformat()
+
+    def marker(path: str) -> str | None:
+        try:
+            return (root / path).read_text().strip() or None
+        except OSError:
+            return None
+
+    checks: list[dict[str, Any]] = []
+
+    def check(part: str, ok: bool, detail: str) -> None:
+        checks.append({"part": part, "ok": ok, "detail": detail})
+
+    last_run = marker("imessage/last-run")
+    try:
+        quiet_for = now - datetime.fromisoformat(last_run) if last_run else None
+    except ValueError:
+        quiet_for = None
+    check("iMessage poller", quiet_for is not None and quiet_for < timedelta(minutes=10),
+          f"last ran {last_run or 'never'}")
+    for kind in ("morning", "night"):
+        sent = marker(f"imessage/last-review-{kind}")
+        check(f"{kind} review", sent in (today, yesterday), f"last went out {sent or 'never'}")
+    credits = marker("imessage/last-credits-notice")
+    check("API credits", credits not in (today, yesterday),
+          "refused for lack of credits" + (f" on {credits}" if credits else "") if credits in (today, yesterday)
+          else "no refusals in the last day")
+    spend = evidence_spend(session, now=now)
+    check("API spend", sum(spend.values()) < float(os.environ.get("ARI_BRAIN_MONTHLY_BUDGET_USD") or 10) * 0.8,
+          f"this month ${sum(spend.values()):.2f}: " + ", ".join(f"{k} ${v:.2f}" for k, v in spend.items()))
+    try:
+        release = json.loads((root / "runtime" / "current" / "RELEASE.json").read_text())
+        check("live release", release.get("tests") == "passed",
+              f"{str(release.get('commit'))[:7]} “{release.get('subject')}”, tests {release.get('tests')}")
+    except (OSError, ValueError):
+        check("live release", False, "no RELEASE.json for the live release")
+    approved = [build for build in list_builds(session) if build.status == "approved"]
+    check("builder", not any(now - _utc(build.created_at) > timedelta(days=2) for build in approved),
+          f"{len(approved)} approved and waiting")
+    try:
+        open_problems = json.loads((root / "imessage" / "watchdog.json").read_text()).get("open") or {}
+    except (OSError, ValueError):
+        open_problems = {}
+    check("watchdog", not open_problems, f"{len(open_problems)} open problem(s)")
+    return checks
+
+
+def evidence_spend(session: Session, *, now: datetime) -> dict[str, float]:
+    """API spend this month by channel, in dollars."""
+    spend: dict[str, float] = {}
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    for usage in session.scalars(select(BrainUsageRow).where(BrainUsageRow.occurred_at >= month_start)):
+        spend[usage.channel] = round(spend.get(usage.channel, 0.0) + usage.cost_microusd / 1e6, 4)
+    return spend
+
+
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def propose(session: Session, *, title: str, why: str, brief: str, now: datetime) -> str:

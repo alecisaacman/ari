@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ari_memory.tables import BuildProposalRow
+from ari_memory.tables import BrainUsageRow, BuildProposalRow
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,12 @@ SHIPPING_STALLED_AFTER = timedelta(minutes=30)
 APPROVED_WAITING_AFTER = timedelta(hours=30)
 # Keys the database check owns: it runs every poll, so one missing now has cleared.
 RECORDS = "records:"
+# A normal day is a few cents; this many dollars in one day means something is calling the model too much.
+DAILY_SPEND_ALERT_USD = 0.25
+# Every part of ARI that may spend API credits. Spend from anything else is a leak.
+KNOWN_SPEND_CHANNELS = frozenset({"imessage", "hub", "review", "story", "script_review", "company_research"})
+# One-offs already told, remembered so a check that repeats every poll doesn't repeat the text.
+TOLD_MEMORY = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +74,9 @@ class Watchdog:
         seen = {problem.key for problem in problems}
         for problem in problems:
             if not problem.lasting:
-                pending[problem.key] = problem.text
+                # A check that runs every poll reports a one-off again and again; it's told once.
+                if problem.key not in state["told"]:
+                    pending[problem.key] = problem.text
                 continue
             entry = open_.setdefault(
                 problem.key, {"since": now.isoformat(), "told": False, "after": problem.after.total_seconds()}
@@ -92,7 +100,9 @@ class Watchdog:
     def told(self, notice: Notice) -> None:
         """Alec got this one; it isn't sent again."""
         state = self._load()
-        if state["pending"].pop(notice.key, None) is None and notice.key in state["open"]:
+        if state["pending"].pop(notice.key, None) is not None:
+            state["told"] = [*state["told"], notice.key][-TOLD_MEMORY:]
+        elif notice.key in state["open"]:
             state["open"][notice.key]["told"] = True
         self._save(state)
 
@@ -101,7 +111,11 @@ class Watchdog:
             state = json.loads(self.path.read_text())
         except (OSError, ValueError):
             state = {}
-        return {"open": dict(state.get("open") or {}), "pending": dict(state.get("pending") or {})}
+        return {
+            "open": dict(state.get("open") or {}),
+            "pending": dict(state.get("pending") or {}),
+            "told": list(state.get("told") or []),
+        }
 
     def _save(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,6 +150,43 @@ def check_records(session: Session, *, now: datetime, builder_on: bool) -> list[
                 text=f"You approved “{waiting.title}” {hours} hours ago and nothing has built it yet. {why}",
                 label="The nightly builder",
             ))
+    return problems
+
+
+def check_spend(session: Session, *, now: datetime, daily_alert_usd: float | None = None) -> list[Problem]:
+    """API money spent where it shouldn't be: a day far above normal, or a source ARI doesn't know.
+
+    ARI's normal day is a few cents (two reviews, a story, a few replies). Anything that
+    spends without being one of ARI's known channels is a leak, however small.
+    """
+    limit = daily_alert_usd if daily_alert_usd is not None else float(
+        os.environ.get("ARI_SPEND_DAILY_ALERT_USD") or DAILY_SPEND_ALERT_USD
+    )
+    local_midnight = now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+    # SQLite keeps these timestamps as naive UTC.
+    since = local_midnight.replace(tzinfo=None) if session.get_bind().dialect.name == "sqlite" else local_midnight
+    today: dict[str, float] = {}
+    for usage in session.scalars(select(BrainUsageRow).where(BrainUsageRow.occurred_at >= since)):
+        today[usage.channel] = today.get(usage.channel, 0.0) + usage.cost_microusd / 1e6
+    problems: list[Problem] = []
+    day = now.astimezone().date().isoformat()
+    total = sum(today.values())
+    if total >= limit:
+        parts = ", ".join(f"{channel} ${cost:.2f}" for channel, cost in sorted(today.items(), key=lambda kv: -kv[1]))
+        problems.append(Problem(
+            key=f"spend-day:{day}",
+            text=(f"ARI has spent ${total:.2f} of API credits today, well above a normal day of a few cents "
+                  f"({parts}). Something may be calling the model when it shouldn't."),
+            lasting=False,
+        ))
+    unknown = sorted(channel for channel in today if channel not in KNOWN_SPEND_CHANNELS)
+    if unknown:
+        problems.append(Problem(
+            key=f"spend-unknown:{day}:{','.join(unknown)}",
+            text=(f"Something ARI doesn't recognize spent API credits today: {', '.join(unknown)}. "
+                  "Every model call should come from a known part of ARI."),
+            lasting=False,
+        ))
     return problems
 
 

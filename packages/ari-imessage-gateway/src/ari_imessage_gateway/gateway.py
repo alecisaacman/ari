@@ -45,7 +45,7 @@ from ari_core.self_review import Write as ReviewWriter
 from ari_core.self_evaluation import announcement as proposal_text
 from ari_core.self_evaluation import unannounced as unannounced_proposals
 from ari_core.self_review import run_review
-from ari_core.watchdog import RECORDS, Problem, Watchdog, check_records
+from ari_core.watchdog import RECORDS, Problem, Watchdog, check_records, check_spend
 from ari_memory.tables import AlertRow
 from ari_state import AlertChannel, AlertEscalationLevel, AlertStatus
 from sqlalchemy import select
@@ -305,6 +305,8 @@ class ImessageGateway:
             # come back looking like Alec's; they are recognized by their text.
             return history
         report.handled += 1
+        if not self.dry_run:
+            (self.settings.state_dir / "last-alec-message").write_text(self.now().astimezone().date().isoformat())
         # poll_once refuses to run without a reply handle.
         reply_to = row.chat_identifier or self.settings.reply_to or ""
         self._explain_if_late(row, reply_to, report)
@@ -327,6 +329,11 @@ class ImessageGateway:
             ).all()
             for alert in sorted(rows, key=lambda row: _utc(row.created_at)):
                 if now - _utc(alert.created_at) > ALERT_LOOKBACK:
+                    continue
+                if alert.title == CHECK_IN_TITLE and self._in_touch_today(now):
+                    # ARI already knows his day: he's talked to it, or the morning review laid it out.
+                    if not self.dry_run:
+                        alert.status = AlertStatus.DISMISSED.value
                     continue
                 if alert.escalation_level != AlertEscalationLevel.URGENT.value and self._quiet(now):
                     continue
@@ -388,12 +395,24 @@ class ImessageGateway:
         (self.settings.state_dir / "last-credits-notice").write_text(local.date().isoformat())
         body = (
             "Heads up: ARI can't use its Anthropic API right now (credits used up, or this month's spend "
-            "limit reached), so I can't write reviews, answer you, or propose builds until that's sorted "
-            "at console.anthropic.com. Nothing is lost."
+            "limit reached), so I can't write reviews or answer anything that needs a model until that's "
+            "sorted at console.anthropic.com. Builds and my nightly self-review run on your Claude plan and "
+            "keep going. Nothing is lost."
         )
         if not self._send(self.settings.reply_to or "", body, report):
             return history
         return [*history, {"role": "assistant", "content": [{"type": "text", "text": body}]}] if history else history
+
+    def _in_touch_today(self, now: datetime) -> bool:
+        """Alec texted ARI today, or today's morning review went out."""
+        today = now.astimezone().date().isoformat()
+        for marker in ("last-alec-message", "last-review-morning"):
+            try:
+                if (self.settings.state_dir / marker).read_text().strip() == today:
+                    return True
+            except OSError:
+                continue
+        return False
 
     def _told_credits_today(self, local: datetime) -> bool:
         try:
@@ -520,6 +539,7 @@ class ImessageGateway:
         try:
             with self.session_factory() as session:
                 records = check_records(session, now=now, builder_on=os.environ.get("ARI_AUTOBUILD") == "1")
+                records += check_spend(session, now=now)
             notices = watchdog.observe([*report.problems, *records], cleared={*report.cleared, RECORDS}, now=now)
         except Exception as error:  # noqa: BLE001 - the watchdog never stops messaging
             report.detail = f"The watchdog failed: {type(error).__name__}: {error}"
@@ -671,8 +691,9 @@ def _normalize(text: str) -> str:
 
 # How ARI says an alert in a text. The engine's wording stays in ARI's records for
 # explanation; a reply like "why?" lets the brain read it.
+CHECK_IN_TITLE = "No daily check-in recorded"
 PHONE_TEXT = {
-    "No daily check-in recorded": "You haven't checked in today. What are your priorities, and what would make today a win?",
+    CHECK_IN_TITLE: "You haven't checked in today. What are your priorities, and what would make today a win?",
 }
 
 

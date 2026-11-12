@@ -25,9 +25,7 @@ from sqlalchemy.orm import Session
 from ari_core.apple import AppleDesk, AppleError
 from ari_core.brain import DEEP_MODEL, make_client
 from ari_core.brain_usage import ModelCall, month_spend, record_model_call
-from ari_core.build_log import recent_builds
-from ari_core.builds import STILL_OPEN, propose_build
-from ari_core.builds import list_builds as _list_builds
+from ari_core.builds import propose_build
 from ari_core.modules.notes.db import save_ari_note
 from ari_core.panel import recent_exchange
 from ari_core.reminders import pending_reminders
@@ -48,10 +46,8 @@ points. Calm and direct.
 Use only the facts given. Never invent a task, event, or result. Keep it under 120 \
 words. Lead with what matters most.
 
-ARI's own improvement is decided elsewhere: each night a Claude session evaluates ARI \
-and proposes builds, and ARI texts those itself. So don't propose a build (leave build \
-null) and don't say there is no proposal. Mention ARI's build list only if a build on it \
-is waiting for Alec's answer or just shipped, in one line.
+This review is about Alec's life, not ARI. Never mention ARI's builds, build list, \
+proposals, or its own improvement: those have their own texts. Leave build null.
 
 Give the review with send_review.
 """
@@ -127,8 +123,6 @@ def gather(
             for line in recent_exchange(session, channel=channel, limit=12)
         ],
         # How ARI itself is doing goes to the nightly self-evaluation (ari_core.self_evaluation).
-        "build_list": [build.describe() for build in _list_builds(session, statuses=STILL_OPEN)],
-        "shipped_recently": recent_builds(session, since=now - timedelta(days=1)),
         "spend": {"spent_usd": round(spend.spent_usd, 2), "budget_usd": spend.budget_usd},
     }
     if apple is None:

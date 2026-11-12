@@ -90,3 +90,32 @@ def test_an_approved_build_nobody_picked_up_is_told_with_the_likely_reason(tmp_p
         assert "31 hours ago" in waiting.text and "Claude app" in waiting.text
         [off] = check_records(session, now=NOW + timedelta(hours=31), builder_on=False)
         assert "connect-builds" in off.text
+
+
+def _spend(session, channel: str, dollars: float, at: datetime) -> None:
+    from uuid import uuid4
+
+    from ari_memory.tables import BrainUsageRow
+
+    session.add(BrainUsageRow(
+        id=uuid4(), occurred_at=at, channel=channel, model="m", input_tokens=1, output_tokens=1,
+        cache_write_tokens=0, cache_read_tokens=0, web_searches=0, cost_microusd=int(dollars * 1e6), escalated=True,
+    ))
+    session.commit()
+
+
+def test_a_costly_day_and_an_unknown_spender_are_each_told_once(tmp_path: Path) -> None:
+    from ari_core.watchdog import check_spend
+
+    watchdog = Watchdog(tmp_path / "watchdog.json")
+    with _factory(tmp_path)() as session:
+        _spend(session, "review", 0.03, NOW - timedelta(minutes=5))
+        assert check_spend(session, now=NOW) == []  # a normal day
+        _spend(session, "story", 0.40, NOW - timedelta(minutes=4))
+        _spend(session, "mystery_loop", 0.001, NOW - timedelta(minutes=3))
+        told = _send_all(watchdog, check_spend(session, now=NOW), now=NOW)
+        assert len(told) == 2
+        assert "$0.43 of API credits today" in told[0] and "story $0.40" in told[0]
+        assert "mystery_loop" in told[1]
+        # The check runs every poll; Alec hears each once.
+        assert _send_all(watchdog, check_spend(session, now=NOW + timedelta(minutes=1)), now=NOW) == []

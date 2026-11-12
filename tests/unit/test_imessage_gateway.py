@@ -401,7 +401,8 @@ def test_spend_command_reports_this_month_without_calling_a_model(settings, sess
     gateway.poll_once()
 
     assert brain.texts == []
-    assert messages.sent[-1][1] == "$1.00 of $10.00 this month, over 1 model requests (1 on the deeper model)."
+    # The watchdog also notices a $1 day, after the reply.
+    assert messages.sent[0][1] == "$1.00 of $10.00 this month, over 1 model requests (1 on the deeper model)."
 
 
 def test_exhausted_budget_stops_model_calls_until_alec_raises_it(settings, session_factory) -> None:
@@ -415,7 +416,7 @@ def test_exhausted_budget_stops_model_calls_until_alec_raises_it(settings, sessi
     gateway.poll_once()
 
     assert brain.texts == []
-    assert "budget" in messages.sent[-1][1]
+    assert "budget" in messages.sent[0][1]
     write_dump(settings, (1, "old"), (2, "what's on today?"), (3, "ARI budget 15"), (4, "what's on today, then?"))
     gateway.poll_once()
     assert brain_usage.monthly_budget_usd() == 15.0
@@ -1152,3 +1153,15 @@ def test_a_nightly_proposal_is_texted_once_in_the_morning(settings, session_fact
     assert gateway.poll_once().builds_announced == 1
     assert "“Delete calendar events”. You asked twice." in messages.sent[-1][1]
     assert gateway.poll_once().builds_announced == 0
+
+
+def test_no_check_in_prompt_when_ari_already_knows_the_day(settings, session_factory) -> None:
+    now = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)
+    messages = FakeMessages()
+    gateway = make_gateway(settings, session_factory, messages=messages, now=lambda: now, signal_engine=True)
+    seed(gateway, settings)
+    write_dump(settings, (1, "old message"), (2, "what's on today?"))  # Alec talked to ARI today
+
+    gateway.poll_once()
+
+    assert not any("haven't checked in" in body for _, body in messages.sent)

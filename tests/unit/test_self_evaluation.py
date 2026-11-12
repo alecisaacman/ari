@@ -18,7 +18,8 @@ def _factory(tmp_path: Path):
 
 
 def test_evidence_shows_errors_spend_and_what_the_watchdog_has_open(tmp_path: Path) -> None:
-    watchdog = tmp_path / "watchdog.json"
+    (tmp_path / "imessage").mkdir()
+    watchdog = tmp_path / "imessage" / "watchdog.json"
     watchdog.write_text(json.dumps({"open": {"get-done": {"text": "I can't read GET DONE."}}, "pending": {}}))
     with _factory(tmp_path)() as session:
         session.add(SkillInvocationRow(
@@ -32,7 +33,7 @@ def test_evidence_shows_errors_spend_and_what_the_watchdog_has_open(tmp_path: Pa
             escalated=True,
         ))
         session.commit()
-        facts = evidence(session, now=NOW, watchdog_path=watchdog)
+        facts = evidence(session, now=NOW, home=tmp_path)
     assert facts["tool_errors"] == ["calendar_delete: Can't delete events."]
     assert facts["api_spend_this_month_usd"] == {"review": 0.017}
     assert facts["watchdog_open"] == {"get-done": "I can't read GET DONE."}
@@ -55,3 +56,16 @@ def test_one_proposal_waits_for_alec_and_is_texted_once(tmp_path: Path) -> None:
         decide_build(session, list_builds(session)[0].id, "approve", now=NOW + timedelta(hours=8))
         # Answered, so the next evaluation may propose again.
         assert propose(session, title="Other", why="x", brief="y", now=NOW + timedelta(days=1)) == "proposed: Other"
+
+
+def test_the_audit_flags_a_part_that_went_quiet_even_without_an_error(tmp_path: Path) -> None:
+    (tmp_path / "imessage").mkdir()
+    local = NOW.astimezone()
+    (tmp_path / "imessage" / "last-run").write_text((NOW - timedelta(minutes=2)).isoformat())
+    (tmp_path / "imessage" / "last-review-morning").write_text(local.date().isoformat())
+    (tmp_path / "imessage" / "last-review-night").write_text((local.date() - timedelta(days=4)).isoformat())
+    with _factory(tmp_path)() as session:
+        health = {check["part"]: check for check in evidence(session, now=NOW, home=tmp_path)["health"]}
+    assert health["iMessage poller"]["ok"] and health["morning review"]["ok"]
+    assert not health["night review"]["ok"]  # four days without one, and nothing logged an error
+    assert not health["live release"]["ok"]

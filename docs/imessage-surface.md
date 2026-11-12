@@ -184,6 +184,13 @@ writing over one log line. Each poll, the watchdog decides what Alec hears:
 - **ARI's records** are checked every poll: a build still "shipping" after 30
   minutes (the ship step died), and an approved build no builder has picked up
   for 30 hours (usually the Claude app was closed at 10:45 PM).
+- **API spend** is checked every poll. A normal day is a few cents. A day past
+  `ARI_SPEND_DAILY_ALERT_USD` ($0.25), or any spend from a source that isn't one
+  of ARI's known channels (`KNOWN_SPEND_CHANNELS`), is texted once that day with
+  the breakdown by channel: something is calling the model when it shouldn't.
+
+The daily "You haven't checked in" prompt goes out only when ARI knows nothing about
+the day: not after Alec has texted ARI, and not after the morning review went out.
 
 Quiet hours and a pause hold these texts; they wait in
 `ARI_HOME/imessage/watchdog.json` and go out after. The watchdog calls no model

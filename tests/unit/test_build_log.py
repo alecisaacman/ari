@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from ari_core.build_log import commits_between, recent_builds, record_release, tool_use
 from ari_core.self_evaluation import evidence
-from ari_core.self_review import gather
 from ari_memory import create_engine, create_session_factory
 from ari_memory.tables import SkillInvocationRow
 
@@ -63,6 +62,6 @@ def test_log_is_recorded_once_and_reviews_read_it_with_tool_use(tmp_path: Path) 
         assert shipped[0]["changes"][1] == {"what": "feat(email): ARI reads Gmail", "why": ""}
         assert tool_use(session, since=NOW - timedelta(days=7)) == {"mac_open": 2, "email_search": 1}
 
-        facts = gather(session, kind="night", now=NOW + timedelta(minutes=5), apple=None)
-        assert facts["shipped_recently"][0]["release"] == "r1"
-        assert evidence(session, now=NOW + timedelta(minutes=5))["tool_use_last_week"]["mac_open"] == 2
+        facts = evidence(session, now=NOW + timedelta(minutes=5), home=tmp_path)
+        assert facts["shipped_last_two_weeks"][0]["release"] == "r1"
+        assert evidence(session, now=NOW + timedelta(minutes=5), home=tmp_path)["tool_use_last_week"]["mac_open"] == 2

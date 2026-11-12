@@ -58,7 +58,7 @@ def test_review_proposes_one_build_and_never_twice(tmp_path) -> None:
     assert first is not None and first.build is not None and first.build["new"] is True
     assert second is not None and second.build is not None and second.build["new"] is False
     assert [build.title for build in builds] == ["Email triage"]
-    assert seen[1]["build_list"][0]["title"] == "Email triage"
+    assert "build_list" not in seen[1]  # reviews are about Alec's day, not ARI's builds
     assert seen[1]["apple"] == "Reminders and Calendar aren't connected."
 
 
